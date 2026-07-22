@@ -1,0 +1,15 @@
+{
+  "verification": {
+    "description": "Verification keywords are LLM-generated at runtime based on document content. No hardcoded domain keywords in core config.",
+    "fallback_page_count": 2
+  },
+  "page_filtering": {
+    "description": "Generic low-value page indicators (cross-language document metadata). Industry-specific rules should be defined in industry pack rules.yaml.",
+    "skip_keywords": [
+      "copyright", "revision history", "table of content",
+      "figure index", "table index", "warranty disclaimer",
+      "acknowledgment", "preface", "foreword"
+    ],
+    "expand_pages": 3
+  }
+}

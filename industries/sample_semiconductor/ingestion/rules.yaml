@@ -1,0 +1,32 @@
+# 半导体文档解析规则
+
+structure_patterns:
+  - name: 参数表格标题
+    pattern: '^(Electrical Characteristics|Absolute Maximum Ratings|Recommended Operating Conditions)$'
+    type: param_table
+  - name: 引脚定义
+    pattern: '^(Pin Definition|Pin Assignment|Pin Description)$'
+    type: pin_table
+  - name: 功能框图
+    pattern: '^(Block Diagram|Functional Diagram)$'
+    type: block_diagram
+
+table_markers:
+  - "Parameter"
+  - "Symbol"
+  - "Min"
+  - "Typ"
+  - "Max"
+  - "Unit"
+  - "Test Conditions"
+
+key_page_types:
+  - 参数表页
+  - 引脚定义页
+  - 时序图页
+  - 封装尺寸页
+
+layout:
+  detect_columns: true
+  table_priority: high
+  # 数据手册通常有大量参数表格

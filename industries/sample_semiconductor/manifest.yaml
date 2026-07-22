@@ -1,0 +1,13 @@
+id: sample_semiconductor
+name: Semiconductor Industry Sample Pack
+version: 1.0.0
+description: Chip/semiconductor technical document industry sample pack (Open Source Sample), for retrieval and Q&A on datasheets, technical manuals, schematics, and related documents
+author: OpenLAD Team
+category_mapping:
+  - Technical & Product Documents
+  - Chip Specifications
+  - Technical Manuals
+  - Datasheets
+  - Circuit Schematics
+entry_point: "plugin:SemiconductorPlugin"
+is_builtin: true

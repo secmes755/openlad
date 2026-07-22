@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="app.title">OpenLAD</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=4">
+    <link rel="stylesheet" href="/static/vendor/font-awesome.min.css">
+    <link rel="stylesheet" href="/static/vendor/katex.min.css">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <style>
+        .login-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-overlay.show { display: flex; }
+        .login-box {
+            background: white;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .login-box h2 { margin-bottom: 8px; font-size: 20px; }
+        .login-box p { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
+        .login-box .form-group { margin-bottom: 16px; }
+        .login-box label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #111827; }
+        .login-box input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .login-box .btn {
+            width: 100%;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            background: #2563eb;
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .login-box .btn:hover { background: #1d4ed8; }
+    </style>
+</head>
+<body>
+    <!-- Service Status Bar -->
+    <div class="service-status-bar" id="serviceStatusBar">
+        <div class="service-status-inner">
+            <span class="status-bar-label"><i class="fas fa-heartbeat"></i> Service</span>
+            <span class="status-user" id="statusUser"></span>
+            <div class="status-items" id="statusItems">
+                <!-- Dynamically generated -->
+            </div>
+            <div class="status-actions">
+                <button class="status-btn logs-btn" onclick="openServiceLogs()" title="View service Logs">
+                    <i class="fas fa-file-alt"></i> Logs
+                </button>
+                <button class="status-btn refresh-btn" onclick="refreshServiceStatus()" title="Refresh status">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+                <span class="status-last-check" id="statusLastCheck">--:--:--</span>
+            </div>
+        </div>
+    </div>
+    <div class="app-container">
+        <!-- Sidebar overlay -->
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+        <!-- Left Sidebar: Session List -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-cube"></i>
+                    <span data-i18n="app.title">OpenLAD</span>
+                </div>
+                <button class="new-chat-btn" onclick="createNewSession()" data-i18n="nav.newChat">
+                    <i class="fas fa-plus"></i> New Chat
+                </button>
+            </div>
+
+            <!-- Industry Selector -->
+            <div class="industry-selector">
+                <label><i class="fas fa-briefcase"></i> <span data-i18n="industry.label">Industry Mode</span></label>
+                <select id="industrySelect" onchange="switchIndustry(this.value)">
+                    <option value="auto" data-i18n="industry.auto">Auto Detect</option>
+                    <!-- Dynamically loaded industry list -->
+                </select>
+                <div class="industry-hint" id="industryHint"><span data-i18n="industry.autoHint">Auto-select industry based on documents</span></div>
+            </div>
+
+            <div class="session-list" id="sessionList">
+                <!-- Session list dynamically generated -->
+            </div>
+            <div class="sidebar-footer">
+                <a href="/static/admin.html" class="nav-link" data-i18n="nav.database">
+                    <i class="fas fa-database"></i> Database Management
+                </a>
+                <a href="#" class="nav-link" id="userMgmtLink" style="display:none;" onclick="openUserMgmt();return false;" data-i18n="nav.userMgmt">
+                    <i class="fas fa-users-cog"></i> User Management
+                </a>
+                <a href="#" class="nav-link" onclick="doLogout();return false;" data-i18n="nav.logout">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Area: Chat -->
+        <main class="main-area">
+            <!-- Mobile menu toggle button -->
+            <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()">
+                <i class="fas fa-bars"></i>
+            </button>
+
+            <!-- Show welcome page when no session -->
+            <div class="welcome-screen" id="welcomeScreen">
+                <div class="welcome-content">
+                    <h1><i class="fas fa-cube"></i> <span data-i18n="app.title">OpenLAD</span></h1>
+                    <p data-i18n="app.subtitle">Intelligent document analysis assistant - Answer questions based on your knowledge base</p>
+
+                </div>
+            </div>
+
+            <!-- Chat messages area -->
+            <div class="chat-messages" id="chatMessages" style="display:none;">
+                <!-- Messages dynamically generated -->
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-box">
+                    <textarea id="messageInput" data-i18n-placeholder="input.placeholder" placeholder="Enter your question..." rows="1"
+                        onkeydown="handleInputKeydown(event)"
+                        oninput="autoResize(this)"></textarea>
+                    <button class="send-btn" onclick="sendMessage()" id="sendBtn">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+                <div class="input-hint" data-i18n="input.hint">Enter to send | Shift+Enter for new line</div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Login Modal -->
+    <div class="login-overlay" id="loginModal">
+        <div class="login-box">
+            <h2><i class="fas fa-lock"></i data-i18n="login.title"> User Login</h2>
+            <p data-i18n="login.subtitle">Please enter username and password</p>
+            <div class="form-group">
+                <label data-i18n="login.username">Username</label>
+                <input type="text" id="usernameInput" data-i18n-placeholder="login.usernamePlaceholder" placeholder="e.g. admin">
+            </div>
+            <div class="form-group">
+                <label data-i18n="login.password">Password</label>
+                <input type="password" id="passwordInput" data-i18n-placeholder="login.passwordPlaceholder" placeholder="Enter your password">
+            </div>
+            <button class="btn" onclick="doLogin()">
+                <i class="fas fa-sign-in-alt"></i> Login
+            </button>
+        </div>
+    </div>
+
+    <!-- User Management Modal -->
+    <div class="login-overlay" id="userMgmtModal" style="display:none;z-index:250;">
+        <div class="login-box" style="max-width:600px;width:95%;">
+            <h2><i class="fas fa-users-cog"></i> <span data-i18n="usermgmt.title">User Management</span></h2>
+            <div style="display:flex;gap:8px;margin-bottom:16px;">
+                <input type="text" id="newUserName" data-i18n-placeholder="usermgmt.newUser" placeholder="Username" style="flex:1;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
+                <input type="password" id="newUserPassword" data-i18n-placeholder="usermgmt.newPassword" placeholder="Password (leave blank for random)" style="flex:1;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
+                <select id="newUserRole" style="padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
+                    <option value="user" data-i18n="usermgmt.role.user">Regular User</option>
+                    <option value="admin" data-i18n="usermgmt.role.admin">Admin</option>
+                </select>
+                <button class="btn" onclick="createUser()" style="width:auto;white-space:nowrap;">
+                    <i class="fas fa-plus"></i> Add
+                </button>
+            </div>
+            <div class="user-table-wrap" style="max-height:360px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;">
+                <table class="user-table" id="userTable" style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                        <tr style="background:#f8f9fa;">
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.username">Username</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.role">Role</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.tenant">Tenant</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.apiKey">API Key</th>
+                            <th style="padding:8px 12px;text-align:center;border-bottom:1px solid #e5e7eb;width:80px;" data-i18n="usermgmt.column.actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userTableBody">
+                        <!-- Dynamically generated -->
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top:16px;text-align:right;">
+                <button class="btn" onclick="closeUserMgmt()" style="width:auto;background:#6b7280;">
+                    <i class="fas fa-times"></i> Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/vendor/katex.min.js"></script>
+    <script src="/static/js/i18n.js?v=1"></script>
+    <script src="/static/js/app.js?v=8"></script>
+</body>
+</html>

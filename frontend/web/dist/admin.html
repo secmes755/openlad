@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenLAD - Database Admin</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/vendor/font-awesome.min.css">
+    <style>
+        /* Admin Page Styles */
+        .admin-container { min-height: 100vh; background: var(--bg-welcome); }
+        .admin-header {
+            height: var(--header-height);
+            background: white;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .header-left { display: flex; align-items: center; gap: 20px; }
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .back-link:hover { color: var(--primary); }
+        .admin-header h1 {
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-primary);
+        }
+        .header-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .header-stats b { color: var(--primary); margin-left: 4px; }
+        .header-actions { display: flex; gap: 10px; }
+        .btn-danger {
+            background: #dc2626;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-danger:hover { background: #b91c1c; }
+
+        .admin-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px 24px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin: 0 0 16px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .tab-btn {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            font-size: 14px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tab-btn:hover { color: var(--text-primary); }
+        .tab-btn.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+            font-weight: 600;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Panels */
+        .panel {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .panel-header h3 {
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Document List */
+        .doc-list { max-height: 600px; overflow-y: auto; }
+        .doc-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 20px;
+            border-bottom: 1px solid #f3f4f6;
+            transition: background 0.15s;
+        }
+        .doc-item:last-child { border-bottom: none; }
+        .doc-item:hover { background: #f9fafb; }
+        .doc-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+        .doc-icon.pdf { background: #fee2e2; color: #dc2626; }
+        .doc-icon.word { background: #dbeafe; color: #2563eb; }
+        .doc-icon.excel { background: #d1fae5; color: #059669; }
+        .doc-icon.ppt { background: #fef3c7; color: #d97706; }
+        .doc-icon.image { background: #f3e8ff; color: #7c3aed; }
+        .doc-icon.txt { background: #f3f4f6; color: #6b7280; }
+        .doc-info { flex: 1; min-width: 0; }
+        .doc-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .doc-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+        .doc-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .doc-meta span { margin-right: 12px; }
+        .doc-status {
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            background: #d1fae5;
+            color: #059669;
+            white-space: nowrap;
+        }
+        .doc-status.status-done { background: #d1fae5; color: #059669; }
+        .doc-status.status-processing { background: #dbeafe; color: #2563eb; }
+        .doc-status.status-pending { background: #fef3c7; color: #d97706; }
+        .doc-status.status-error { background: #fee2e2; color: #dc2626; }
+        .doc-actions { display: flex; gap: 6px; }
+        .doc-action-btn {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            background: #f3f4f6;
+            color: var(--text-secondary);
+        }
+        .doc-action-btn:hover { background: #e5e7eb; }
+        .doc-action-btn.delete:hover { background: #fee2e2; color: #dc2626; }
+
+        /* Directory Scan */
+        .scan-bar {
+            display: flex;
+            gap: 10px;
+            padding: 16px 20px;
+            align-items: center;
+        }
+        .scan-bar input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        /* File List */
+        .file-table { width: 100%; border-collapse: collapse; }
+        .file-table th, .file-table td {
+            padding: 10px 16px;
+            text-align: left;
+            font-size: 13px;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        .file-table th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .file-table tr:hover { background: #f9fafb; }
+        .file-table td input[type="checkbox"] { cursor: pointer; }
+        .status-badge {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 10px;
+        }
+        .status-badge.imported { background: #d1fae5; color: #059669; }
+        .status-badge.new { background: #fef3c7; color: #d97706; }
+
+        /* Upload Area */
+        .upload-area { padding: 20px; border-top: 1px solid var(--border); }
+        .upload-dropzone {
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .upload-dropzone.dragover {
+            border-color: var(--primary);
+            background: #eff6ff;
+        }
+        .upload-dropzone i { font-size: 32px; margin-bottom: 8px; display: block; }
+
+        /* Common */
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-primary:disabled { background: var(--text-muted); cursor: not-allowed; }
+        .btn-secondary { background: #f3f4f6; color: var(--text-primary); }
+        .btn-secondary:hover { background: #e5e7eb; }
+
+        .empty, .error, .loading {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+        .empty i, .error i { font-size: 32px; margin-bottom: 8px; display: block; }
+        .error { color: #dc2626; }
+        .success { color: #059669; }
+
+        .toolbar {
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .toolbar-info { font-size: 13px; color: var(--text-muted); margin-left: auto; }
+
+        .progress-bar {
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--primary);
+            transition: width 0.3s;
+        }
+
+        /* Confirmation Dialog */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+        }
+        .modal h3 { margin-bottom: 12px; }
+        .modal p { color: var(--text-secondary); margin-bottom: 20px; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        /* Login Overlay */
+        .login-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-overlay.show { display: flex; }
+        .login-box {
+            background: white;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .login-box h2 { margin-bottom: 8px; font-size: 20px; }
+        .login-box p { color: var(--text-secondary); font-size: 14px; margin-bottom: 20px; }
+        .login-box .form-group { margin-bottom: 16px; }
+        .login-box label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-primary); }
+        .login-box input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+        .login-box .btn { width: 100%; justify-content: center; }
+
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <header class="admin-header">
+            <div class="header-left">
+                <a href="/" class="back-link" data-i18n="admin.back"><i class="fas fa-arrow-left"></i> Back to Chat</a>
+                <h1><i class="fas fa-database"></i> <span data-i18n="admin.title">Database Admin</span></h1>
+            </div>
+            <div class="header-stats">
+                <span><i class="fas fa-file"></i> <span data-i18n="admin.stats.docCount">Documents</span>: <b id="docCount">-</b></span>
+                <span><i class="fas fa-file-alt"></i> <span data-i18n="admin.stats.chunkCount">Pages</span>: <b id="pageCount">-</b></span>
+            </div>
+            <div class="header-actions">
+                <button class="btn-danger" onclick="confirmReset()" data-i18n="admin.resetDb">
+                    <i class="fas fa-trash-alt"></i> Reset Database
+                </button>
+            </div>
+        </header>
+
+        <div class="admin-content">
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('library')" id="tab-library" data-i18n="admin.tab.documents">
+                    <i class="fas fa-books"></i> Documents
+                </button>
+                <button class="tab-btn" onclick="switchTab('import')" id="tab-import" data-i18n="admin.tab.upload">
+                    <i class="fas fa-cloud-upload-alt"></i> Upload
+                </button>
+            </div>
+
+            <!-- Document Library Tab -->
+            <div class="tab-content active" id="content-library">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3 data-i18n="admin.docs.importedTitle"><i class="fas fa-folder-open"></i> Imported Documents</h3>
+                        <button class="btn btn-secondary" onclick="refreshLibrary()" data-i18n="misc.refresh">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="doc-list" id="docList">
+                        <div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Import Tab -->
+            <div class="tab-content" id="content-import">
+                <!-- Directory Scan -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-search"></i data-i18n="admin.tab.scan"> Scan Directory</h3>
+                    </div>
+                    <div class="scan-bar">
+                        <input type="text" id="scanPath" data-i18n-placeholder="admin.scan.dirPlaceholder" placeholder="Enter directory path, e.g. /opt/openlad/data" value="">
+                        <button class="btn btn-primary" onclick="scanDirectory()">
+                            <i class="fas fa-search"></i> Scan
+                        </button>
+                    </div>
+                    <div id="scanResult" style="display:none;">
+                        <div class="toolbar">
+                            <button class="btn btn-primary" id="importSelectedBtn" onclick="importSelected()">
+                                <i class="fas fa-play"></i> Import Selected
+                            </button>
+                            <span class="toolbar-info" id="scanInfo"></span>
+                        </div>
+                        <div style="overflow-x:auto;">
+                            <table class="file-table">
+                                <thead>
+                                    <tr>
+                                        <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
+                                        <th data-i18n="admin.scan.column.file">Filename</th>
+                                        <th data-i18n="admin.scan.column.type">Type</th>
+                                        <th data-i18n="admin.scan.column.size">Size</th>
+                                        <th data-i18n="admin.scan.column.status">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fileTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Single File Upload -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-upload"></i data-i18n="admin.tab.upload"> Single File Upload</h3>
+                    </div>
+                    <div class="upload-area">
+                        <div style="margin-bottom:12px;padding:10px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+                            <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px;"><i class="fas fa-industry"></i> Industry Classification Mode</label>
+                            <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+                                <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+                                    <input type="radio" name="classifyMode" value="auto" checked onchange="toggleIndustrySelect()"" data-i18n="industry.auto"> Auto Detect
+                                </label>
+                                <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+                                    <input type="radio" name="classifyMode" value="manual" onchange="toggleIndustrySelect()"" data-i18n="admin.upload.manual"> Manual Select
+                                </label>
+                                <select id="industrySelect" style="display:none;padding:4px 8px;border-radius:4px;border:1px solid #cbd5e1;font-size:13px;min-width:160px;">
+                                    <option value="">Loading...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="upload-dropzone" id="uploadDropzone"
+                             ondrop="handleDrop(event)"
+                             ondragover="handleDragOver(event)"
+                             ondragleave="handleDragLeave(event)">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <p data-i18n="admin.upload.dropzone">Drag files here, or <input type="file" id="fileInput" multiple onchange="handleFileSelect(event)" style="display:none;"><a href="#" onclick="document.getElementById('fileInput').click();return false;">Browse</a></p>
+                            <p style="font-size:12px;color:var(--text-muted);margin-top:8px;" data-i18n="admin.upload.dropzoneIcon">Supported: PDF, DOCX, XLSX, PPTX, PNG, JPG, TXT, MD</p>
+                        </div>
+                        <div id="uploadProgress"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Overlay -->
+    <div class="login-overlay" id="loginModal">
+        <div class="login-box">
+            <h2><i class="fas fa-lock"></i data-i18n="login.title"> User Login</h2>
+            <p data-i18n="login.subtitle">Please enter username and password</p>
+            <div class="form-group">
+                <label data-i18n="login.username">Username</label>
+                <input type="text" id="usernameInput" data-i18n-placeholder="login.usernamePlaceholder" placeholder="e.g. admin">
+            </div>
+            <div class="form-group">
+                <label data-i18n="login.password">Password</label>
+                <input type="password" id="passwordInput" data-i18n-placeholder="login.passwordPlaceholder" placeholder="Enter your password">
+            </div>
+            <button class="btn btn-primary" onclick="doLogin()">
+                <i class="fas fa-sign-in-alt"></i> Login
+            </button>
+        </div>
+    </div>
+
+    <!-- Confirmation Dialog -->
+    <div class="modal-overlay" id="resetModal">
+        <div class="modal">
+            <h3><i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i> Confirm Reset Database</h3>
+            <p>This will delete all documents, pages, chunks, and vector data. This cannot be undone. Chat history will be preserved.</p>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal()" data-i18n="misc.cancel">Cancel</button>
+                <button class="btn btn-danger" onclick="doReset()" data-i18n="admin.rebuildBtn">Confirm Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const API_BASE = '/api/v1';
+
+function getAuthHeaders() {
+        const tenantId = localStorage.getItem('tenant_id');
+        const apiKey = localStorage.getItem('api_key');
+        return {
+            'X-Tenant-ID': tenantId || '',
+            'Authorization': apiKey ? 'Bearer ' + apiKey : ''
+        };
+    }
+
+    function checkAuth() {
+        const tenantId = localStorage.getItem('tenant_id');
+        const apiKey = localStorage.getItem('api_key');
+        if (!tenantId || !apiKey) {
+            document.getElementById('loginModal').classList.add('show');
+        } else {
+            document.getElementById('loginModal').classList.remove('show');
+            refreshLibrary();
+            updateStats();
+            loadIndustries();
+        }
+    }
+
+    async function doLogin() {
+        const username = document.getElementById('usernameInput').value.trim();
+        const password = document.getElementById('passwordInput').value.trim();
+        if (!username || !password) {
+            alert(__('login.errorEmpty'));
+            return;
+        }
+        try {
+            const res = await fetch('/api/v1/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                alert(__('login.errorFailed') + (data.detail || data.error || 'Unknown error'));
+                return;
+            }
+            localStorage.setItem('tenant_id', data.tenant_id);
+            localStorage.setItem('api_key', data.api_key);
+            document.getElementById('loginModal').classList.remove('show');
+            refreshLibrary();
+            updateStats();
+        } catch (e) {
+            alert(__('login.errorNetwork') + e.message);
+        }
+    }
+
+    // ===== Initialization =====
+    document.addEventListener('DOMContentLoaded', () => {
+        checkAuth();
+    });
+    // Re-render dynamic content when language changes
+    window.addEventListener('langchange', () => {
+        if (localStorage.getItem('tenant_id') && localStorage.getItem('api_key')) {
+            refreshLibrary();
+        }
+    });
+
+    // ===== Tab Switching =====
+    function switchTab(tab) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('tab-' + tab).classList.add('active');
+        document.getElementById('content-' + tab).classList.add('active');
+    }
+
+    // ===== Statistics =====
+    async function updateStats() {
+        try {
+            const res = await fetch('/api/v1/stats', { headers: getAuthHeaders() });
+            const data = await res.json();
+            document.getElementById('docCount').textContent = data.total_documents || 0;
+            document.getElementById('pageCount').textContent = data.total_pages || 0;
+        } catch (e) {}
+    }
+
+    // ===== Document Library =====
+    async function refreshLibrary() {
+        const list = document.getElementById('docList');
+        list.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> ' + __('misc.loading') + '</div>';
+        try {
+            const res = await fetch(`${API_BASE}/documents`, { headers: getAuthHeaders() });
+            const data = await res.json();
+            const docs = data.documents || [];
+            if (docs.length === 0) {
+                list.innerHTML = `<div class="empty"><i class="fas fa-inbox"></i><p>${__('admin.docs.noDocs')}</p><p style="font-size:13px;color:var(--text-muted);">${__('admin.docs.uploadHint')}</p></div>`;
+                return;
+            }
+            list.innerHTML = docs.map(d => {
+                const title = d.filename || d.name || d.original_name || d.id;
+                const desc = (d.title || d.summary || '').substring(0, 80);
+                return `
+                <div class="doc-item">
+                    <div class="doc-icon ${getDocIconClass(d.doc_type)}">
+                        <i class="fas ${getDocIcon(d.doc_type)}"></i>
+                    </div>
+                    <div class="doc-info">
+                        <div class="doc-name">${escapeHtml(title)}</div>
+                        <div class="doc-desc">${escapeHtml(desc)}${desc.length >= 80 ? '...' : ''}</div>
+                        <div class="doc-meta">
+                            <span><i class="fas fa-clock"></i> ${formatDate(d.created_at || d.updated_at)}</span>
+                            <span><i class="fas fa-tag"></i> ${escapeHtml(d.doc_type || d.category_level2 || 'General')}</span>
+                            <span><i class="fas fa-industry"></i> ${escapeHtml(d.industry_package_id || 'auto')}</span>
+                        </div>
+                    </div>
+                    <div class="doc-status ${getDocStatusClass(d.status)}">${getDocStatus(d.status)}</div>
+                    <div class="doc-actions">
+                        <button class="doc-action-btn delete" onclick="deleteDoc('${d.id}', '${escapeHtml(title)}')">
+                            <i class="fas fa-trash-alt"></i>${__('misc.delete')}</button>
+                        </button>
+                    </div>
+                </div>
+            `;}).join('');
+        } catch (e) {
+            list.innerHTML = '<div class="error"><i class="fas fa-exclamation-triangle"></i> ' + __('misc.error') + ': ' + e.message + '</div>';
+        }
+    }
+
+    function getDocStatus(status) {
+        const map = {
+            'verified': '<i class="fas fa-check"></i> ' + __('admin.docs.status.done'),
+            'processing': '<i class="fas fa-spinner fa-spin"></i> ' + __('admin.docs.status.processing'),
+            'pending_meta': '<i class="fas fa-hourglass-half"></i> ' + __('admin.docs.status.pending'),
+            'pending_processing': '<i class="fas fa-hourglass-half"></i> ' + __('admin.docs.status.pending'),
+            'error': '<i class="fas fa-times"></i> ' + __('admin.docs.status.error'),
+            'already_imported': '<i class="fas fa-check"></i> ' + __('admin.scan.status.imported')
+        };
+        return map[status] || '<i class="fas fa-question"></i> ' + __('misc.error');
+    }
+
+    function getDocStatusClass(status) {
+        const map = {
+            'verified': 'status-done',
+            'processing': 'status-processing',
+            'pending_meta': 'status-pending',
+            'pending_processing': 'status-pending',
+            'error': 'status-error'
+        };
+        return map[status] || '';
+    }
+
+    function getDocIcon(type) {
+        const map = {
+            'pdf': 'fa-file-pdf', 'docx': 'fa-file-word', 'doc': 'fa-file-word',
+            'xlsx': 'fa-file-excel', 'xls': 'fa-file-excel', 'pptx': 'fa-file-powerpoint',
+            'ppt': 'fa-file-powerpoint', 'png': 'fa-file-image', 'jpg': 'fa-file-image',
+            'jpeg': 'fa-file-image', 'bmp': 'fa-file-image',
+            'txt': 'fa-file-alt', 'md': 'fa-file-alt'
+        };
+        return map[(type || '').toLowerCase()] || 'fa-file';
+    }
+    function getDocIconClass(type) {
+        const map = {
+            'pdf': 'pdf', 'docx': 'word', 'doc': 'word',
+            'xlsx': 'excel', 'xls': 'excel', 'pptx': 'ppt',
+            'ppt': 'ppt', 'png': 'image', 'jpg': 'image',
+            'jpeg': 'image', 'bmp': 'image',
+            'txt': 'txt', 'md': 'txt'
+        };
+        return map[(type || '').toLowerCase()] || 'txt';
+    }
+    function formatDate(ts) {
+        if (!ts) return '-';
+        try {
+            const d = new Date(ts);
+            return d.toLocaleString('zh-CN');
+        } catch { return ts; }
+    }
+
+    async function deleteDoc(docId, docName) {
+        if (!confirm("Delete document: " + (docName || docId))) return;
+        try {
+            const res = await fetch(`${API_BASE}/documents/${docId}`, { method: 'DELETE', headers: getAuthHeaders() });
+            if (res.ok) {
+                refreshLibrary();
+                updateStats();
+            } else {
+                const err = await res.text();
+                alert(__('misc.error') + ': ' + err);
+            }
+        } catch (e) {
+            alert(__('misc.error') + ': ' + e.message);
+        }
+    }
+
+    // ===== Scan Directory (not supported in V6)=====
+    async function scanDirectory() {
+        alert(__('admin.scan.noFiles'));
+    }
+    function toggleSelectAll() {}
+    async function importSelected() {
+        alert(__('admin.scan.noFiles'));
+    }
+    function startImportMonitor() {}
+
+    // ===== Upload =====
+    function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+    function handleDragLeave(e) { e.currentTarget.classList.remove('dragover'); }
+    function handleDrop(e) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('dragover');
+        uploadFiles(e.dataTransfer.files);
+    }
+    function handleFileSelect(e) { uploadFiles(e.target.files); }
+
+    async function loadIndustries() {
+        try {
+            const res = await fetch('/api/v1/industries', { headers: getAuthHeaders() });
+            const data = await res.json();
+            const select = document.getElementById('industrySelect');
+            select.innerHTML = '<option value="">' + __('industry.auto') + '</option>';
+            if (data.industries) {
+                data.industries.forEach(ind => {
+                    const opt = document.createElement('option');
+                    opt.value = ind.id;
+                    opt.textContent = ind.name || ind.id;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            console.error('Failed to load industry packs', e);
+        }
+    }
+
+    function toggleIndustrySelect() {
+        const mode = document.querySelector('input[name="classifyMode"]:checked').value;
+        const select = document.getElementById('industrySelect');
+        select.style.display = mode === 'manual' ? 'inline-block' : 'none';
+    }
+
+    async function uploadFiles(files) {
+        const progress = document.getElementById('uploadProgress');
+        const mode = document.querySelector('input[name="classifyMode"]:checked').value;
+        const industry = document.getElementById('industrySelect').value;
+
+        for (const file of files) {
+            const div = document.createElement('div');
+            div.className = 'upload-item';
+            div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f3f4f6;';
+            div.innerHTML = `<span>${file.name}</span> <span class="status" style="min-width:120px;text-align:right;">Waiting to upload...</span>`;
+            progress.appendChild(div);
+
+            const form = new FormData();
+            form.append('file', file);
+            if (mode === 'manual' && industry) {
+                form.append('industry', industry);
+                form.append('auto_detect', 'false');
+            } else {
+                form.append('auto_detect', 'true');
+            }
+
+            // Use XMLHttpRequest to show upload progress
+            await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                const statusEl = div.querySelector('.status');
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const pct = Math.round((e.loaded / e.total) * 100);
+                        statusEl.innerHTML = `<div style="width:100px;height:6px;background:#e5e7eb;border-radius:3px;display:inline-block;vertical-align:middle;margin-right:6px;"><div style="width:${pct}%;height:100%;background:#2563eb;border-radius:3px;transition:width 0.2s;"></div></div><span style="font-size:12px;color:#6b7280;">${pct}%</span>`;
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        const data = JSON.parse(xhr.responseText);
+                        if (data.task_id) {
+                            statusEl.innerHTML = `<span style="font-size:12px;color:#2563eb;"><i class="fas fa-cog fa-spin"></i> Background Processing 0%</span>`;
+                            pollUploadProgress(data.task_id, statusEl, () => {
+                                resolve();
+                            });
+                        } else {
+                            statusEl.innerHTML = '<i class="fas fa-check" style="color:#059669;"></i> Done';
+                            resolve();
+                        }
+                    } else {
+                        statusEl.innerHTML = '<i class="fas fa-times" style="color:#dc2626;"></i> Upload Failed';
+                        reject(new Error('Upload failed'));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    statusEl.innerHTML = '<i class="fas fa-times" style="color:#dc2626;"></i> Network Error';
+                    reject(new Error('Network error'));
+                });
+
+                xhr.open('POST', '/api/v1/documents/upload');
+                const auth = getAuthHeaders();
+                Object.keys(auth).forEach(k => xhr.setRequestHeader(k, auth[k]));
+                xhr.send(form);
+            });
+        }
+        updateStats();
+        refreshLibrary();
+    }
+
+    // Poll background processing progress
+    function pollUploadProgress(taskId, statusEl, onDone) {
+        let stopped = false;
+        const poll = async () => {
+            if (stopped) return;
+            try {
+                const res = await fetch(`/api/v1/documents/upload-progress/${taskId}`, { headers: getAuthHeaders() });
+                const data = await res.json();
+                if (!res.ok) {
+                    statusEl.innerHTML = '<i class="fas fa-times" style="color:#dc2626;"></i> Query Failed';
+                    stopped = true;
+                    onDone();
+                    return;
+                }
+                if (data.status === 'completed') {
+                    statusEl.innerHTML = '<i class="fas fa-check" style="color:#059669;"></i> Done';
+                    stopped = true;
+                    onDone();
+                    return;
+                }
+                if (data.status === 'failed') {
+                    statusEl.innerHTML = `<i class="fas fa-times" style="color:#dc2626;"></i> Processing Failed`;
+                    stopped = true;
+                    onDone();
+                    return;
+                }
+                // Still processing
+                const pct = data.progress || 0;
+                const msg = data.message || 'Processing';
+                statusEl.innerHTML = `<div style="width:100px;height:6px;background:#e5e7eb;border-radius:3px;display:inline-block;vertical-align:middle;margin-right:6px;"><div style="width:${pct}%;height:100%;background:#d97706;border-radius:3px;transition:width 0.3s;"></div></div><span style="font-size:12px;color:#6b7280;">${pct}% ${msg}</span>`;
+                setTimeout(poll, 1500);
+            } catch (e) {
+                statusEl.innerHTML = '<i class="fas fa-times" style="color:#dc2626;"></i> Poll Error';
+                stopped = true;
+                onDone();
+            }
+        };
+        poll();
+    }
+
+    // ===== Reset Database =====
+    function confirmReset() {
+        document.getElementById('resetModal').classList.add('show');
+    }
+    function closeModal() {
+        document.getElementById('resetModal').classList.remove('show');
+    }
+    async function doReset() {
+        closeModal();
+        try {
+            const res = await fetch(`${API_BASE}/reset-database`, { method: 'POST', headers: getAuthHeaders() });
+            if (res.ok) {
+                alert('Database has been reset');
+                refreshLibrary();
+                updateStats();
+            } else {
+                alert('Reset failed');
+            }
+        } catch (e) {
+            alert('Reset failed: ' + e.message);
+        }
+    }
+
+    // ===== Utilities =====
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+        return (bytes/(1024*1024)).toFixed(1) + ' MB';
+    }
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    </script>
+<script src="/static/js/i18n.js?v=1"></script>
+</body>
+</html>

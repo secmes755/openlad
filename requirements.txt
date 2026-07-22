@@ -1,0 +1,42 @@
+# OpenLAD - Open-Source Local Knowledge Base System
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# Database
+duckdb>=0.9.0
+sqlite-vec>=0.1.0
+
+# Document Parsing
+pypdf>=3.17.0
+pdfplumber>=0.11.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+python-pptx>=0.6.0
+python-docx>=0.8.11
+Pillow>=10.0.0
+paddleocr>=2.7.0
+beautifulsoup4>=4.12.0
+pdf2image>=1.16.0
+
+# Image Processing
+numpy>=1.24.0
+opencv-python>=4.8.0
+
+# HTTP Client
+httpx>=0.25.0
+requests>=2.31.0
+
+# YAML
+PyYAML>=6.0
+
+# Jinja2
+Jinja2>=3.1.0
+
+# Password Hashing
+bcrypt>=4.0.0
+
+# System Info (cross-platform memory/disk detection)
+psutil>=5.9.0

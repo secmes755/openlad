@@ -1,0 +1,304 @@
+# 半导体行业检索增强规则
+# 定义不同查询意图下的章节 boost/penalty 策略
+# 支持中英文关键词匹配 section_title
+
+# =============================================================================
+# 查询扩展关键词（用于 decomposed_retrieve 子查询增强）
+# 当子查询过于简单时（如 "AB1234 specifications"），自动追加这些关键词
+# 以覆盖 ISP/Video/Display/Package 等关键章节
+# =============================================================================
+query_expansion:
+  keywords:
+    - ISP
+    - video
+    - encoder
+    - decoder
+    - display
+    - graphic
+    - package
+    - memory
+    - interface
+    - CPU
+    - NPU
+    - GPU
+    - pinout
+    - electrical
+
+# =============================================================================
+# 低价值章节惩罚（在检索阶段过滤无关页面）
+# 这些章节在规格对比中通常没有价值，降低其 FTS 分数
+# =============================================================================
+low_value_sections:
+  - keywords:
+      - marking
+      - baking
+      - carrier
+      - moisture sensitivity
+      - soldering profile
+      - 丝印
+      - 烘烤
+    penalty: -5.0
+
+# =============================================================================
+# 封装型号页惩罚（如 AB1234XX-XXXX, XY5678XXXX 等命名页面）
+# 这些页面只包含封装标识信息，对规格对比无价值
+# =============================================================================
+package_model_pages:
+  pattern: '[a-z]{2,}\d{2,}[a-z]*-[a-z]{2,}\d*'
+  penalty: -5.0
+
+# =============================================================================
+# 规格相关章节提升（在检索阶段提升关键页面分数）
+# =============================================================================
+spec_sections:
+  - keywords:
+      - isp
+      - image signal
+      - video encoder
+      - video decoder
+      - graphic
+      - g2d
+      - display
+      - package dimension
+      - electrical characteristic
+      - pin assignment
+      - ball map
+      - 图像
+      - 视频编码
+      - 视频解码
+      - 显示
+      - 图形
+      - 封装尺寸
+      - 电气特性
+      - 引脚
+    boost: 1.0
+
+section_boost_rules:
+  # 查询意图: IO资源 / 外设 / 能访问哪些 / 接口分布 / 总线连接
+  io_resources:
+    query_keywords:
+      - io
+      - io资源
+      - 外设
+      - 能访问
+      - 接口分布
+      - 总线连接
+      - 外设资源
+      - peripheral
+      - bus tree
+      - bus matrix
+      - interconnect
+      - system bus
+      - 总线树
+      - 总线矩阵
+      - 互联结构
+      - 系统总线
+    boost_sections:
+      # 框图/架构类 — 高价值，通常包含完整外设拓扑
+      - keywords:
+          - block diagram
+          - system block diagram
+          - system architecture
+          - 模块框图
+          - 系统框图
+          - 系统架构
+          - 架构图
+        boost: 2.0
+      # 总线/互联类 — 直接列出外设连接关系
+      - keywords:
+          - bus matrix
+          - bus tree
+          - interconnect
+          - system bus
+          - 总线矩阵
+          - 总线树
+          - 互联结构
+          - 系统总线
+          - bus topology
+          - 总线拓扑
+        boost: 5.0
+      # 映射类 — 地址映射、外设映射
+      - keywords:
+          - memory map
+          - address map
+          - peripheral map
+          - io map
+          - 内存映射
+          - 地址映射
+          - 外设分布
+          - 外设映射
+          - memory organization
+          - 内存组织
+        boost: 1.5
+      # 外设列表类
+      - keywords:
+          - peripheral
+          - io resource
+          - 外设资源
+          - 外设列表
+          - 外设描述
+          - peripheral description
+        boost: 1.5
+    # 对纯电气/封装章节保持惩罚（除非查询明确涉及）
+    penalize_sections:
+      - keywords:
+          - electrical specification
+          - pin number
+          - parameters symbol
+          - recommended operating condition
+          - absolute ratings
+          - dc characteristics
+          - package dimension
+          - package information
+          - package bottom view
+          - package side view
+          - thermal management
+          - lead finish
+          - ball material
+          - 电气特性
+          - 引脚编号
+          - 推荐工作条件
+          - 绝对额定值
+          - 封装尺寸
+          - 封装信息
+        penalty: -50.0
+        unless_query_contains:
+          - 电气
+          - electrical
+          - 电压
+          - voltage
+          - 封装
+          - package
+          - 尺寸
+          - dimension
+
+  # 查询意图: 引脚定义 / Pinout / 信号功能
+  pinout:
+    query_keywords:
+      - pin
+      - 引脚
+      - pinout
+      - 管脚
+      - footprint
+      - 信号名
+      - 引脚定义
+      - 引脚功能
+      - ball map
+      - pin assignment
+    boost_sections:
+      - keywords:
+          - pin assignment
+          - pin function
+          - ball map
+          - pinout
+          - signal description
+          - 引脚分配
+          - 引脚功能
+          - 信号描述
+          - 引脚定义
+        boost: 2.5
+
+  # 查询意图: 电气参数 / 时序
+  electrical:
+    query_keywords:
+      - 电气
+      - electrical
+      - 电压
+      - voltage
+      - 电流
+      - current
+      - 功耗
+      - power
+      - 时序
+      - timing
+      - ac characteristics
+      - dc characteristics
+    boost_sections:
+      - keywords:
+          - electrical characteristic
+          - dc characteristic
+          - ac characteristic
+          - timing diagram
+          - recommended operating condition
+          - absolute maximum rating
+          - 电气特性
+          - 直流特性
+          - 交流特性
+          - 时序图
+          - 推荐工作条件
+          - 绝对最大额定值
+        boost: 2.0
+
+  # 查询意图: 寄存器 / 编程
+  register:
+    query_keywords:
+      - register
+      - 寄存器
+      - 编程指南
+      - programming
+      - 配置
+      - configuration
+    boost_sections:
+      - keywords:
+          - register description
+          - register list
+          - programming guideline
+          - 寄存器描述
+          - 寄存器列表
+          - 编程指南
+        boost: 2.0
+
+  # 查询意图: 电源供电 / PMIC / 原理图
+  power_supply:
+    query_keywords:
+      - 电源
+      - 供电
+      - PMIC
+      - DCDC
+      - BUCK
+      - LDO
+      - 电容
+      - 去耦
+      - 上电
+      - power
+      - voltage
+      - 电压
+      - 电流
+      - 引脚接法
+      - 具体接法
+      - 连接方式
+      - schematic
+      - 原理图
+    boost_sections:
+      - keywords:
+          - power tree
+          - power description
+          - power layout
+          - power/gnd
+          - pinmux
+          - dcdc
+          - 电源树
+          - 电源描述
+          - 电源布局
+          - 引脚复用
+        boost: 3.0
+      - keywords:
+          - block diagram
+          - system block diagram
+          - 系统框图
+          - 模块框图
+        boost: 1.5
+    penalize_sections:
+      - keywords:
+          - package dimension
+          - package information
+          - thermal management
+          - 封装尺寸
+          - 封装信息
+          - 热管理
+        penalty: -5.0
+        unless_query_contains:
+          - 封装
+          - package
+          - 热
+          - thermal

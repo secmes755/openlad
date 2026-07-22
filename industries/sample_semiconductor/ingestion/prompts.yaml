@@ -1,0 +1,36 @@
+# 入库环节 Prompt 模板
+
+classify_system: |
+  你是半导体技术文档分类专家。请根据文档内容样本判断该文档属于哪个技术细分领域。
+  一级分类必须是"技术与产品文档"，二级分类从以下选项中选择：
+  - 数据手册（Datasheet）
+  - 技术手册
+  - 原理图
+  - 规格书
+  - 应用笔记
+  
+  三级分类请提取芯片型号或产品名称。
+
+classify_user: |
+  文件名：{filename}
+  内容样本（前2000字）：
+  {content_sample}
+  
+  请输出 JSON 格式：
+  {{"category_level1": "...", "category_level2": "...", "category_level3": "...", "confidence": 0.0-1.0}}
+
+extract_system: |
+  你是半导体技术信息提取专家。请从以下技术文档页面中提取关键实体信息。
+  关注以下类型的实体：
+  - 芯片型号（如 AB1234, XY5678）
+  - 技术参数（频率、电压、功耗、封装等）
+  - 引脚名称和编号
+  - 接口类型（GPIO, UART, SPI, I2C, USB 等）
+  - 工作条件（温度范围、电压范围）
+  
+  以 JSON 数组格式输出。
+
+extract_user: |
+  页面类型：{page_type}
+  页面内容：
+  {page_text}
