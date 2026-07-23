@@ -4,6 +4,7 @@ PHASE-2: Retrieval Executor
 import json
 import logging
 import os
+import re
 from typing import Dict, List, Any
 
 from ..config import settings
@@ -613,12 +614,44 @@ Output structure (JSON):
                 "index": len(chapter_list),
                 "title": title,
                 "pages": f"{start}-{end}" if end > start else str(start),
-                "summary": summary
+                "summary": summary,
+                "keywords": ch.get("keywords", "") or ""
             })
         
         if not chapter_list:
             return self._fallback_to_fts(query, doc_id)
         
+        # FIX: Ensure structure-index semantic matches are not missed by LLM title-only selection.
+        # A chapter whose summary or keywords explicitly mentions the query topic (e.g. "NPU")
+        # should be included even if its title does not contain the query keyword.
+        # This is a generic, content-agnostic recall mechanism.
+        def _chapter_matches_query(ch: dict, q: str) -> bool:
+            if not q:
+                return False
+            q_lower = q.lower()
+            tokens = []
+            for m in re.finditer(r'[\u4e00-\u9fff]{2,}', q_lower):
+                tokens.append(m.group())
+            for m in re.finditer(r'[A-Za-z0-9]{2,}', q_lower):
+                token = m.group()
+                if not re.match(r'^\d+$', token):
+                    tokens.append(token)
+            text = f"{ch.get('title', '')} {ch.get('keywords', '')} {ch.get('summary', '')}".lower()
+            for t in tokens:
+                if re.fullmatch(r'[a-z0-9]+', t):
+                    # ASCII tokens use word-boundary matching to avoid false hits
+                    # (e.g. query token "ai" must not match "SAI" or "available")
+                    if re.search(r'\b' + re.escape(t) + r'\b', text):
+                        return True
+                elif t in text:
+                    return True
+            return False
+
+        preselected_indices = {ch["index"] for ch in chapter_list if _chapter_matches_query(ch, query)}
+        if preselected_indices:
+            logger.info(f"[CHAPTER-RETRIEVE] Pre-selected {len(preselected_indices)} chapters via structure-index semantic match: "
+                        f"{[chapter_list[i]['title'] for i in sorted(preselected_indices)][:5]}")
+
         # 3. Let LLM select relevant chapters
         model_client = get_model_client()
         
@@ -658,10 +691,14 @@ Output only JSON, no explanation."""
             logger.warning(f"[CHAPTER-RETRIEVE] LLM chapter selection failed: {e}")
             selected_indices = []
         
+        # Merge LLM selection with semantic pre-selection so overview/summary-matching chapters are preserved
+        selected_indices = list(set(selected_indices) | preselected_indices)
         if not selected_indices:
             logger.info(f"[CHAPTER-RETRIEVE] LLM selected no chapters, falling back to FTS")
             return self._fallback_to_fts(query, doc_id)
         
+        logger.info(f"[CHAPTER-RETRIEVE] Combined selection: {len(selected_indices)} chapters (LLM + semantic pre-match)")
+
         # Sub-chapter window expansion — datasheet "definitions first, data later" pattern
         # Each selected sub-chapter automatically includes the adjacent next sub-chapter to avoid data tables falling just outside the window
         # Example: LLM selects "Temperature Definitions" but values are in "Recommended Operating Conditions"
@@ -674,7 +711,7 @@ Output only JSON, no explanation."""
         if expanded_count > 0:
             selected_indices = sorted(expanded)
             logger.info(f"[CHAPTER-RETRIEVE] Sub-chapter window expansion: +{expanded_count} sub-chapters, total {len(selected_indices)}")
-        
+
         # 4. Collect pages from selected chapters
         results = []
         selected_chapters = []
@@ -724,17 +761,56 @@ Output only JSON, no explanation."""
         
         # Sort by relevance of chapter titles to query, ensuring key data pages are not truncated
         # E.g., when querying "temperature range", "Temperature and Thermal Characteristics" should come before "Overview"
+        # FIX: Also consider the chapter's level. High-level sections (overview/introduction/features) are often the
+        # most direct answer to "does X have Y?" questions. We add a level-based base score so they are not pushed out.
         if query and results:
-            import re
             query_lower = query.lower()
             query_terms = [t for t in re.findall(r'\w+', query_lower) if len(t) > 2]
+            # Map each result to its chapter level from the original chapter info
+            level_map = {}
+            for ch in chapters:
+                title = ch.get("section_title", "")
+                level_map[title] = ch.get("section_level", 2)
             def _section_relevance(r: SearchResult) -> int:
                 if not r.section_title:
                     return 0
                 title_lower = r.section_title.lower()
-                return sum(1 for term in query_terms if term in title_lower)
+                term_hits = sum(1 for term in query_terms if term in title_lower)
+                # Level bonus: chapter=1 (highest) +3, section=2 +2, subsection=3 +1, deeper=0
+                level = level_map.get(r.section_title, 2)
+                level_bonus = max(0, 4 - level)
+                return term_hits + level_bonus
             results.sort(key=_section_relevance, reverse=True)
+            # Deduplicate by page_num after sorting to ensure stable ordering
+            seen_pages = set()
+            unique_results = []
+            for r in results:
+                if r.page_num not in seen_pages:
+                    seen_pages.add(r.page_num)
+                    unique_results.append(r)
+            results = unique_results
         
+        # FIX: Ensure the first page of each top-level chapter is included before truncation.
+        # High-level overview pages may be short but contain conclusive answers.
+        if query:
+            query_lower = query.lower()
+            query_terms = [t for t in re.findall(r'\w+', query_lower) if len(t) > 2]
+            # Identify chapters whose title or summary directly matches query terms
+            direct_match_pages = []
+            for ch in chapters:
+                text = f"{ch.get('section_title', '')} {ch.get('summary', '')}".lower()
+                if any(term in text for term in query_terms):
+                    start = ch.get('start_page', 0)
+                    for r in results:
+                        if r.page_num == start and r not in direct_match_pages:
+                            direct_match_pages.append(r)
+            # Move direct-match first pages to the front while preserving their relative order
+            if direct_match_pages:
+                direct_keys = {(r.doc_id, r.page_num) for r in direct_match_pages}
+                others = [r for r in results if (r.doc_id, r.page_num) not in direct_keys]
+                results = direct_match_pages + others
+                logger.info(f"[CHAPTER-RETRIEVE] Prioritized {len(direct_match_pages)} direct-match chapter start pages")
+
         # 5. Limit total character count
         if max_context_quota:
             total_chars = 0
@@ -745,10 +821,10 @@ Output only JSON, no explanation."""
                 filtered_results.append(r)
                 total_chars += len(r.content)
             results = filtered_results
-        
+
         logger.info(f"[CHAPTER-RETRIEVE] LLM selected chapters: {selected_chapters} -> {len(results)} pages")
         return results
-    
+
     def _fallback_to_fts(self, query: str, doc_id: str) -> List[SearchResult]:
         """Fallback to FTS search"""
         from .retriever import HierarchicalRetriever

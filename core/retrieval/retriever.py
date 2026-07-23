@@ -310,6 +310,10 @@ class HierarchicalRetriever:
         # First use structure index for section-level routing
         structure_boosted_pages = set()
 
+        # FIX: Structure-index as a standalone retrieval path.
+        # We collect structure-matched chapters as independent evidence, not just a filter.
+        structure_results = []  # List[SearchResult]
+
         # FIX: Two-tier retrieval - first use structure index to locate most relevant chapters,
         # collect chapter page ranges
         chapter_pages = {}  # doc_id -> set(page_nums)
@@ -347,6 +351,65 @@ class HierarchicalRetriever:
                     end_page = sr.get("end_page", start_page)
                     for pn in range(start_page, end_page + 1):
                         pages.add(pn)
+
+                # FIX: Structure-index as an independent retrieval path.
+                # Collect all structure-matched chapters as direct SearchResult evidence
+                # so that overview/spec chapters are not filtered out by FTS ranking.
+                chapter_score_map = {}
+                for priority, sr in matched_chapters:
+                    if priority <= 0:
+                        continue
+                    start_page = sr.get("start_page", 0)
+                    end_page = sr.get("end_page", start_page)
+                    # Chapter score: title match (5.0) / keyword match (4.0) / summary match (3.0)
+                    # Shallow sections receive a small bonus for high-level summaries.
+                    # FIX: Use a high base score so structure-matched chapters survive the merge phase
+                    # even after generic low-value penalties (e.g., pages containing "copyright").
+                    level = sr.get("section_level", 2)
+                    level_bonus = max(0.0, 0.3 - level * 0.05)
+                    base_score = {3: 10.0, 2: 8.0, 1: 6.0}.get(priority, 0.0)
+                    chapter_score = base_score + level_bonus
+
+                    for pn in range(start_page, end_page + 1):
+                        pages.add(pn)
+                        structure_boosted_pages.add((doc_id, pn))
+                        # Keep the highest score for this page
+                        chapter_score_map[(doc_id, pn)] = max(
+                            chapter_score_map.get((doc_id, pn), 0.0),
+                            chapter_score
+                        )
+
+                # Load the chapter's pages as independent SearchResult evidence
+                if chapter_score_map:
+                    pages_for_doc = self.metadata_db.get_document_pages(doc_id)
+                    if not pages_for_doc and self.tenant_id == "admin" and self.fallback_metadata_db:
+                        try:
+                            pages_for_doc = self.fallback_metadata_db.get_document_pages(doc_id)
+                        except Exception:
+                            pass
+                    doc = self.metadata_db.get_document(doc_id)
+                    if not doc and self.tenant_id == "admin" and self.fallback_metadata_db:
+                        try:
+                            doc = self.fallback_metadata_db.get_document(doc_id)
+                        except Exception:
+                            pass
+                    for (d_id, pn), c_score in chapter_score_map.items():
+                        if d_id != doc_id:
+                            continue
+                        for p in pages_for_doc or []:
+                            if p.get("page_num") == pn:
+                                structure_results.append(SearchResult(
+                                    doc_id=doc_id,
+                                    page_id=p.get("id"),
+                                    page_num=pn,
+                                    score=c_score,
+                                    content=p.get("raw_text", "")[:3000],
+                                    section_title=p.get("section_title", ""),
+                                    filename=doc.get("filename", "") if doc else "",
+                                    title=doc.get("title", "") if doc else "",
+                                    extra_data={"structure_match": True}
+                                ))
+                                break
 
                 if pages:
                     chapter_pages[doc_id] = pages
@@ -422,6 +485,24 @@ class HierarchicalRetriever:
                             sr.score += boost
                             logger.debug(f"[RETRIEVER] spec section boost: doc={sr.doc_id} page={sr.page_num} title={sr.section_title}")
                 all_results.append(sr)
+
+        # Merge structure-index results with FTS results; structure hits may bring in pages
+        # that FTS missed (e.g. overview pages with few keyword occurrences).
+        # We do this BEFORE supplementary/leading-page recalls so structure evidence gets
+        # full priority in the merge phase.
+        existing_keys = {(r.doc_id, r.page_num) for r in all_results}
+        for sr in structure_results:
+            if (sr.doc_id, sr.page_num) in existing_keys:
+                # If already in FTS results, boost the score because the structure index
+                # independently confirms relevance.
+                for existing in all_results:
+                    if existing.doc_id == sr.doc_id and existing.page_num == sr.page_num:
+                        existing.score += sr.score * 0.3
+                        break
+            else:
+                if len(all_results) < max_results * 2:
+                    all_results.append(sr)
+            existing_keys.add((sr.doc_id, sr.page_num))
 
         # Supplementary recall: pages hit by structure index
         if structure_boosted_pages:
