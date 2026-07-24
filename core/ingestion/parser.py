@@ -292,16 +292,13 @@ class DocumentParser:
             outline_map = self._build_outline_map(pypdf_reader)
             if outline_map:
                 logger.info(f"PDF bookmarks extracted: {len(outline_map)} pages have section titles")
-                # Convert outline_map to toc format for builder.py
-                toc = []
-                for page_num, title in sorted(outline_map.items()):
-                    level = 1
-                    if '\t' in title:
-                        parts = title.split('\t')[0]
-                        if '.' in parts:
-                            level = len(parts.split('.'))
-                    toc.append((level, title, page_num))
-                doc.metadata["toc"] = toc
+            # FIX: Build toc from ALL outline entries (not page-deduped outline_map).
+            # Datasheets pack multiple small sections on one page (e.g. 1.2.4 Video Codec
+            # and 1.2.5 Neural Process Unit both on p12); page-keyed dedup silently
+            # dropped those sections from the structure index.
+            full_toc = self._build_full_toc(pypdf_reader)
+            if full_toc:
+                doc.metadata["toc"] = full_toc
 
             for page_num in range(total_pages):
                 pdf_page_num = page_num + 1
@@ -1132,6 +1129,41 @@ Please output in English."""
         except Exception as e:
             logger.warning(f"PDF outline extraction failed: {e}")
         return outline_map
+
+    def _build_full_toc(self, pypdf_reader) -> list:
+        """Extract the COMPLETE TOC from the PDF outline as an ordered entry list.
+
+        Unlike _build_outline_map (page -> first title, used for page labeling),
+        this preserves every entry including multiple sections sharing one page
+        (datasheet style: 1.2.4 and 1.2.5 both start on p12). Entry order follows
+        document order (outline walk), which downstream section-range building
+        relies on.
+
+        Returns: [(level, title, page_num), ...] (1-based page numbers)
+        """
+        toc = []
+        try:
+            outline = pypdf_reader.outline
+            if not outline:
+                return toc
+
+            def _walk_outline(items, level=0):
+                for item in items:
+                    if isinstance(item, list):
+                        _walk_outline(item, level + 1)
+                    elif hasattr(item, 'title') and hasattr(item, 'page'):
+                        title = item.title.strip() if item.title else ""
+                        try:
+                            page_num = pypdf_reader.get_page_number(item.page) + 1  # 1-based
+                        except Exception:
+                            page_num = None
+                        if page_num and title and not self._is_non_content_title(title):
+                            toc.append((level + 1, title, page_num))
+
+            _walk_outline(outline)
+        except Exception as e:
+            logger.warning(f"PDF full TOC extraction failed: {e}")
+        return toc
 
     def _extract_section_title(self, text: str, page_num: int,
                                outline_map: dict = None) -> str:

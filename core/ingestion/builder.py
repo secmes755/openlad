@@ -529,7 +529,7 @@ class DocumentIndexBuilder:
                 page_results[result["page_num"]] = result
 
         # Phase 2: serial writes
-        structure_index = self._build_structure_index(doc_id, page_results, parsed_doc)
+        structure_index, explicit_sections = self._build_structure_index(doc_id, page_results, parsed_doc)
         l2_results = []
 
         for page_num in sorted(page_results.keys()):
@@ -568,12 +568,18 @@ class DocumentIndexBuilder:
                 "page_text": r["page_text"]
             })
 
-        self._save_structure_index_to_db(doc_id, structure_index, page_results, tenant_id=tid)
+        self._save_structure_index_to_db(doc_id, structure_index, page_results, tenant_id=tid,
+                                         explicit_sections=explicit_sections)
         return l2_results
 
     def _build_structure_index(self, doc_id: str, page_results: Dict[int, Dict],
-                               parsed_doc=None) -> Dict[int, Dict]:
+                                parsed_doc=None):
         """Build document structure index
+
+        Returns: (structure_index, explicit_sections)
+          structure_index: page_num -> page-level chapter info (for page labeling)
+          explicit_sections: ordered section list with page ranges (TOC path only,
+                             preserves multiple sections sharing one page), else None
 
         Forced LLM full analysis strategy:
         1. Prefer PDF bookmarks/TOC — if high quality
@@ -582,14 +588,14 @@ class DocumentIndexBuilder:
         # Attempt 1: PDF bookmarks/TOC
         toc = parsed_doc.metadata.get("toc", []) if parsed_doc else []
         if toc and len(toc) > 0:
-            result = self._build_structure_from_toc(doc_id, page_results, toc)
+            result, explicit_sections = self._build_structure_from_toc(doc_id, page_results, toc)
             if result and len(result) > 0:
                 # Check TOC build quality: whether it covers most pages
                 covered = sum(1 for s in result.values() if s.get("title"))
                 coverage = covered / len(page_results) if page_results else 0
                 if coverage >= 0.5:
                     logger.info(f"[STRUCTURE] Using PDF bookmarks to build structure index: {len(result)} pages, coverage {coverage:.1%}")
-                    return result
+                    return result, explicit_sections
                 else:
                     # FIX: Even if coverage is low, use PDF bookmarks and extrapolate to remaining pages
                     # This avoids slow LLM analysis in background tasks
@@ -597,7 +603,7 @@ class DocumentIndexBuilder:
                     result = self._extrapolate_structure_to_all_pages(result, page_results)
                     if result:
                         logger.info(f"[STRUCTURE] Using extrapolated PDF bookmarks: {len(result)} pages")
-                        return result
+                        return result, explicit_sections
                     logger.info(f"[STRUCTURE] PDF bookmark extrapolation failed, using LLM full analysis")
             else:
                 logger.info(f"[STRUCTURE] PDF bookmarks empty or invalid, using LLM full analysis")
@@ -608,11 +614,11 @@ class DocumentIndexBuilder:
         result = self._build_structure_from_text(doc_id, page_results)
         if result:
             logger.info(f"[STRUCTURE] Text rules structure complete: {len(result)} pages")
-            return result
+            return result, None
 
         # Final fallback: return empty structure index
         logger.warning(f"[STRUCTURE] All methods failed, returning empty structure index")
-        return {}
+        return {}, None
 
     _NON_CONTENT_PATTERNS = [
         'table of content', 'contents', 'figure index', 'table index',
@@ -650,9 +656,14 @@ class DocumentIndexBuilder:
         return title
 
     def _build_structure_from_toc(self, doc_id: str, page_results: Dict[int, Dict],
-                                   toc: List) -> Dict[int, Dict]:
+                                   toc: List):
         """
         Build structure index from PDF TOC/bookmarks.
+
+        Returns: (structure_index, explicit_sections)
+          structure_index: page_num -> page-level chapter info (for page labeling)
+          explicit_sections: ordered section list — one entry per TOC item,
+                             including multiple sections sharing the same page
         
         V5.0 Fixes:
         1. Same-page multi-chapter: collect ALL entries, merge into composite title
@@ -665,7 +676,7 @@ class DocumentIndexBuilder:
         structure_index = {}
         max_page = max(page_results.keys()) if page_results else 0
         if not max_page:
-            return structure_index
+            return structure_index, None
 
         valid_toc = []
         for entry in toc:
@@ -684,7 +695,7 @@ class DocumentIndexBuilder:
             valid_toc.append((level, clean_title, page_num))
 
         if not valid_toc:
-            return structure_index
+            return structure_index, None
 
         # V5.0: Build full hierarchy map for path construction
         # path -> {level, title, page_num, parent_path}
@@ -815,7 +826,36 @@ class DocumentIndexBuilder:
                     structure_index[pn]["section_start"] = start_page
                     structure_index[pn]["section_end"] = end_page
 
-        return structure_index
+        # FIX: Build explicit section list from the ordered TOC entries.
+        # The page-keyed structure_index above can only hold ONE section per page,
+        # so same-page sections (datasheet style: 1.2.4 / 1.2.5 both on p12) were
+        # silently dropped from the DB. Sections are derived directly from the
+        # entry sequence instead:
+        #   start_page = entry's own page
+        #   end_page   = page of the next entry at the same or higher level
+        #                (allows 1-page overlap so content flowing onto the next
+        #                page — e.g. NPU bullets at the top of p13 — stays covered)
+        explicit_sections = []
+        for i, entry in enumerate(toc_entries):
+            lvl = entry["level"]
+            start = entry["page_num"]
+            end = max_page
+            for nxt in toc_entries[i + 1:]:
+                if nxt["level"] <= lvl:
+                    nxt_page = nxt["page_num"]
+                    end = nxt_page if nxt_page > start else start
+                    break
+            end = max(start, min(end, max_page))
+            explicit_sections.append({
+                "short_path": entry["path"],
+                "full_path": build_full_path(entry),
+                "title": entry["title"],
+                "level": lvl,
+                "start_page": start,
+                "end_page": end,
+            })
+
+        return structure_index, explicit_sections
 
     def _extrapolate_structure_to_all_pages(self, structure_index: Dict[int, Dict],
                                              page_results: Dict[int, Dict]) -> Dict[int, Dict]:
@@ -1455,10 +1495,14 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
 
     def _save_structure_index_to_db(self, doc_id: str, structure_index: Dict[int, Dict],
                                      page_results: Optional[Dict[int, Dict]] = None,
-                                     tenant_id: str = None):
+                                     tenant_id: str = None,
+                                     explicit_sections: Optional[List[Dict]] = None):
         """
         Save structure index to database.
         V5.0: Merge adjacent pages with same short_path to fix 1-page range issue.
+        FIX: When explicit_sections is provided (TOC path), save it directly —
+        the page-keyed grouping below cannot represent multiple sections that
+        start on the same page (e.g. 1.2.4 / 1.2.5 both on p12).
         """
         tid = tenant_id or self.tenant_id or "default"
         from core.db.tenant_db import get_tenant_metadata_db
@@ -1466,44 +1510,70 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
 
         # V5.0: Merge adjacent pages with same short_path
         # Step 1: Group consecutive pages by short_path
-        merged_sections = []  # [(short_path, start_page, end_page, level, title, full_path)]
-        sorted_pages = sorted(structure_index.keys())
-        
-        current_short_path = None
-        current_start = None
-        current_end = None
-        current_level = 0
-        current_title = ""
-        current_full_path = ""
-        
-        for page_num in sorted_pages:
-            s = structure_index[page_num]
-            short_path = s.get("short_path", "")
-            if not short_path:
-                continue
-            
-            if short_path == current_short_path:
-                # Same path, extend end_page
-                current_end = page_num
-            else:
-                # Different path, save previous and start new
-                if current_short_path:
-                    merged_sections.append((current_short_path, current_start, current_end, current_level, current_title, current_full_path))
-                current_short_path = short_path
-                current_start = page_num
-                current_end = page_num
-                current_level = s.get("level", 0)
-                current_title = s.get("title", "")
-                current_full_path = s.get("path", "")
-        
-        # Save last section
-        if current_short_path:
-            merged_sections.append((current_short_path, current_start, current_end, current_level, current_title, current_full_path))
+        if explicit_sections:
+            merged_sections = [
+                (s["short_path"], s["start_page"], s["end_page"],
+                 s["level"], s["title"], s["full_path"])
+                for s in explicit_sections
+            ]
+        else:
+            merged_sections = []  # [(short_path, start_page, end_page, level, title, full_path)]
+            sorted_pages = sorted(structure_index.keys())
+
+            current_short_path = None
+            current_start = None
+            current_end = None
+            current_level = 0
+            current_title = ""
+            current_full_path = ""
+
+            for page_num in sorted_pages:
+                s = structure_index[page_num]
+                short_path = s.get("short_path", "")
+                if not short_path:
+                    continue
+
+                if short_path == current_short_path:
+                    # Same path, extend end_page
+                    current_end = page_num
+                else:
+                    # Different path, save previous and start new
+                    if current_short_path:
+                        merged_sections.append((current_short_path, current_start, current_end, current_level, current_title, current_full_path))
+                    current_short_path = short_path
+                    current_start = page_num
+                    current_end = page_num
+                    current_level = s.get("level", 0)
+                    current_title = s.get("title", "")
+                    current_full_path = s.get("path", "")
+
+            # Save last section
+            if current_short_path:
+                merged_sections.append((current_short_path, current_start, current_end, current_level, current_title, current_full_path))
 
         # Step 2: Collect page text for each merged section
         # V5.0 FIX: For the first page of each section, detect and remove previous section's tail
         path_pages = {}
-        if page_results:
+        if explicit_sections and page_results:
+            # Section-centric text collection: every section gathers text across
+            # its own page range (siblings sharing a page each get the text from
+            # their own title position onward).
+            for s in explicit_sections:
+                texts = []
+                for pn in range(s["start_page"], s["end_page"] + 1):
+                    r = page_results.get(pn)
+                    if not r:
+                        continue
+                    text = r.get("page_text", "")
+                    if not text:
+                        continue
+                    if pn == s["start_page"]:
+                        title_pos = self._find_section_title_in_text(text, s["title"])
+                        if title_pos > 0:
+                            text = text[title_pos:]
+                    texts.append((pn, text))
+                path_pages[s["short_path"]] = texts
+        elif page_results:
             # Sort pages by page_num
             sorted_pages = sorted(page_results.items(), key=lambda x: x[0])
             
