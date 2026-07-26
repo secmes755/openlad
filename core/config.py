@@ -76,6 +76,12 @@ LLM_MAX_CONCURRENT = int(os.environ.get("OPENLAD_LLM_NP", "1"))
 # e.g. llama-server --parallel 2 → set both to 2
 INGEST_MAX_WORKERS = int(os.environ.get("OPENLAD_INGEST_MAX_WORKERS", "1"))
 CHART_VLM_MAX_WORKERS = int(os.environ.get("OPENLAD_CHART_VLM_MAX_WORKERS", "1"))
+# Rebuild labeled ruled-grid diagrams (ball maps, register maps) as clean
+# tables during ingestion (deterministic, model-free). 1=on, 0=off.
+GRID_RECONSTRUCTION_ENABLED = int(os.environ.get("OPENLAD_GRID_RECONSTRUCTION_ENABLED", "1"))
+# Harvest per-section identifier inventory (e.g. UART0-UART9) into the
+# structure index so chapter selection can match instance-level queries.
+SECTION_ENTITY_HARVEST_ENABLED = int(os.environ.get("OPENLAD_SECTION_ENTITY_HARVEST_ENABLED", "1"))
 
 # =============================================================================
 # Context Window Configuration

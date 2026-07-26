@@ -58,7 +58,7 @@ try:
 except ImportError:
     HAS_PDFPLUMBER = False
 
-from ..config import settings, INGEST_MAX_WORKERS
+from ..config import settings, INGEST_MAX_WORKERS, GRID_RECONSTRUCTION_ENABLED
 from ..models import get_model_client
 
 
@@ -304,6 +304,7 @@ class DocumentParser:
                 pdf_page_num = page_num + 1
 
                 # 1. Extract text + tables via pdfplumber
+                plumber_page = None
                 try:
                     plumber_page = plumber_doc.pages[page_num]
                     text = plumber_page.extract_text() or ""
@@ -313,33 +314,46 @@ class DocumentParser:
 
                 # 2. Extract tables via pdfplumber
                 table_md = ""
-                try:
-                    raw_tables = plumber_page.extract_tables()
-                    if raw_tables:
-                        for tab_idx, tab in enumerate(raw_tables):
-                            if not tab or len(tab) < 2:
-                                continue
-                            try:
-                                import pandas as pd
-                                df = pd.DataFrame(tab[1:], columns=tab[0])
-                                if df is not None and not df.empty:
-                                    # Filter pseudo-tables
-                                    total_cells = df.shape[0] * df.shape[1]
-                                    empty_cells = df.isna().sum().sum() + (df == '').sum().sum()
-                                    empty_ratio = empty_cells / total_cells if total_cells > 0 else 0
-                                    if empty_ratio >= 0.5 and df.shape[0] <= 3 and df.shape[1] <= 3:
-                                        logger.debug(f"Skipping pseudo-table page {pdf_page_num} table {tab_idx+1}")
-                                        continue
-                                    md = df.to_markdown(index=False, floatfmt='')
-                                    table_md += f"\n\n[Table {tab_idx+1}]\n{md}\n"
-                            except Exception as e:
-                                logger.debug(f"Table to markdown failed page {pdf_page_num} table {tab_idx+1}: {e}")
-                except Exception as e:
-                    logger.debug(f"Table detection failed page {pdf_page_num}: {e}")
+                if plumber_page is not None:
+                    try:
+                        raw_tables = plumber_page.extract_tables()
+                        if raw_tables:
+                            for tab_idx, tab in enumerate(raw_tables):
+                                if not tab or len(tab) < 2:
+                                    continue
+                                try:
+                                    import pandas as pd
+                                    df = pd.DataFrame(tab[1:], columns=tab[0])
+                                    if df is not None and not df.empty:
+                                        # Filter pseudo-tables
+                                        total_cells = df.shape[0] * df.shape[1]
+                                        empty_cells = df.isna().sum().sum() + (df == '').sum().sum()
+                                        empty_ratio = empty_cells / total_cells if total_cells > 0 else 0
+                                        if empty_ratio >= 0.5 and df.shape[0] <= 3 and df.shape[1] <= 3:
+                                            logger.debug(f"Skipping pseudo-table page {pdf_page_num} table {tab_idx+1}")
+                                            continue
+                                        md = df.to_markdown(index=False, floatfmt='')
+                                        table_md += f"\n\n[Table {tab_idx+1}]\n{md}\n"
+                                except Exception as e:
+                                    logger.debug(f"Table to markdown failed page {pdf_page_num} table {tab_idx+1}: {e}")
+                    except Exception as e:
+                        logger.debug(f"Table detection failed page {pdf_page_num}: {e}")
 
                 full_text = text
                 if table_md:
                     full_text += table_md
+
+                # 2b. Rebuild labeled ruled grids (e.g. ball maps) from vector info.
+                # Text extraction scrambles grid diagrams into misleading garbage;
+                # the reconstruction is deterministic and model-free.
+                if GRID_RECONSTRUCTION_ENABLED and plumber_page is not None:
+                    try:
+                        from .layout.grid_reconstructor import reconstruct_grid_table
+                        grid_md = reconstruct_grid_table(plumber_page)
+                        if grid_md:
+                            full_text += f"\n\n[Grid Map]\n{grid_md}\n"
+                    except Exception as e:
+                        logger.debug(f"Grid reconstruction failed page {pdf_page_num}: {e}")
 
                 # 3. VLM page classification (pre-computed in two-pass above)
                 page_image = page_images.get(pdf_page_num)

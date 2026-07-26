@@ -120,6 +120,13 @@ class TenantMetadataDB:
                 )
             """)
 
+            # Migration: per-section identifier inventory (e.g. UART0-UART9)
+            # so instance-level queries can match the right chapter.
+            try:
+                cursor.execute("ALTER TABLE doc_structure_index ADD COLUMN entities TEXT")
+            except sqlite3.OperationalError:
+                pass
+
             # Fragment table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS doc_fragments (
@@ -611,17 +618,17 @@ class TenantMetadataDB:
                              section_level: int = 0, start_page: int = None,
                              end_page: int = None, section_type: str = "section",
                              parent_path: str = None, keywords: str = None,
-                             summary: str = None) -> int:
+                             summary: str = None, entities: str = None) -> int:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM doc_structure_index WHERE doc_id = ? AND section_path = ?", (doc_id, section_path))
             cursor.execute("""
                 INSERT INTO doc_structure_index
                 (doc_id, section_path, section_title, section_level, start_page, end_page,
-                 section_type, parent_path, keywords, summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 section_type, parent_path, keywords, summary, entities)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (doc_id, section_path, section_title, section_level, start_page, end_page,
-                  section_type, parent_path, keywords, summary))
+                  section_type, parent_path, keywords, summary, entities))
             conn.commit()
             return cursor.lastrowid
 
@@ -635,9 +642,9 @@ class TenantMetadataDB:
         with self.get_connection() as conn:
             return [dict(r) for r in conn.execute("""
                 SELECT * FROM doc_structure_index
-                WHERE doc_id = ? AND (section_title LIKE ? OR keywords LIKE ? OR summary LIKE ?)
+                WHERE doc_id = ? AND (section_title LIKE ? OR keywords LIKE ? OR summary LIKE ? OR entities LIKE ?)
                 ORDER BY section_level, start_page
-            """, (doc_id, f"%{keyword}%", f"%{keyword}%", f"%{keyword}%")).fetchall()]
+            """, (doc_id, f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%")).fetchall()]
 
     def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> List[int]:
         """Return page numbers whose raw_text contains the keyword verbatim.

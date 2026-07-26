@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from PIL import Image
 
-from ..config import settings, INGEST_MAX_WORKERS
+from ..config import settings, INGEST_MAX_WORKERS, SECTION_ENTITY_HARVEST_ENABLED
 from ..models import get_model_client
 from ..plugins import get_plugin_registry
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
@@ -1626,11 +1626,21 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
 
             # V5.0: Generate summary from all pages in this section
             summary = title
+            entities = ""
             try:
                 pages_text = path_pages.get(short_path, [])
                 if pages_text:
                     # Sort by page_num and join text
                     full_text = "\n".join([t for _, t in sorted(pages_text, key=lambda x: x[0])])
+                    # Harvest identifier inventory from the FULL section text
+                    # (before truncation) so instance-level queries (e.g. UART0)
+                    # can match this chapter in the structure index.
+                    if SECTION_ENTITY_HARVEST_ENABLED:
+                        try:
+                            from .entity_harvest import harvest_section_entities
+                            entities = harvest_section_entities(full_text)
+                        except Exception as ee:
+                            logger.debug(f"[STRUCTURE] entity harvest failed {short_path}: {ee}")
                     # V5.0: Ensure minimum content length for LLM summary
                     if len(full_text) < 50:
                         summary = f"{title}: {full_text[:200]}"
@@ -1648,7 +1658,8 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     doc_id=doc_id, section_path=full_path, section_title=title,
                     section_level=level, start_page=start_page,
                     end_page=end_page, section_type=section_type,
-                    parent_path=parent_path, keywords=keywords, summary=summary
+                    parent_path=parent_path, keywords=keywords, summary=summary,
+                    entities=entities
                 )
             except Exception as e:
                 logger.warning(f"Failed to save structure index {doc_id} {short_path}: {e}")
