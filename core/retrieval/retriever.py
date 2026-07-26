@@ -352,6 +352,102 @@ class HierarchicalRetriever:
                     for pn in range(start_page, end_page + 1):
                         pages.add(pn)
 
+                # ── Selectivity-weighted chapter widening (generic) ──
+                # The top-3 selection above only considers the first 3 query keywords
+                # with no IDF weighting, so a frequent token (e.g. a product/model name
+                # appearing in every section summary) can flood chapter selection and
+                # exclude the chapter that actually contains the answer. Here ALL query
+                # keywords are weighted by 1/(1+structure-df) and the top-K chapters by
+                # aggregated weighted score are UNIONED into the page filter. This only
+                # ever widens the filter, never narrows it, so behaviour is unchanged
+                # whenever the original selection was already correct.
+                retr_cfg = settings.CONTEXT_CONFIG
+                keyword_dfs = {}
+                chapter_weighted_scores = {}
+                chapter_lookup = {}
+                for kw in query_keywords:
+                    if not kw:
+                        continue
+                    try:
+                        kw_struct_results = self.metadata_db.search_structure_index(doc_id, kw)
+                    except Exception:
+                        kw_struct_results = []
+                    keyword_dfs[kw] = len(kw_struct_results)
+                    kw_weight = 1.0 / (1.0 + len(kw_struct_results))
+                    for sr in kw_struct_results:
+                        title_lower = sr.get("section_title", "").lower()
+                        kw_lower = kw.lower()
+                        if kw_lower in title_lower:
+                            kw_priority = 3
+                        elif kw_lower in sr.get("keywords", "").lower():
+                            kw_priority = 2
+                        else:
+                            kw_priority = 1
+                        key = (sr.get("section_path", ""), sr.get("start_page", 0))
+                        chapter_weighted_scores[key] = chapter_weighted_scores.get(key, 0.0) + kw_priority * kw_weight
+                        chapter_lookup[key] = sr
+
+                weighted_topk = retr_cfg.get("structure_chapter_weighted_topk", 5)
+                if chapter_weighted_scores and weighted_topk > 0:
+                    ranked = sorted(chapter_weighted_scores.items(),
+                                    key=lambda x: x[1], reverse=True)[:weighted_topk]
+                    widened = set()
+                    for key, _wscore in ranked:
+                        sr = chapter_lookup[key]
+                        start_page = sr.get("start_page", 0)
+                        end_page = sr.get("end_page", start_page)
+                        for pn in range(start_page, end_page + 1):
+                            widened.add(pn)
+                    new_pages = widened - pages
+                    if new_pages:
+                        pages.update(new_pages)
+                        logger.info(
+                            f"[RETRIEVER] selectivity-weighted chapters widened filter: "
+                            f"doc={doc_id[:8]} +{len(new_pages)} pages {sorted(new_pages)[:10]}"
+                        )
+
+                # ── Rare-token page rescue (generic) ──
+                # Exact identifiers (pin names, register names, part numbers, codes)
+                # are highly discriminating: when such a token is rare in the structure
+                # index, any page containing it verbatim is strong evidence and must not
+                # be excluded by the chapter filter. Identifier-looking tokens are
+                # scanned first; tokens matching too many pages are non-discriminating
+                # and skipped (this bounds both cost and noise).
+                if retr_cfg.get("rare_token_rescue_enabled", True):
+                    rare_max_df = retr_cfg.get("rare_token_max_structure_df", 2)
+                    rare_max_tokens = retr_cfg.get("rare_token_max_tokens", 5)
+                    rare_max_pages = retr_cfg.get("rare_token_max_pages", 16)
+
+                    def _identifier_rank(tok: str):
+                        # Identifier-like: contains '_' or mixes letters and digits
+                        has_mix = ("_" in tok) or (
+                            any(c.isdigit() for c in tok) and any(c.isalpha() for c in tok))
+                        return (0 if has_mix else 1, -len(tok))
+
+                    rare_keywords = sorted(
+                        [kw for kw in query_keywords
+                         if keyword_dfs.get(kw, 0) <= rare_max_df and len(kw) >= 5],
+                        key=_identifier_rank)
+                    rescued_pages = set()
+                    for kw in rare_keywords[:rare_max_tokens]:
+                        try:
+                            hit_pages = self.metadata_db.find_pages_containing(
+                                doc_id, kw, limit=rare_max_pages + 1)
+                        except Exception:
+                            hit_pages = []
+                        if not hit_pages or len(hit_pages) > rare_max_pages:
+                            continue  # no hits, or too common in page text to discriminate
+                        rescued_pages.update(hit_pages)
+                    new_rescued = rescued_pages - pages
+                    if new_rescued:
+                        pages.update(new_rescued)
+                        structure_boosted_pages.update((doc_id, pn) for pn in new_rescued)
+                        logger.info(
+                            f"[RETRIEVER] rare-token rescue: doc={doc_id[:8]} "
+                            f"+{len(new_rescued)} pages {sorted(new_rescued)[:10]} "
+                            f"(tokens={rare_keywords[:rare_max_tokens]})"
+                        )
+
                 # FIX: Structure-index as an independent retrieval path.
                 # Collect all structure-matched chapters as direct SearchResult evidence
                 # so that overview/spec chapters are not filtered out by FTS ranking.

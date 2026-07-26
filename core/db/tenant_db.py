@@ -639,6 +639,18 @@ class TenantMetadataDB:
                 ORDER BY section_level, start_page
             """, (doc_id, f"%{keyword}%", f"%{keyword}%", f"%{keyword}%")).fetchall()]
 
+    def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> List[int]:
+        """Return page numbers whose raw_text contains the keyword verbatim.
+
+        Used by the retriever's rare-token rescue: exact identifiers that are rare
+        in the structure index must not be excluded by chapter page filters.
+        Caller passes limit = max_pages + 1 to detect "too common to discriminate".
+        """
+        with self.get_connection() as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT DISTINCT page_num FROM doc_pages WHERE doc_id = ? AND raw_text LIKE ? LIMIT ?",
+                (doc_id, f"%{keyword}%", limit)).fetchall()]
+
     # === FTS Search ===
     def search_fts(self, query: str, limit: int = 20) -> List[Dict]:
         import re

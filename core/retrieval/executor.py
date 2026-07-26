@@ -504,6 +504,227 @@ Output structure (JSON):
         else:
             return self._single_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
 
+    @staticmethod
+    def _build_exact_match_excerpt(raw_text: str, tokens: List[str],
+                                   window_chars: int, max_windows: int):
+        """Build an excerpt of windows around exact keyword hits in a page.
+
+        Returns (excerpt, used_table_rows). Generic presentation aid: rows/lines
+        containing the exact query identifier are lifted to the top of the
+        delivered content so they survive context truncation and stay salient
+        to the LLM. Hits inside markdown table rows are preferred because
+        recovered tables carry structured facts, whereas broken plain-text/OCR
+        regions often pair values incorrectly and mislead the LLM.
+        """
+        if not raw_text or not tokens:
+            return "", False
+        raw_lower = raw_text.lower()
+        hits = []
+        for tok in tokens:
+            t = tok.lower()
+            if not t:
+                continue
+            start = 0
+            while True:
+                i = raw_lower.find(t, start)
+                if i < 0:
+                    break
+                hits.append(i)
+                start = i + len(t)
+        if not hits:
+            return "", False
+        hits = sorted(set(hits))
+
+        def _is_table_hit(pos: int) -> bool:
+            ls = raw_text.rfind("\n", 0, pos)
+            le = raw_text.find("\n", pos)
+            if le < 0:
+                le = len(raw_text)
+            return "|" in raw_text[ls + 1:le]
+
+        table_hits = [p for p in hits if _is_table_hit(p)]
+        used_table = bool(table_hits)
+        if table_hits:
+            hits = table_hits
+
+        # Merge hit positions into windows
+        windows = []
+        cur = None
+        for pos in hits:
+            a = max(0, pos - window_chars // 2)
+            b = min(len(raw_text), pos + window_chars // 2)
+            if cur is None or a > cur[1]:
+                if cur is not None:
+                    windows.append(tuple(cur))
+                cur = [a, b]
+            else:
+                cur[1] = max(cur[1], b)
+        if cur is not None:
+            windows.append(tuple(cur))
+        parts = [raw_text[a:b] for a, b in windows[:max_windows]]
+        return ("[Exact keyword match: " + ", ".join(tokens[:5]) + "]\n"
+                + "\n...\n".join(parts) + "\n"), used_table
+
+    def _apply_rare_token_rescue(self, results: List[SearchResult], query: str,
+                                 doc_id_filter) -> List[SearchResult]:
+        """Guarantee pages containing rare query identifiers are present and prominent.
+
+        Generic safety net for exact-lookup questions (pin names, register names,
+        part numbers, codes): a token that is rare in the structure index is
+        highly discriminating, so any page containing it verbatim is strong
+        evidence. Such pages are (a) appended when missing from the results,
+        (b) score-boosted when present, and (c) prefixed with an excerpt around
+        the exact keyword hits. Applies to every retrieval path that funnels
+        through _single_retrieve (chapter retrieval, FTS retrieval, fulltext
+        and decomposed sub-queries).
+        """
+        cfg = settings.CONTEXT_CONFIG
+        if not cfg.get("rare_token_rescue_enabled", True):
+            return results
+        if not self.metadata_db or not query:
+            return results
+
+        try:
+            query_keywords = self.retriever._tokenize_query(query.lower())
+        except Exception:
+            return results
+        if not query_keywords:
+            return results
+
+        rare_max_df = cfg.get("rare_token_max_structure_df", 2)
+        rare_max_tokens = cfg.get("rare_token_max_tokens", 5)
+        rare_max_pages = cfg.get("rare_token_max_pages", 16)
+        rare_max_rescued = cfg.get("rare_token_max_rescued_pages", 12)
+        rescue_score = cfg.get("rare_token_rescue_score", 45.0)
+        window_chars = cfg.get("exact_match_window_chars", 1500)
+        max_windows = cfg.get("exact_match_max_windows", 4)
+
+        def _identifier_rank(tok: str):
+            # Identifier-like: contains '_' or mixes letters and digits
+            has_mix = ("_" in tok) or (
+                any(c.isdigit() for c in tok) and any(c.isalpha() for c in tok))
+            return (0 if has_mix else 1, -len(tok))
+
+        # Determine target documents
+        if doc_id_filter and "__ALL__" not in doc_id_filter:
+            target_docs = list(doc_id_filter)
+        else:
+            target_docs = list(dict.fromkeys(r.doc_id for r in results))
+        if not target_docs:
+            return results
+
+        # Collect pages containing discriminating tokens, per document.
+        # Token policy:
+        # - identifier-like tokens (contain '_' or mix letters+digits, e.g. pin
+        #   names, register names, part numbers) are ALWAYS scanned; the page-hit
+        #   flood guard alone decides selectivity. This avoids false negatives
+        #   where a token appears in several section summaries (structure df > 2)
+        #   but still hits only a few pages in the full text.
+        # - other tokens are scanned only when rare in the structure index
+        #   (df <= rare_max_df) AND long enough to be meaningful (>=5 chars);
+        #   short generic tokens ("ball", "pin", "clk", "tx") are noisy
+        #   substrings that rescue large amounts of irrelevant pages.
+        per_doc_pages = {}   # doc_id -> set(page_num)
+        page_tokens = {}     # (doc_id, page_num) -> [tokens]
+        token_hit_counts = {}  # (doc_id, token) -> page-hit count (selectivity)
+        for doc_id in target_docs:
+            tokens_to_scan = []
+            for kw in query_keywords:
+                if not kw:
+                    continue
+                is_identifier = _identifier_rank(kw)[0] == 0
+                if not is_identifier:
+                    if len(kw) < 5:
+                        continue
+                    try:
+                        df = len(self.metadata_db.search_structure_index(doc_id, kw))
+                    except Exception:
+                        df = 0
+                    if df > rare_max_df:
+                        continue
+                tokens_to_scan.append(kw)
+            tokens_to_scan = sorted(set(tokens_to_scan), key=_identifier_rank)[:rare_max_tokens]
+            for kw in tokens_to_scan:
+                try:
+                    hit_pages = self.metadata_db.find_pages_containing(
+                        doc_id, kw, limit=rare_max_pages + 1)
+                except Exception:
+                    hit_pages = []
+                if not hit_pages or len(hit_pages) > rare_max_pages:
+                    continue  # no hits, or too common in page text to discriminate
+                token_hit_counts[(doc_id, kw)] = len(hit_pages)
+                for pn in hit_pages:
+                    per_doc_pages.setdefault(doc_id, set()).add(pn)
+                    page_tokens.setdefault((doc_id, pn), []).append(kw)
+
+        if not per_doc_pages:
+            return results
+
+        # Build excerpts and rank rescued pages by evidence strength:
+        # more matched tokens first, then table-row excerpts (structured facts)
+        # before plain-text excerpts, then token selectivity, then page order.
+        doc_pages_cache = {}
+        evidence = []  # (doc_id, pn, tokens, excerpt, used_table, selectivity)
+        for (doc_id, pn), tokens in page_tokens.items():
+            if doc_id not in doc_pages_cache:
+                try:
+                    doc_pages_cache[doc_id] = {
+                        p.get("page_num"): p
+                        for p in (self.metadata_db.get_document_pages(doc_id) or [])}
+                except Exception:
+                    doc_pages_cache[doc_id] = {}
+            raw = doc_pages_cache[doc_id].get(pn, {}).get("raw_text", "") or ""
+            excerpt, used_table = self._build_exact_match_excerpt(
+                raw, tokens, window_chars, max_windows)
+            if not excerpt:
+                continue
+            selectivity = sum(1.0 / token_hit_counts.get((doc_id, t), 1) for t in tokens)
+            evidence.append((doc_id, pn, tokens, excerpt, used_table, selectivity))
+
+        evidence.sort(key=lambda e: (-len(e[2]), not e[4], -e[5], e[0], e[1]))
+        evidence = evidence[:rare_max_rescued]
+        if not evidence:
+            return results
+
+        existing = {(r.doc_id, r.page_num): r for r in results}
+        appended = boosted = 0
+        docs_touched = set()
+        for doc_id, pn, tokens, excerpt, used_table, selectivity in evidence:
+            docs_touched.add(doc_id)
+            key = (doc_id, pn)
+            if key in existing:
+                r = existing[key]
+                if r.score < rescue_score:
+                    r.score = rescue_score
+                    boosted += 1
+                if excerpt and not (r.content or "").startswith("[Exact keyword match"):
+                    r.content = excerpt + (r.content or "")
+            else:
+                p = doc_pages_cache.get(doc_id, {}).get(pn)
+                if not p:
+                    continue
+                doc = self.metadata_db.get_document(doc_id)
+                # Excerpt-only content: compact, high-signal, budget-safe.
+                # Full-page content would flood the merger budget when
+                # several pages are rescued at once.
+                results.append(SearchResult(
+                    doc_id=doc_id, page_id=p.get("id"), page_num=pn,
+                    score=rescue_score + len(tokens),
+                    content=excerpt,
+                    section_title=p.get("section_title", ""),
+                    filename=doc.get("filename", "") if doc else "",
+                    title=doc.get("title", "") if doc else "",
+                    text_source=p.get("text_source", "direct_extract"),
+                    page_image_path=p.get("page_image_path"),
+                    extra_data={"exact_match_rescue": True},
+                ))
+                appended += 1
+        if appended or boosted:
+            logger.info(
+                f"[EXECUTOR] rare-token guarantee: appended={appended} boosted={boosted} "
+                f"docs={len(docs_touched)}")
+        return results
+
     def _single_retrieve(self, query: str, doc_filter: List[str],
                          max_context_quota: int = None, original_query: str = None) -> List[SearchResult]:
         doc_id_filter = self._resolve_doc_filter(doc_filter)
@@ -523,7 +744,7 @@ Output structure (JSON):
             chapter_results = self._chapter_retrieve(query, doc_id_filter[0], chapter_quota)
             if chapter_results:
                 logger.info(f"[SINGLE-RETRIEVE] Structure index coarse recall: query '{query}' -> recalled {len(chapter_results)} pages, total chars {sum(len(r.content) for r in chapter_results)}")
-                return chapter_results
+                return self._apply_rare_token_rescue(chapter_results, query, {doc_id_filter[0]})
 
         # FIX: Clean query, strip intent words to make embedding/FTS retrieval more precise
         search_query = self._clean_query_for_retrieval(query)
@@ -569,11 +790,15 @@ Output structure (JSON):
                 key = (r.doc_id, r.page_id)
                 if key not in seen or r.score > seen[key].score:
                     seen[key] = r
-            return sorted(seen.values(), key=lambda x: x.score, reverse=True)
+            merged = sorted(seen.values(), key=lambda x: x.score, reverse=True)
+            merged = self._apply_rare_token_rescue(merged, search_query, set(doc_id_filter))
+            return sorted(merged, key=lambda x: x.score, reverse=True)
 
-        return self.retriever.retrieve(query=search_query, plan=plan, max_results=max_results,
+        results = self.retriever.retrieve(query=search_query, plan=plan, max_results=max_results,
                                         explicit_doc_filter=set(doc_id_filter) if doc_id_filter else None,
                                         max_context_quota=max_context_quota)
+        return self._apply_rare_token_rescue(
+            results, search_query, set(doc_id_filter) if doc_id_filter else None)
 
     def _chapter_retrieve(self, query: str, doc_id: str, max_context_quota: int = None) -> List[SearchResult]:
         """

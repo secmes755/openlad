@@ -38,3 +38,4 @@ test_results_*.md
 # Temporary files
 *.tmp
 *.bak
+notes/

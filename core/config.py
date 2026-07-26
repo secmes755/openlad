@@ -178,6 +178,33 @@ CONTEXT_CONFIG = {
     "merger_content_cap_floor": 3000,
     # Merger: max source content returned to client
     "merger_max_source_content": 8000,
+    # ── Retriever: structure-index chapter filter widening (generic) ──
+    # Top-K chapters selected by IDF-weighted keyword scoring, unioned into the
+    # chapter page filter. Only ever widens the filter, never narrows it.
+    "structure_chapter_weighted_topk": 5,
+    # Retriever: rare-token page rescue (generic). Exact identifiers (pin names,
+    # register names, part numbers, codes) that are rare in the structure index
+    # rescue the pages containing them verbatim from chapter-filter exclusion.
+    "rare_token_rescue_enabled": True,
+    # A query keyword qualifies as "rare" when it matches at most this many
+    # structure-index sections (0 = no section mentions it at all).
+    "rare_token_max_structure_df": 2,
+    # Max rare keywords to rescue per document (bounds extra page scans).
+    "rare_token_max_tokens": 5,
+    # A rare keyword matching more pages than this is non-discriminating and skipped.
+    # Excerpt-only delivery makes rescued pages cheap, so this can be generous.
+    "rare_token_max_pages": 16,
+    # Hard cap on total rescued pages per retrieval, ranked by token selectivity.
+    # Prevents rescued pages from flooding the merger's context budget.
+    "rare_token_max_rescued_pages": 12,
+    # Score assigned to pages appended/boosted by exact rare-token matches. Keeps
+    # them at the top content-cap tier and ahead of merger budget pressure.
+    "rare_token_rescue_score": 45.0,
+    # Exact-match excerpt: chars of context window around each keyword hit, and
+    # max windows per rescued page. The excerpt is prepended to the page content
+    # so critical rows survive truncation and stay salient to the LLM.
+    "exact_match_window_chars": 1500,
+    "exact_match_max_windows": 4,
     # ── Low-value section indicators (generic document metadata pages) ──
     # These are cross-language generic patterns for cover/TOC/copyright pages
     # Industry-specific low-value sections should be defined in industry package rules.yaml
