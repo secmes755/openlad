@@ -36,6 +36,12 @@ def _create_query_lock():
 
 _query_lock = _create_query_lock()
 
+# Follow-up support: when a request carries a session_id but no explicit
+# chat_history, load the most recent stored messages so conversation-aware
+# rewrite (pronoun resolution) has context. Bounded to keep prompts small.
+CHAT_HISTORY_LOAD_LIMIT = 10        # max stored messages loaded per query
+CHAT_HISTORY_MSG_MAX_CHARS = 1500   # per-message content cap for history
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -80,18 +86,51 @@ async def query(req: QueryRequest, request: Request):
     if not engine:
         raise HTTPException(status_code=503, detail="Search engine not initialized, please try again later")
 
+    # Follow-up support: session history is write-only unless we load it here.
+    # Client-supplied chat_history always takes precedence; otherwise, when a
+    # session_id is provided, hydrate history from the stored session so
+    # follow-up questions ("what are their differences") can be resolved.
+    chat_history = req.chat_history
+    if req.session_id and not chat_history:
+        from ...db.tenant_db import get_tenant_metadata_db
+        try:
+            hist_db = get_tenant_metadata_db(ctx.tenant_id)
+            # Ownership check (same rule as GET /chat/sessions/{id}/messages):
+            # never hydrate another user's conversation into this query.
+            with hist_db.get_connection() as conn:
+                owned = conn.execute(
+                    "SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?",
+                    (req.session_id, ctx.user_id)
+                ).fetchone()
+            if not owned:
+                logger.warning(f"[QUERY] session {req.session_id[:8]} not owned by user, skip history hydration")
+                stored = []
+            else:
+                stored = hist_db.get_chat_messages(req.session_id)
+            # created_at has second granularity; id order is the true insertion order
+            stored = sorted(stored, key=lambda m: m.get("id", 0))
+            chat_history = [
+                {"role": m.get("role", ""),
+                 "content": (m.get("content", "") or "")[:CHAT_HISTORY_MSG_MAX_CHARS]}
+                for m in stored[-CHAT_HISTORY_LOAD_LIMIT:]
+            ]
+            if chat_history:
+                logger.info(f"[QUERY] Hydrated {len(chat_history)} messages from session {req.session_id[:8]}")
+        except Exception as e:
+            logger.warning(f"[QUERY] Failed to load session history: {e}")
+
     # Global concurrency lock — waiting time reported to user
     wait_start = time.time()
     async with _query_lock:
         wait_ms = int((time.time() - wait_start) * 1000)
-        
+
         query_start = time.time()
         result = await asyncio.to_thread(
             engine.query,
             query_text=req.query,
             tenant_id=ctx.tenant_id,
             industry_hint=req.industry,
-            chat_history=req.chat_history
+            chat_history=chat_history
         )
         elapsed_ms = int((time.time() - query_start) * 1000)
         
