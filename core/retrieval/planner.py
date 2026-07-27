@@ -75,12 +75,16 @@ Available retrieval tools:
         if query != raw_query:
             logger.info(f"[PHASE-1] Query rewrite: '{raw_query}' -> '{query}'")
         
-        # Step 0.5: Conversation-aware rewrite (resolve pronouns to concrete entities)
+        # Step 0.5: Conversation-aware rewrite (resolve pronouns to concrete entities).
+        # The rewritten text is used to enrich context sent to downstream LLMs
+        # (coarse filter, fine plan), but the ORIGINAL query is never replaced — the
+        # rewrite LLM can lose or swap entities, and a single bad rewrite poisons
+        # every downstream step.
         if chat_history:
             history_rewritten = self._rewrite_query_with_history(query, chat_history)
-            if history_rewritten != query:
-                logger.info(f"[PHASE-1] Conversation-aware rewrite: '{query}' -> '{history_rewritten}'")
-                query = history_rewritten
+            if history_rewritten and history_rewritten != query:
+                logger.info(f"[PHASE-1] Conversation-aware enrichment: '{history_rewritten}'")
+                chat_history = (chat_history or "") + f"\nAssistant query interpretation: {history_rewritten}\n"
 
         routed_category = self._route_category(query, chat_history)
         if not routed_category:
@@ -225,13 +229,13 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             candidate_ids = self._resolve_short_ids(short_ids)
             # FIX: Defensive completion — ensure entities explicitly mentioned in the query
             # have their corresponding documents included (not missed by the LLM)
-            candidate_ids = self._ensure_entity_coverage(query, candidate_ids, all_docs)
+            candidate_ids = self._ensure_entity_coverage(query, candidate_ids, all_docs, chat_history)
             return candidate_ids, time_range
         except Exception as e:
             logger.error(f"[PHASE-1] Coarse filter failed: {e}")
             return [], {}
 
-    def _ensure_entity_coverage(self, query: str, candidate_ids: List[str], docs: List[Dict]) -> List[str]:
+    def _ensure_entity_coverage(self, query: str, candidate_ids: List[str], docs: List[Dict], chat_history: str = None) -> List[str]:
         """
         Check whether product model names / entities mentioned in the query
         are covered by candidate_ids. If an entity appears explicitly in the query
@@ -239,25 +243,31 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
         """
         import re
         entities = []
-        # Extract model/product names from query (e.g., AB1234, XY567, etc.)
-        # Match single-letter prefix models like A123, B456
-        model_pattern = re.findall(r'(?<![A-Za-z0-9])[A-Za-z]{1,}[-]?[A-Za-z0-9]+(?![A-Za-z0-9])', query)
-        for m in model_pattern:
-            clean = m.replace('-', '').replace(' ', '').upper()
-            # Filter out noise words that are too short (e.g., "A1"), keep valid model names
-            # Rule: >=3 chars keep directly; 2 chars must contain both letters and digits (e.g., K7, T3)
-            if clean and clean not in entities:
-                has_letter = any(c.isalpha() for c in clean)
-                has_digit = any(c.isdigit() for c in clean)
-                if len(clean) >= 3 or (len(clean) >= 2 and has_letter and has_digit):
-                    entities.append(clean)
+        # Extract model/product names from query AND conversation history.
+        # History extraction ensures that documents named in earlier turns of
+        # a follow-up session are not lost when the rewrite LLM produces an
+        # incomplete rewritten query.
+        source_texts = [query]
+        if chat_history:
+            source_texts.append(chat_history)
 
-        # FIX: Also extract Chinese entities (company names, product names, etc.)
-        # Prefer 3-12 character Chinese words
-        cn_pattern = re.findall(r'[\u4e00-\u9fff]{2,12}', query)
-        for w in cn_pattern:
-            if w not in entities:
-                entities.append(w)
+        for source_text in source_texts:
+            model_pattern = re.findall(r'(?<![A-Za-z0-9])[A-Za-z]{1,}[-]?[A-Za-z0-9]+(?![A-Za-z0-9])', source_text)
+            for m in model_pattern:
+                clean = m.replace('-', '').replace(' ', '').upper()
+                # Filter out noise words that are too short (e.g., "A1"), keep valid model names
+                # Rule: >=3 chars keep directly; 2 chars must contain both letters and digits (e.g., K7, T3)
+                if clean and clean not in entities:
+                    has_letter = any(c.isalpha() for c in clean)
+                    has_digit = any(c.isdigit() for c in clean)
+                    if len(clean) >= 3 or (len(clean) >= 2 and has_letter and has_digit):
+                        entities.append(clean)
+
+            # FIX: Also extract Chinese entities (company names, product names, etc.)
+            cn_pattern = re.findall(r'[\u4e00-\u9fff]{2,12}', source_text)
+            for w in cn_pattern:
+                if w not in entities:
+                    entities.append(w)
 
         if not entities:
             return candidate_ids
@@ -270,8 +280,11 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             # Collect all documents containing this entity (match by title and filename)
             matching_docs = []
             for doc in docs:
-                title = (doc.get("title") or doc.get("filename") or "").upper()
-                if entity_upper in title:
+                # Match against BOTH title and filename, not just one-or-other.
+                # A poor title extraction ("Datasheet V1.0") must not be the sole
+                # barrier when the original filename clearly identifies the product.
+                searchable = ((doc.get("title") or "") + " " + (doc.get("filename") or "")).upper()
+                if entity_upper in searchable:
                     matching_docs.append(doc)
             
             if not matching_docs:
