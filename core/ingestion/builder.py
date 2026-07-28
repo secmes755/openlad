@@ -1637,8 +1637,13 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     # can match this chapter in the structure index.
                     if SECTION_ENTITY_HARVEST_ENABLED:
                         try:
-                            from .entity_harvest import harvest_section_entities
+                            from .entity_harvest import harvest_section_entities, harvest_acronyms
                             entities = harvest_section_entities(full_text)
+                            # Also harvest acronym/alias pairs (e.g. NPU=Neural Process Unit)
+                            # to make FTS searches by abbreviation match the full term.
+                            acronyms = harvest_acronyms(self.model_client, full_text, title)
+                            if acronyms:
+                                entities = (entities + ", " + acronyms) if entities else acronyms
                         except Exception as ee:
                             logger.debug(f"[STRUCTURE] entity harvest failed {short_path}: {ee}")
                     # V5.0: Ensure minimum content length for LLM summary
