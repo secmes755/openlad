@@ -499,7 +499,7 @@ class HierarchicalRetriever:
                                     page_id=p.get("id"),
                                     page_num=pn,
                                     score=c_score,
-                                    content=p.get("raw_text", "")[:3000],
+                                    content=(p.get("raw_text") or "")[:3000],
                                     section_title=p.get("section_title", ""),
                                     filename=doc.get("filename", "") if doc else "",
                                     title=doc.get("title", "") if doc else "",
@@ -629,7 +629,7 @@ class HierarchicalRetriever:
                         all_results.append(SearchResult(
                             doc_id=doc_id, page_id=p.get("id"), page_num=page_num,
                             score=0.35,
-                            content=p.get("raw_text", "")[:1500],  # FIX: increased supplementary page content length
+                            content=(p.get("raw_text") or "")[:1500],  # FIX: increased supplementary page content length
                             section_title=p.get("section_title", ""),
                             filename=doc.get("filename", "") if doc else "",
                             title=doc.get("title", "") if doc else ""
@@ -685,7 +685,7 @@ class HierarchicalRetriever:
                         all_results.append(SearchResult(
                             doc_id=doc_id, page_id=p.get("id"), page_num=pn,
                             score=page_score,
-                            content=p.get("raw_text", "")[:1500],
+                            content=(p.get("raw_text") or "")[:1500],
                             section_title=p.get("section_title", ""),
                             filename=doc.get("filename", "") if doc else "",
                             title=doc.get("title", "") if doc else ""
