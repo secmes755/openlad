@@ -35,6 +35,12 @@ class TenantMetadataDB:
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # WAL mode: writers don't block readers, and vice versa.
+        # Increase autocheckpoint threshold from default 1000 pages (~4 MB)
+        # to 20000 pages (~80 MB) so checkpoints are less frequent, avoiding
+        # write-stall 500 errors during sustained query loads.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA wal_autocheckpoint=20000")
         try:
             yield conn
         finally:
