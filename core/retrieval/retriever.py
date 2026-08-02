@@ -1436,7 +1436,9 @@ class SegmentMerger:
             doc_chars_used = 0
             for result in doc_results:
                 # FIX: Format-enhance plain-text lists in chapters like Block Diagram / System Bus Tree
-                content = self._enhance_list_content(result.content, result.section_title)
+                # Guard: some pages may have no extracted text (e.g., scanned/image-only pages),
+                # downstream segmentation and truncation assume a string.
+                content = self._enhance_list_content(result.content or "", result.section_title)
                 
                 # NEW: Smart content segmentation - identify multiple topic regions within a page.
                 # When a page contains distinct sub-section headings, segment and label them
@@ -1476,7 +1478,8 @@ class SegmentMerger:
                 if result.page_num in included_pages:
                     section_header = f"--- {result.section_title} (Page {result.page_num}) ---\n" if result.section_title else f"--- Page {result.page_num} ---\n"
                     # Use truncated content (consistent with what was sent to the LLM)
-                    content = self._enhance_list_content(result.content, result.section_title)
+                    # Guard: treat missing page text as empty string to avoid downstream NoneType errors.
+                    content = self._enhance_list_content(result.content or "", result.section_title)
                     segmented_content = self._segment_page_content(content, result.section_title)
                     if segmented_content != content:
                         content = segmented_content
