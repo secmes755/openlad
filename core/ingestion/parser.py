@@ -205,20 +205,28 @@ class DocumentParser:
                 except Exception:
                     pass
 
-                if not has_images:
-                    # No images -> definitely TEXT, skip VLM entirely
-                    page_classes[pdf_page_num] = "TEXT"
-                    continue
-
-                # Pass 1b: Has images -> check text length via pdfplumber
+                # Pass 1b: Extract text length via pdfplumber to decide whether VLM is needed
                 try:
                     plumber_page = plumber_doc.pages[page_num]
                     text = plumber_page.extract_text() or ""
                 except Exception:
                     text = ""
                 text = text.replace('\x00', '')
+                text_len = len(text.strip())
 
-                if len(text) > 1000:
+                vlm_min_text = settings.CHART_CONFIG.get("vlm_min_text_len_for_candidate", 1000)
+
+                if not has_images:
+                    # No images -> definitely not a visual candidate.
+                    # If the page is also empty text, mark it as BLANK so downstream
+                    # chunking and retrieval can skip it without any VLM work.
+                    if text_len == 0:
+                        page_classes[pdf_page_num] = "BLANK"
+                    else:
+                        page_classes[pdf_page_num] = "TEXT"
+                    continue
+
+                if text_len > vlm_min_text:
                     # Lots of text -> images are likely decorative/icons, skip VLM
                     page_classes[pdf_page_num] = "TEXT"
                     continue
@@ -229,7 +237,7 @@ class DocumentParser:
             plumber_doc.close()
         except Exception as e:
             logger.warning(f"PDF pre-filter failed, falling back to all-TEXT: {e}")
-            # Fallback: mark all as TEXT, skip VLM
+            # Fallback: mark all as TEXT, skip VLM (no blank detection on failure path)
             try:
                 pypdf_reader = pypdf.PdfReader(str(path))
                 total_pages = len(pypdf_reader.pages)
@@ -267,7 +275,7 @@ class DocumentParser:
                 stats = self.page_classifier.stats
                 logger.info(
                     f"VLM classification complete: {stats['total']} pages "
-                    f"(charts={stats['chart']}, text={stats['text']})"
+                    f"(chart={stats['chart']}, image={stats['image']}, text={stats['text']}, blank={stats['blank']})"
                 )
                 self.page_classifier.reset_stats()
             else:
@@ -277,7 +285,7 @@ class DocumentParser:
         else:
             logger.info(f"VLM classification: 0 candidate pages (of {total_pages} total) -> all TEXT")
 
-        # Ensure all pages have a class (fallback)
+        # Ensure all pages have a class (fallback to TEXT)
         for pn in range(1, total_pages + 1):
             if pn not in page_classes:
                 page_classes[pn] = "TEXT"
@@ -361,9 +369,14 @@ class DocumentParser:
 
                 page_class = page_classes.get(pdf_page_num, "TEXT")
 
-                if page_class == "CHART":
+                if page_class == "BLANK":
+                    # Blank page: no visual content, keep text empty and do not run VLM
+                    logger.info(f"PDF p{pdf_page_num}: page_class=BLANK -> skip VLM and chunking")
+                    full_text = ""
+
+                elif page_class == "CHART":
                     # Chart page -> high DPI VLM deep analysis
-                    logger.info(f"PDF p{pdf_page_num}: VLM class=CHART -> high DPI deep analysis")
+                    logger.info(f"PDF p{pdf_page_num}: page_class=CHART -> high DPI deep analysis")
                     hi_res_img = self._render_single_page(str(path), pdf_page_num, dpi=150)
                     if hi_res_img:
                         analysis = self._analyze_pdf_page_with_vlm(
@@ -375,8 +388,32 @@ class DocumentParser:
                                 f"\n\n---\n\n### Page Visual Analysis (VLM)\n\n{analysis}\n"
                             )
                             vlm_needed = True
+
+                elif page_class == "IMAGE":
+                    # Image / scanned page -> generic VLM description/transcription
+                    logger.info(f"PDF p{pdf_page_num}: page_class=IMAGE -> VLM image description")
+                    img_cfg = settings.CHART_CONFIG
+                    if img_cfg.get("vlm_image_description_enabled", True):
+                        # Reuse the already rendered 72 DPI image to avoid a second render
+                        # unless a higher-resolution image is requested for description.
+                        desc_img = page_image
+                        if img_cfg.get("vlm_image_description_use_hi_res", False):
+                            desc_img = self._render_single_page(str(path), pdf_page_num, dpi=150) or page_image
+                        if desc_img:
+                            analysis = self._describe_pdf_page_with_vlm(
+                                desc_img, pdf_page_num, page_text=full_text
+                            )
+                            if analysis:
+                                vlm_analyses[pdf_page_num] = analysis
+                                full_text += (
+                                    f"\n\n---\n\n### Page Visual Analysis (VLM)\n\n{analysis}\n"
+                                )
+                                vlm_needed = True
+                    else:
+                        logger.info(f"PDF p{pdf_page_num}: image description disabled by config")
+
                 else:
-                    logger.debug(f"PDF p{pdf_page_num}: VLM class=TEXT -> text extraction")
+                    logger.debug(f"PDF p{pdf_page_num}: page_class=TEXT -> text extraction")
 
                 # First page metadata
                 if pdf_page_num == 1:
@@ -566,6 +603,53 @@ Please output in English."""
                 os.unlink(tmp_path)
         except Exception as e:
             logger.warning(f"PDF page {page_num} VLM analysis failed: {e}")
+            return ""
+
+    def _describe_pdf_page_with_vlm(self, page_image, page_num: int, page_text: str = "") -> str:
+        """Generate a generic textual description/transcription for an image-heavy page.
+
+        This is intentionally more general than the chart analyzer: it handles photographs,
+        scanned pages, screenshots, and any non-chart visual page without domain-specific
+        assumptions. The description is appended to the page's raw_text so it becomes
+        searchable.
+        """
+        try:
+            import tempfile
+            import os
+
+            client = get_model_client()
+            img_cfg = settings.CHART_CONFIG
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                page_image.save(tmp.name, 'PNG')
+                tmp_path = tmp.name
+
+            try:
+                text_section = ""
+                if page_text and len(page_text.strip()) > 10:
+                    text_section = f"""\nRaw content already extracted from this page (use as reference only):\n---\n{page_text[:1000]}\n---\n"""
+
+                prompt = f"""You are analyzing a document page image.{text_section}
+Describe the page content accurately and concisely:
+- If the page contains readable text, transcribe it.
+- If the page contains a diagram, illustration, or drawing, describe the elements, labels, structure, and relationships shown.
+- If the page contains a photograph or screenshot, describe what is visible and any readable text or markings.
+
+Output in plain Markdown. Be factual and avoid guessing information not visible in the image."""
+
+                max_tokens = img_cfg.get("vlm_image_description_max_tokens", 1024)
+                temperature = img_cfg.get("vlm_image_description_temperature", 0.2)
+                analysis = client.generate_with_image(
+                    prompt=prompt,
+                    image_path=tmp_path,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
+                return analysis.strip() if analysis else ""
+            finally:
+                os.unlink(tmp_path)
+        except Exception as e:
+            logger.warning(f"PDF page {page_num} VLM image description failed: {e}")
             return ""
 
     # ========================================================================

@@ -16,7 +16,7 @@ from ..plugins import get_plugin_registry
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from .parser import DocumentParser, ParsedDocument, ParsedPage
 from .classifier import DocumentClassifier
-from .preprocessing import DocumentPreprocessor
+from .preprocessing import DocumentPreprocessor, PagePreprocessResult
 from .layout import LayoutAnalyzer, FormulaRecognizer, ChartAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -255,6 +255,25 @@ class DocumentIndexBuilder:
 
         def _process_page(idx: int):
             page = parsed_doc.pages[idx]
+            page_class = page.content_dict.get('page_class', 'TEXT')
+
+            if page_class == 'BLANK':
+                # Blank pages have no extractable content; skip OCR and image correction
+                # entirely to avoid wasting compute. Still persist a placeholder image
+                # so downstream consumers expecting a page_image_path do not break.
+                result = PagePreprocessResult()
+                result.page_num = page.page_num
+                result.raw_text = ""
+                result.text_source = "blank"
+                page_image = getattr(page, 'page_image', None)
+                if page_image is None:
+                    page_image = Image.new('RGB', (800, 1000), color='white')
+                image_filename = f"{doc_id}_p{page.page_num}.png" if doc_id else f"page_{page.page_num}.png"
+                image_path = settings.IMAGES_DIR / image_filename
+                page_image.save(image_path, "PNG")
+                result.page_image_path = str(image_path)
+                return page.page_num, result
+
             force_ocr = not page.raw_text or len(page.raw_text.strip()) < 20
             page_image = getattr(page, 'page_image', None)
             if page_image is None:
@@ -431,16 +450,17 @@ class DocumentIndexBuilder:
                 ocr_results=ocr_results
             )
 
-            # FIX: use parser's page type classification to override layout_analyzer results
-            # parser.py's _classify_pdf_page uses PyMuPDF metadata, more accurate for detecting image-embedded tables
-            parser_page_type = getattr(page, 'content_dict', {}).get('page_type')
-            if parser_page_type in ('image_table', 'scan_page', 'native_table'):
-                layout_result.page_type = parser_page_type
+            # parser.py's page_class (CHART/IMAGE/TEXT/BLANK) is more accurate than
+            # the legacy _classify_pdf_page page_type, so use it to override the
+            # layout analyzer page_type when available.
+            page_class = getattr(page, 'content_dict', {}).get('page_class')
+            if page_class == 'BLANK':
+                layout_result.page_type = 'blank'
 
             formulas = self._extract_formulas(layout_result, doc_id)
 
             charts = []
-            if settings.CHART_CONFIG.get("enabled", True):
+            if page_class != 'BLANK' and settings.CHART_CONFIG.get("enabled", True):
                 try:
                     vlm_analysis = getattr(page, 'content_dict', {}).get("vlm_analysis")
                     if not (vlm_analysis and len(str(vlm_analysis).strip()) > 10):
@@ -469,6 +489,14 @@ class DocumentIndexBuilder:
                 content_json["page_class"] = content_dict["page_class"]
             if content_dict.get("vlm_analysis"):
                 content_json["vlm_analysis"] = content_dict["vlm_analysis"]
+
+            # For blank pages, clear any derived text/summary to keep downstream data clean
+            if page_class == 'BLANK':
+                page_text = ""
+                page_summary = ""
+                entities = []
+                content_json["charts"] = []
+                content_json["formulas"] = []
 
             # Industry package page processing hook
             extra_data = None

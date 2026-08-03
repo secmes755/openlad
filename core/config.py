@@ -352,6 +352,12 @@ CHART_CONFIG = {
     "vlm_temperature": 0.2,
     "max_image_size": 1024,
     "append_to_raw_text": True,
+    # Page classification / image description guards
+    "vlm_blank_image_threshold": 0.005,   # ratio of non-white pixels; below this is blank
+    "vlm_min_text_len_for_candidate": 1000,  # pages with more text are not VLM candidates
+    "vlm_image_description_enabled": True,
+    "vlm_image_description_max_tokens": 1024,
+    "vlm_image_description_temperature": 0.2,
 }
 
 # =============================================================================
