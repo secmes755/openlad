@@ -226,10 +226,12 @@ class DocumentParser:
                         page_classes[pdf_page_num] = "TEXT"
                     continue
 
-                # Pass 1c: Has images -> VLM candidate regardless of text length.
-                # Text-heavy pages can still be diagrams (e.g., schematics with many
-                # labels). Let the VLM decide between CHART / IMAGE / TEXT instead of
-                # using a hard text-length cutoff that misclassifies schematics as TEXT.
+                if text_len > vlm_min_text:
+                    # Lots of text -> images are likely decorative/icons, skip VLM
+                    page_classes[pdf_page_num] = "TEXT"
+                    continue
+
+                # Pass 1c: Has images + minimal text -> VLM candidate
                 vlm_candidate_pages.append(pdf_page_num)
 
             plumber_doc.close()

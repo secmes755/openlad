@@ -127,9 +127,15 @@ class IngestionPlugin(ABC):
 
     def process_page(self, page: Any, raw_text: str,
                      layout_result: Any = None,
-                     model_client: Any = None) -> Optional[Dict[str, Any]]:
+                     model_client: Any = None,
+                     page_image: Any = None) -> Optional[Dict[str, Any]]:
         """Industry package post-processing for a single page.
         Returns optional extra_data; core stores it in doc_pages.extra_data.
+
+        Args:
+            page_image: Optional PIL Image object. Provided so industry packages can
+                        call vision models without re-rendering. Core does not
+                        interpret the image content.
 
         Return format:
         {
@@ -610,6 +616,32 @@ class PluginRegistry:
             if cat_key in category or category in cat_key:
                 return self._plugins.get(plugin_id)
         return self.get_generic()
+
+    def detect_plugin_for_document(self, parsed_doc: Any) -> Optional[IndustryPlugin]:
+        """Auto-detect an industry plugin by inspecting the parsed document.
+
+        Iterates registered plugins and calls their ingestion.detect_document_subtype()
+        hook. Returns the first plugin that claims the document, or None to fall back
+        to the generic flow. This keeps core free of industry-specific rules.
+        """
+        for plugin in self._plugins.values():
+            ingestion = getattr(plugin, "ingestion", None)
+            if not ingestion or not hasattr(ingestion, "detect_document_subtype"):
+                continue
+            try:
+                subtype = ingestion.detect_document_subtype(parsed_doc)
+                if subtype:
+                    logger.info(
+                        f"[PLUGIN_REGISTRY] Auto-detected industry plugin "
+                        f"'{plugin.manifest.id}' for document subtype '{subtype}'"
+                    )
+                    return plugin
+            except Exception as e:
+                logger.warning(
+                    f"[PLUGIN_REGISTRY] detect_document_subtype failed for "
+                    f"{plugin.manifest.id}: {e}"
+                )
+        return None
 
     def get_generic(self) -> Optional[IndustryPlugin]:
         """Get generic fallback plugin"""

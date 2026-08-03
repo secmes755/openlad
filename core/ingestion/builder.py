@@ -158,9 +158,16 @@ class DocumentIndexBuilder:
 
         # Load industry plugin
         plugin = None
+        registry = get_plugin_registry()
         if industry_hint:
-            registry = get_plugin_registry()
             plugin = registry.get_plugin(industry_hint)
+
+        # Auto-detect industry plugin when no explicit hint is provided.
+        # This lets industry packages with detect_document_subtype() hooks
+        # (e.g., schematics) take over without forcing users to select the
+        # package manually, while leaving generic documents unchanged.
+        if plugin is None and parsed_doc is not None:
+            plugin = registry.detect_plugin_for_document(parsed_doc)
 
         # L2: Page-level processing
         _report(30, "Building L2 page index")
@@ -503,11 +510,16 @@ class DocumentIndexBuilder:
             if plugin and hasattr(plugin.ingestion, 'process_page'):
                 try:
                     page._doc_subtype = doc_subtype  # Pass document subtype
+                    # Provide the rendered page image so industry packages can run
+                    # vision models (e.g., VLM-based schematic analysis) without
+                    # re-rendering. Core remains image-format agnostic.
+                    page_image = self._get_page_image_for_analysis(page, preprocessed)
                     extra = plugin.ingestion.process_page(
                         page=page,
                         raw_text=page.raw_text or original_page_text,
                         layout_result=layout_result,
-                        model_client=self.model_client
+                        model_client=self.model_client,
+                        page_image=page_image
                     )
                     if extra:
                         extra_data = {

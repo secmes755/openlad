@@ -20,6 +20,7 @@ from schematic_prompts import (
     PARSE_POWER_LAYOUT_PROMPT,
     PARSE_PINMUX_PROMPT,
     PARSE_DCDC_PROMPT,
+    PARSE_GENERIC_SCHEMATIC_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ class SchematicParser:
     def __init__(self, model_client=None):
         self.model_client = model_client
 
-    def parse_page(self, page_num: int, page_text: str, page_title: str = "") -> SchematicPage:
+    def parse_page(self, page_num: int, page_text: str, page_title: str = "",
+                   page_image: Any = None) -> SchematicPage:
         """解析单个原理图页面"""
         # 1. 文本预处理：去噪、去重
         cleaned_text = self._preprocess_text(page_text)
@@ -39,36 +41,27 @@ class SchematicParser:
         # 2. 快速规则分类（减少 LLM 调用）
         page_type = self._rule_based_classify(cleaned_text, page_title)
 
-        # 3. 规则分类不明确时，跳过 LLM 分类（避免每页都调用 LLM 导致超时）
-        # 规则分类已能捕获 power_tree/power_desc/power_layout/pinmux/dcdc 等关键页面
-        # unknown 页面大概率是重复布局/普通接口，用正则轻量提取即可
-
         page = SchematicPage(
             page_num=page_num,
             page_title=page_title,
             page_type=page_type,
         )
 
-        # 4. 根据页面类型用不同 prompt 提取结构化信息
-        # FIX: 只对明确分类为电源/引脚相关的页面调用 LLM 解析，避免每页都调用导致超时
-        # 超大页面（>80KB cleaned text）跳过 LLM，只做正则提取（LLM 上下文有限且处理慢）
+        # 3. 提取结构化信息：
+        #    - 对所有页面先用规则提取元件/网络（快、稳定）
+        #    - 对引脚复用/电源描述等表格密集型页面，再叠加轻量级 LLM 理解
         cleaned_len = len(cleaned_text)
-        skip_llm = cleaned_len > 80000
-        if skip_llm:
-            logger.debug(f"[SCHEMATIC] 页{page_num} 文本过大({cleaned_len}字符)，跳过 LLM 解析")
-            self._regex_extract_power(page, cleaned_text)
-            self._regex_extract_pinmux(page, cleaned_text)
-        elif page_type in ("power_tree", "power_desc", "dcdc"):
-            self._parse_power_page(page, cleaned_text, page_type)
-        elif page_type == "power_layout":
-            # power_layout 通常只有少量关键要求，正则提取即可
-            self._regex_extract_power(page, cleaned_text)
-        elif page_type == "pinmux":
-            self._parse_pinmux_page(page, cleaned_text)
-        elif page_type == "unknown":
-            # 规则分类不明确，尝试轻量级正则提取电源网络名（不调用 LLM）
-            self._regex_extract_power(page, cleaned_text)
-        # other 类型直接跳过，不解析
+        self._extract_components_and_nets(page, cleaned_text)
+        self._regex_extract_power(page, cleaned_text)
+
+        # LLM 仅在信息密度高且规则难以处理的页面使用，避免普通原理图页大量调用 VLM
+        use_llm = (
+            self.model_client is not None
+            and 50 <= cleaned_len <= 40000
+            and page.page_type in ("pinmux", "power_desc", "power_tree", "dcdc", "unknown")
+        )
+        if use_llm:
+            self._parse_generic_schematic_page(page, cleaned_text)
 
         return page
 
@@ -244,8 +237,8 @@ class SchematicParser:
 
         except Exception as e:
             logger.warning(f"[SCHEMATIC] LLM 解析电源页面失败 (页{page.page_num}): {e}")
-            # 回退到正则
-            self._regex_extract_power(page, text)
+            # 回退到规则提取
+            self._extract_components_and_nets(page, text)
 
     def _parse_pinmux_page(self, page: SchematicPage, text: str):
         """解析引脚复用页面"""
@@ -267,7 +260,7 @@ class SchematicParser:
                     ))
         except Exception as e:
             logger.warning(f"[SCHEMATIC] LLM 解析 PinMux 页面失败 (页{page.page_num}): {e}")
-            self._regex_extract_pinmux(page, text)
+            self._extract_components_and_nets(page, text)
 
     def _regex_extract_power(self, page: SchematicPage, text: str):
         """正则提取电源信息（无 LLM 回退）"""
@@ -289,25 +282,199 @@ class SchematicParser:
                         voltage=voltage,
                     ))
 
-    def _regex_extract_nets(self, page: SchematicPage, text: str):
-        """正则提取网络信息"""
-        # 简单提取：查找网络名和附近的引脚/元件信息
-        # 这是一个轻量级的补充提取
-        pass
+    def _extract_components_and_nets(self, page: SchematicPage, text: str):
+        """规则提取元件位号与网络名，并补全元件附近的参数/连接信息。
 
-    def _regex_extract_pinmux(self, page: SchematicPage, text: str):
-        """正则提取引脚复用信息（无 LLM 回退）"""
-        # 匹配 | Pin | Ball | Func1 | Func2 | ... 格式的表格行
-        lines = text.split('\n')
-        for line in lines:
-            if '|' in line and any(kw in line for kw in ['NPU', 'PWM', 'UART', 'I2C', 'SPI', 'GPIO']):
-                parts = [p.strip() for p in line.split('|') if p.strip()]
-                if len(parts) >= 3:
-                    page.pinmux.append(SchematicPinMux(
-                        pin=parts[0],
-                        ball=parts[1] if len(parts) > 1 else "",
-                        functions=parts[2:],
+        原理图 CAD 提取出的文本顺序通常混乱，无法精确重建 Netlist，但可以：
+        1. 用正则提取所有标准位号（C1037 / R204 / U20 等）；
+        2. 对每个位号，截取后面一小段文本作为 value/package 线索；
+        3. 用通用模式提取网络名（含下划线的总线/电源/信号名），作为可检索关键词。
+        """
+        # 常见封装尺寸、材质标记，不是元件位号
+        package_sizes = {"0201", "0402", "0603", "0805", "1206", "1210", "1812", "2010", "2512"}
+        dielectrics = {"X5R", "X7R", "X6S", "X7S", "NPO", "Y5V", "COG", "NP0"}
+        # 合并 LLM 已提取的位号，避免重复
+        seen_refs = {c.ref for c in page.components if c.ref}
+
+        # 辅助：在位号后截取“局部片段”（到下一个位号或换行为止）
+        ref_pattern = re.compile(r'\b([CRUQLDBVFMJXT]\d+[A-Z]?)\b')
+
+        def _local_tail(pos: int) -> str:
+            """截取当前位号后、到下一个位号或换行之前的文本。"""
+            window = text[pos:pos+120]
+            # 优先在下一个位号前截断
+            nxt = ref_pattern.search(window)
+            if nxt and nxt.start() > 0:
+                window = window[:nxt.start()]
+            # 再按换行截断，取第一行
+            window = window.split('\n')[0]
+            return window.strip()
+
+        def _extract_value(tokens: List[str], prefix: str) -> str:
+            """从局部 token 列表中按元件类型提取 value。"""
+            # 电容：必须含 F；电阻：必须含 Ω 或 K/M/R 后缀；电感：必须含 H
+            for tok in tokens[:8]:
+                t = tok.strip()
+                if not t or len(t) > 20 or '_' in t:
+                    continue
+                if prefix == "C":
+                    m = re.match(r'([\d.]+\s*[uUnNpPmMkKfF]?F)$', t, re.IGNORECASE)
+                    if m:
+                        return m.group(1)
+                elif prefix == "R":
+                    m = re.match(r'([\d.]+\s*(?:[KkMmRr]Ω?|Ω|ohm|ohms)?)$', t, re.IGNORECASE)
+                    if m and re.search(r'[KkMmRrΩΩ]|ohm', t, re.IGNORECASE):
+                        return m.group(1)
+                    # 纯阻值带 0R/10R 写法
+                    m = re.match(r'(\d+[Rr]\d*)$', t)
+                    if m:
+                        return m.group(1)
+                elif prefix == "L":
+                    m = re.match(r'([\d.]+\s*[uUnNmM]?H)$', t, re.IGNORECASE)
+                    if m:
+                        return m.group(1)
+            return ""
+
+        def _extract_package(tokens: List[str]) -> str:
+            """从局部 token 列表中提取封装尺寸。"""
+            for tok in tokens[:8]:
+                t = tok.strip()
+                m = re.match(r'([CR]\d{4})$', t, re.IGNORECASE) or re.match(r'(0201|0402|0603|0805|1206|1210)$', t)
+                if m:
+                    return m.group(1)
+            return ""
+
+        for m in ref_pattern.finditer(text):
+            ref = m.group(1)
+            if ref in seen_refs:
+                continue
+            seen_refs.add(ref)
+
+            # 基本过滤
+            if len(ref) > 10 or len(ref) < 2:
+                continue
+            prefix = ref[0]
+            num_part = re.sub(r'[A-Z]$', '', ref[1:], count=1, flags=re.IGNORECASE)
+            # 材质/封装标记不是元件位号
+            if ref.upper() in dielectrics or num_part in package_sizes:
+                continue
+            if num_part in package_sizes and prefix in {"R", "C", "L"}:
+                continue
+            if re.fullmatch(r'0+', num_part):
+                continue
+
+            tail = _local_tail(m.end())
+            tokens = tail.split()
+            value = _extract_value(tokens, prefix)
+            package = _extract_package(tokens)
+
+            page.components.append(SchematicComponent(
+                ref=ref,
+                value=value,
+                package=package,
+                characteristics=tail,
+                connected_nets=[],
+            ))
+
+        # 2) 提取网络名：
+        #    a) 含下划线且大写字母开头的总线/信号名，如 MIPI_DPHY_CSI0_D0P、GMAC0_TXD0_M0
+        #    b) 电源/地网络，如 VCC_1V8、VDD_NPU_S0、GND
+        #    c) 常见接口前缀的单一名称，如 HDMI_TX_CEC_M1、USB3_OTG0
+        net_patterns = [
+            # 总线/信号：大写开头，含下划线和数字
+            r'\b([A-Z][A-Z0-9]{1,}(?:_[A-Z0-9]+)+)\b',
+            # 电源网络
+            r'\b((?:VCC|VDD|VSS|VPP|VEE|AVDD|DVDD|RVDD|MVDD|NVDD|PVDD|UVDD|IOVDD|BUCK|LDO)\w*)\b',
+            # 地网络
+            r'\b(GND\w*)\b',
+            # 通用接口前缀
+            r'\b((?:MIPI|USB|HDMI|DP|GMAC|PCIE|SATA|SDMMC|EMMC|DDR|LPDDR|UART|I2C|SPI|PWM|GPIO|CSI|DSI|NPOR|RESET|XOUT|CLK|PMIC|TSADC|SAI|PDM|SPDIF|JTAG|CAM)[A-Z0-9_]*)\b',
+        ]
+        seen_nets = {n.net_name for n in page.nets if n.net_name}
+        for pat in net_patterns:
+            for m in re.finditer(pat, text):
+                name = m.group(1).rstrip('_')
+                if len(name) < 3 or name in seen_nets:
+                    continue
+                # 过滤掉与位号重合的
+                if name in seen_refs:
+                    continue
+                # 过滤明显噪声：纯数字、日期、版本号
+                if re.fullmatch(r'\d+', name) or re.match(r'20\d{2}|V\d+\.\d+', name):
+                    continue
+                # 过滤 coordinate-like A1 / B2
+                if re.fullmatch(r'[A-Z]\d+', name):
+                    continue
+                seen_nets.add(name)
+                page.nets.append(SchematicNet(net_name=name, nodes=[]))
+
+        # 3) 把 page_type 从 unknown 改成更具体的类型（仅基于文本特征）
+        text_lower = text.lower()
+        if page.page_type == "unknown":
+            if any(kw in text_lower for kw in ["power description", "power sequence", "work voltage", "sleep current"]):
+                page.page_type = "power_desc"
+            elif "caps should be placed" in text_lower or "placed under" in text_lower:
+                page.page_type = "power_layout"
+            elif ("pin" in text_lower or "ball" in text_lower) and text.count('GPIO') + text.count('PWM') + text.count('UART') + text.count('I2C') > 10:
+                page.page_type = "pinmux"
+
+    def _parse_generic_schematic_page(self, page: SchematicPage, text: str):
+        """通用原理图页面解析：提取元件、网络、电源、引脚复用等结构化信息"""
+        if not self.model_client:
+            self._extract_components_and_nets(page, text)
+            return
+
+        prompt = PARSE_GENERIC_SCHEMATIC_PROMPT.replace("{text}", text)
+        try:
+            result = self.model_client.generate(prompt, temperature=0.1, max_tokens=4096)
+            data = self._extract_json(result)
+
+            if isinstance(data, dict):
+                # 页面类型：如果 LLM 给出了更具体的类型，采用；否则保留规则分类
+                inferred_type = data.get("page_type", "").strip().lower()
+                if inferred_type and inferred_type != page.page_type:
+                    page.page_type = inferred_type
+
+                for item in data.get("components", []):
+                    page.components.append(SchematicComponent(
+                        ref=item.get("ref", ""),
+                        value=item.get("value", ""),
+                        package=item.get("package", ""),
+                        characteristics=item.get("function", "") or item.get("characteristics", ""),
+                        connected_nets=item.get("connected_nets", []),
                     ))
+
+                for item in data.get("nets", []):
+                    page.nets.append(SchematicNet(
+                        net_name=item.get("name", ""),
+                        nodes=item.get("connected_refs", []),
+                    ))
+
+                for item in data.get("power_supplies", []):
+                    page.power_supplies.append(SchematicPowerSupply(
+                        name=item.get("name", ""),
+                        voltage=item.get("voltage", ""),
+                        source=item.get("source", ""),
+                        max_current=item.get("max_current", ""),
+                        connected_pins=item.get("connected_pins", []),
+                        decoupling_caps=item.get("decoupling_caps", []),
+                        layout_notes=item.get("layout_notes", item.get("notes", "")),
+                        sequence=item.get("sequence", ""),
+                    ))
+
+                for item in data.get("pinmux", []):
+                    page.pinmux.append(SchematicPinMux(
+                        pin=item.get("pin", ""),
+                        ball=item.get("ball", ""),
+                        functions=item.get("functions", []),
+                        default_function=item.get("default_function", ""),
+                    ))
+
+                page.special_notes.extend(data.get("special_notes", []))
+
+        except Exception as e:
+            logger.warning(f"[SCHEMATIC] 通用解析失败 (页{page.page_num}): {e}")
+            self._extract_components_and_nets(page, text)
 
     def _extract_json(self, text: str) -> Any:
         """从 LLM 输出中提取 JSON"""

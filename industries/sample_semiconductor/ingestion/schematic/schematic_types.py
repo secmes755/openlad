@@ -85,11 +85,21 @@ class SchematicPage:
             if ps.layout_notes:
                 parts.append(f"  布局要求: {ps.layout_notes}")
 
-        for net in self.nets:
-            parts.append(f"网络: {net.net_name} 连接节点: {', '.join(net.nodes)}")
+        # 网络汇总：不展开空节点，节省 token 并便于 FTS 匹配
+        if self.nets:
+            net_names = [n.net_name for n in self.nets if n.net_name]
+            parts.append("网络: " + ", ".join(net_names))
 
+        # 元件汇总：包含位号/参数/封装/附近文本线索
         for comp in self.components:
-            parts.append(f"元件: {comp.ref} {comp.value} {comp.package} {comp.characteristics}")
+            comp_parts = [f"元件{comp.ref}"]
+            if comp.value:
+                comp_parts.append(comp.value)
+            if comp.package:
+                comp_parts.append(comp.package)
+            if comp.characteristics:
+                comp_parts.append(comp.characteristics.strip().replace('\n', ' '))
+            parts.append(" ".join(comp_parts))
 
         for pm in self.pinmux:
             parts.append(f"引脚: {pm.pin} 球{pm.ball} 功能: {', '.join(pm.functions)}")

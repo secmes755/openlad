@@ -119,7 +119,8 @@ class SemiconductorIngestionPlugin:
 
     def process_page(self, page: Any, raw_text: str,
                      layout_result: Any = None,
-                     model_client: Any = None) -> Optional[Dict[str, Any]]:
+                     model_client: Any = None,
+                     page_image: Any = None) -> Optional[Dict[str, Any]]:
         """解析原理图页面结构化数据"""
         doc_subtype = getattr(page, '_doc_subtype', None)
         if doc_subtype != 'schematic':
@@ -134,7 +135,8 @@ class SemiconductorIngestionPlugin:
             sp = self._schematic_parser.parse_page(
                 page_num=page.page_num,
                 page_text=raw_text,
-                page_title=getattr(page, 'section_title', '') or ""
+                page_title=getattr(page, 'section_title', '') or "",
+                page_image=page_image
             )
             return {
                 "subtype": "schematic",
