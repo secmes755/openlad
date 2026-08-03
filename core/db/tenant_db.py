@@ -980,10 +980,18 @@ class TenantVectorDB:
                     doc_id TEXT NOT NULL,
                     embedding BLOB NOT NULL,
                     chunk_text_preview TEXT,
+                    chunk_text TEXT,
                     PRIMARY KEY (page_id, chunk_idx)
                 )""",
             ]:
                 cursor.execute(table_sql)
+            # Migration: older dbs created before chunk_text column existed.
+            try:
+                cols = [r[1] for r in cursor.execute("PRAGMA table_info(l2_chunks)").fetchall()]
+                if "chunk_text" not in cols:
+                    cursor.execute("ALTER TABLE l2_chunks ADD COLUMN chunk_text TEXT")
+            except Exception as mig_e:
+                logger.warning(f"l2_chunks chunk_text migration failed (non-critical): {mig_e}")
             conn.commit()
             conn.close()
         except Exception as e:

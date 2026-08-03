@@ -358,6 +358,9 @@ CHART_CONFIG = {
     "vlm_image_description_enabled": True,
     "vlm_image_description_max_tokens": 1024,
     "vlm_image_description_temperature": 0.2,
+    # Cost guard for deep VLM analysis of CHART pages.
+    # 0 = unlimited (analyze every classified CHART page). Set >0 to cap cost on large schematics.
+    "vlm_max_chart_pages_per_doc": int(os.environ.get("OPENLAD_VLM_MAX_CHART_PAGES", "0")),
 }
 
 # =============================================================================
