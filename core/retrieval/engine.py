@@ -336,6 +336,15 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         query_type = self._classify_query(query_text)
         logger.info(f"[ENGINE] query classification: {query_type}")
 
+        # For follow-up queries with chat history, prefer the traditional planner because
+        # it is context-aware (_rewrite_query_with_history + _ensure_entity_coverage), while
+        # the AgenticRetriever only sees the current query in isolation. Without this guard,
+        # a pronoun-only follow-up like "他们主要差别在哪里？" gets classified as deep_research
+        # and loses documents from the prior turn (e.g., RK3562).
+        if query_type == "deep_research" and chat_history_str:
+            logger.info("[ENGINE] deep_research query with chat history; switching to traditional planner to preserve context")
+            query_type = "traditional"
+
         if query_type == "deep_research":
             # Deep research path
             retrieval_result, synthesis_result, router_plan = self._execute_deep_research(
