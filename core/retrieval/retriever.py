@@ -720,6 +720,84 @@ class HierarchicalRetriever:
             except EmbeddingError as e:
                 logger.warning(f"Vector search fallback failed: {e}")
 
+        # ── Hybrid vector recall v2 (conservative) ──
+        # Historical constraint: raw vector recall is LESS accurate than FTS for
+        # exact-lookup, so it must never displace FTS results. This block only:
+        #   A. boosts pages already recalled (FTS/structure/fallback) when the
+        #      vector signal independently confirms them — rescues low-frequency
+        #      feature sentences (e.g. "Support ten UART interfaces") that rank
+        #      below high-frequency listing pages, and
+        #   B. appends strongly-matching pages FTS missed, with a low base score
+        #      so they never displace FTS leaders (merger truncation absorbs them).
+        hv_cfg = settings.CONTEXT_CONFIG
+        if hv_cfg.get("hybrid_vector_enabled", True) and all_results and self.vector_db:
+            try:
+                query_emb = self.model_client.embed(query)
+                if query_emb:
+                    hv_min = hv_cfg.get("hybrid_vector_min_score", 0.45)
+                    hv_per_doc = hv_cfg.get("hybrid_vector_per_doc", 4)
+                    hv_scale = hv_cfg.get("hybrid_vector_boost_scale", 25.0)
+                    hv_base = hv_cfg.get("hybrid_vector_supplement_base", 5.0)
+                    hv_filter = None
+                    num_docs = 1
+                    if doc_id_filter and "__ALL__" not in doc_id_filter:
+                        hv_filter = doc_id_filter
+                        num_docs = max(1, len(doc_id_filter))
+                    hv_hits = self.vector_db.search_l2_chunks(
+                        query_emb,
+                        limit=hv_per_doc * num_docs,
+                        doc_id_filter=hv_filter,
+                        min_score=hv_min)
+                    if hv_hits:
+                        # page_id -> best vector similarity
+                        vec_by_page = {}
+                        for h in hv_hits:
+                            key = (h["doc_id"], h["page_id"])
+                            if key not in vec_by_page or h["score"] > vec_by_page[key]:
+                                vec_by_page[key] = h["score"]
+                        # A. Confirm-boost already-recalled pages
+                        boosted = 0
+                        for r in all_results:
+                            vs = vec_by_page.get((r.doc_id, r.page_id))
+                            if vs is not None:
+                                r.score += vs * hv_scale
+                                boosted += 1
+                        # B. Gap-fill strongly matching pages FTS missed (tail, low score)
+                        existing_keys = {(r.doc_id, r.page_id) for r in all_results}
+                        per_doc_filled = {}
+                        filled = 0
+                        for h in hv_hits:
+                            key = (h["doc_id"], h["page_id"])
+                            if key in existing_keys:
+                                continue
+                            if per_doc_filled.get(h["doc_id"], 0) >= hv_per_doc:
+                                continue
+                            page = self.metadata_db.get_page(h["page_id"])
+                            if not page:
+                                continue
+                            doc = self.metadata_db.get_document(h["doc_id"])
+                            if not doc:
+                                continue
+                            all_results.append(SearchResult(
+                                doc_id=h["doc_id"], page_id=h["page_id"],
+                                page_num=page.get("page_num"),
+                                score=hv_base + h["score"] * hv_scale * 0.1,
+                                content=(page.get("raw_text") or "")[:1500],
+                                section_title=page.get("section_title", ""),
+                                filename=doc.get("filename", ""),
+                                title=doc.get("title", ""),
+                                extra_data={"vector_supplement": True}))
+                            existing_keys.add(key)
+                            per_doc_filled[h["doc_id"]] = per_doc_filled.get(h["doc_id"], 0) + 1
+                            filled += 1
+                        logger.info(
+                            f"[RETRIEVER] hybrid vector v2: {len(hv_hits)} hits, "
+                            f"confirmed+{boosted}, filled+{filled}")
+            except EmbeddingError as e:
+                logger.warning(f"[RETRIEVER] hybrid vector v2 skipped (embedding unavailable): {e}")
+            except Exception as e:
+                logger.warning(f"[RETRIEVER] hybrid vector v2 failed: {e}")
+
 
         initial_doc_ids = set(r.doc_id for r in all_results)
         docs_to_supplement = set(initial_doc_ids)
@@ -1451,6 +1529,13 @@ class SegmentMerger:
                 # FIX: After context budget increased to 80K, proportionally relax single-page content cap.
                 # FIX2: Dynamically allocate quota based on page score; higher-score pages get more content.
                 max_content_len = self._get_content_cap(result.score, cfg)
+                # FIX3: Cap single-page content to a fraction of the per-document quota
+                # so one huge high-score page (e.g. a 48K-char pin list) cannot
+                # monopolize the budget and starve every other relevant page.
+                single_page_cap = max(cfg.get("merger_content_cap_floor", 3000),
+                                      int(max_per_doc * cfg.get("merger_single_page_cap_fraction", 0.33)))
+                if max_content_len > single_page_cap:
+                    max_content_len = single_page_cap
                 
                 if len(content) > max_content_len:
                     # FIX: When truncating, prioritize preserving paragraphs containing query keywords

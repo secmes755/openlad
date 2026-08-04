@@ -182,6 +182,11 @@ CONTEXT_CONFIG = {
     "merger_content_cap_medium": 6000,
     "merger_content_cap_low": 3000,
     "merger_content_cap_floor": 3000,
+    # FIX: A single high-score page (e.g. a 48K-char pin list) must not be allowed
+    # to monopolize the per-document quota and starve every other relevant page.
+    # Single-page content cap = max(floor, per_doc_quota * fraction). Applied on
+    # top of the score-tier cap above (min of the two).
+    "merger_single_page_cap_fraction": 0.25,
     # Merger: max source content returned to client
     "merger_max_source_content": 8000,
     # ── Retriever: structure-index chapter filter widening (generic) ──
@@ -206,6 +211,20 @@ CONTEXT_CONFIG = {
     # Score assigned to pages appended/boosted by exact rare-token matches. Keeps
     # them at the top content-cap tier and ahead of merger budget pressure.
     "rare_token_rescue_score": 45.0,
+    # ── Hybrid vector recall v2 (conservative) ──
+    # Historical constraint: early experiments showed raw vector recall was LESS
+    # accurate than FTS for exact-lookup, so vector was demoted to a fallback-only
+    # path. This block must NOT replace or delete any FTS result. It only:
+    #   A. boosts pages already recalled by FTS/structure when the vector signal
+    #      independently confirms them (rescues low-frequency feature sentences
+    #      like "Support ten UART interfaces" from ranking loss), and
+    #   B. appends strongly-matching pages (strict threshold, capped per doc) that
+    #      FTS missed, with a low base score so they never displace FTS leaders.
+    "hybrid_vector_enabled": True,        # master switch; False = pure FTS (current behavior)
+    "hybrid_vector_min_score": 0.45,      # similarity threshold (stricter than fallback 0.3)
+    "hybrid_vector_per_doc": 4,           # max gap-filled pages per doc
+    "hybrid_vector_boost_scale": 25.0,    # confirmed-page boost = vec_score * scale
+    "hybrid_vector_supplement_base": 5.0, # base score for gap-filled pages (tail, low)
     # Exact-match excerpt: chars of context window around each keyword hit, and
     # max windows per rescued page. The excerpt is prepended to the page content
     # so critical rows survive truncation and stay salient to the LLM.
