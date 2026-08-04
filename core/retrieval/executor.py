@@ -840,19 +840,21 @@ Output structure (JSON):
                 "title": title,
                 "pages": f"{start}-{end}" if end > start else str(start),
                 "summary": summary,
-                "keywords": ch.get("keywords", "") or ""
+                "keywords": ch.get("keywords", "") or "",
+                "entities": ch.get("entities", "") or ""
             })
         
         if not chapter_list:
             return self._fallback_to_fts(query, doc_id)
         
         # FIX: Ensure structure-index semantic matches are not missed by LLM title-only selection.
-        # A chapter whose summary or keywords explicitly mentions the query topic (e.g. "NPU")
-        # should be included even if its title does not contain the query keyword.
-        # This is a generic, content-agnostic recall mechanism.
-        def _chapter_matches_query(ch: dict, q: str) -> bool:
+        # A chapter whose summary, keywords or harvested entities explicitly mentions the query
+        # topic (e.g. "NPU", "UART") should be included even if its title does not contain the
+        # query keyword. This is a generic, content-agnostic recall mechanism.
+        def _chapter_match_score(ch: dict, q: str) -> int:
+            """Return number of query tokens matched in title/keywords/summary/entities (0 = no match)."""
             if not q:
-                return False
+                return 0
             q_lower = q.lower()
             tokens = []
             for m in re.finditer(r'[\u4e00-\u9fff]{2,}', q_lower):
@@ -861,18 +863,24 @@ Output structure (JSON):
                 token = m.group()
                 if not re.match(r'^\d+$', token):
                     tokens.append(token)
-            text = f"{ch.get('title', '')} {ch.get('keywords', '')} {ch.get('summary', '')}".lower()
+            text = f"{ch.get('title', '')} {ch.get('keywords', '')} {ch.get('summary', '')} {ch.get('entities', '')}".lower()
+            hit = 0
             for t in tokens:
                 if re.fullmatch(r'[a-z0-9]+', t):
                     # ASCII tokens use word-boundary matching to avoid false hits
                     # (e.g. query token "ai" must not match "SAI" or "available")
                     if re.search(r'\b' + re.escape(t) + r'\b', text):
-                        return True
+                        hit += 1
                 elif t in text:
-                    return True
-            return False
+                    hit += 1
+            return hit
 
-        preselected_indices = {ch["index"] for ch in chapter_list if _chapter_matches_query(ch, query)}
+        scored = [(ch["index"], _chapter_match_score(ch, query)) for ch in chapter_list]
+        scored = [(idx, s) for idx, s in scored if s > 0]
+        # Cap pre-selection to avoid noise from generic entity tokens (e.g. DDR, USB)
+        # matching many chapters; keep the strongest matches only.
+        scored.sort(key=lambda x: x[1], reverse=True)
+        preselected_indices = {idx for idx, _ in scored[:8]}
         if preselected_indices:
             logger.info(f"[CHAPTER-RETRIEVE] Pre-selected {len(preselected_indices)} chapters via structure-index semantic match: "
                         f"{[chapter_list[i]['title'] for i in sorted(preselected_indices)][:5]}")
@@ -892,6 +900,9 @@ The document contains the following chapters (title + page numbers + content pre
             prompt += f"\n[{ch['index']}] {ch['title']} (pages {ch['pages']})"
             if ch['summary']:
                 prompt += f"\n    Preview: {ch['summary']}"
+            ents = ch.get('entities', '') or ''
+            if ents:
+                prompt += f"\n    Entities: {ents[:150]}"
         
         cfg = settings.CONTEXT_CONFIG
         chapter_select_max = cfg.get("chapter_select_max", 20)
