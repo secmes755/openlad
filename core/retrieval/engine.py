@@ -307,6 +307,85 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                 lines.append(f"{role}: {content}")
         return "\n".join(lines)
 
+    def _lookup_spec_facts(self, query_text: str, tenant_id: str,
+                           metadata_db, plan: Dict) -> List[Dict]:
+        """Look up the assertion-level spec_facts index for this query.
+
+        Builds the keyword set from English tokens in the query plus the
+        configurable Chinese->English expansion (spec_query_terms). Only facts
+        with >= spec_facts_min_hits keyword hits qualify. Returns [] when the
+        feature is off, the table is empty, or nothing matches — the caller
+        then proceeds with the normal page-level context unchanged.
+        """
+        from ..config import settings
+        cfg = settings.CONTEXT_CONFIG
+        if not cfg.get("spec_facts_enabled", False):
+            return []
+        if not hasattr(metadata_db, "search_spec_facts"):
+            return []
+
+        import re as _re
+        keywords: List[str] = []
+        # English / model tokens from the query itself (e.g. RK3568, H.264, UART).
+        for tok in _re.findall(r'[A-Za-z][\w.\-]{1,20}', query_text):
+            keywords.append(tok)
+        # Chinese term expansion (query-understanding synonym layer), plus
+        # English synonym expansion (case-insensitive, e.g. GPU -> graphics).
+        query_lower = query_text.lower()
+        for zh, en_words in (cfg.get("spec_query_terms") or {}).items():
+            if zh in query_text or zh.lower() in query_lower:
+                keywords.extend(en_words)
+        # Planner-harvested entities (e.g. RK3568) improve entity scoping.
+        for ent in (plan.get("entities") or []):
+            if isinstance(ent, str) and ent:
+                keywords.append(ent)
+        # Deduplicate, keep order.
+        seen, uniq = set(), []
+        for kw in keywords:
+            k = kw.lower()
+            if k and k not in seen:
+                seen.add(k)
+                uniq.append(kw)
+        if not uniq:
+            return []
+
+        doc_filter = None
+        try:
+            df = plan.get("doc_id_filter") or plan.get("doc_filter")
+            if df:
+                doc_filter = set(df)
+        except Exception:
+            doc_filter = None
+
+        try:
+            hits = metadata_db.search_spec_facts(
+                uniq, doc_id_filter=doc_filter,
+                limit=cfg.get("spec_facts_max_inject", 6) * 3)
+        except Exception as e:
+            logger.warning(f"[ENGINE] spec-fact lookup failed (non-fatal): {e}")
+            return []
+
+        min_hits = cfg.get("spec_facts_min_hits", 2)
+        qualified = []
+        for h in hits:
+            hay = f"{h.get('entity','')} {h.get('attribute','')} {h.get('value','')} {h.get('source_text','')}".lower()
+            n = sum(1 for kw in uniq if kw.lower() in hay)
+            if n >= min_hits:
+                h["_hits"] = n
+                qualified.append(h)
+        qualified.sort(key=lambda x: -x["_hits"])
+        return qualified[: cfg.get("spec_facts_max_inject", 6)]
+
+    @staticmethod
+    def _format_spec_facts(facts: List[Dict]) -> str:
+        """Render spec facts as an authoritative evidence block for the context."""
+        lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
+        for f in facts:
+            lines.append(
+                f"- {f.get('entity','')} | {f.get('attribute','')}: {f.get('value','')}"
+                f"  (page {f.get('page_num','?')}; 原文: \"{f.get('source_text','')[:120]}\")")
+        return "\n".join(lines)
+
     def query(self, query_text: str, tenant_id: str,
               industry_hint: str = None,
               chat_history: List[Dict] = None) -> Dict[str, Any]:
@@ -358,9 +437,28 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             # Phase 2: Retrieve
             retrieval_result = executor.execute(plan, tenant_id=tenant_id, industry_hint=industry_hint, original_query=query_text)
 
+            # Phase 2.5: Spec-fact bypass — assertion-level (entity, attribute,
+            # value) index built from authoritative page text at ingest time.
+            # If the query matches spec facts, prepend them to the context as
+            # authoritative evidence. This is the missing assertion abstraction
+            # that page/chapter-level patches (vector-hybrid, VLM penalty,
+            # chapter-scope widening) were compensating for.
+            spec_facts = self._lookup_spec_facts(query_text, tenant_id, metadata_db, plan)
+            if spec_facts:
+                spec_block = self._format_spec_facts(spec_facts)
+                retrieval_result["context"] = spec_block + "\n\n" + retrieval_result.get("context", "")
+                retrieval_result["spec_facts"] = spec_facts
+                logger.info(f"[ENGINE] spec-fact bypass: injected {len(spec_facts)} authoritative facts")
+
             # Phase 3: Synthesize
             router_plan = self.router.route(query_text)
             rewritten_query = plan.get("rewritten_query", query_text)
+            # decomposed_retrieve produces a LIST of sub-queries; the synthesizer
+            # expects a string. Join sub-queries (fall back to the original query)
+            # so follow-up comparison queries routed to the traditional path do not
+            # crash with "expected string or bytes-like object, got 'list'".
+            if isinstance(rewritten_query, list):
+                rewritten_query = "; ".join(str(q) for q in rewritten_query) if rewritten_query else query_text
             routed_category = plan.get("routed_category", "")
 
             if industry_hint and industry_hint != "auto":

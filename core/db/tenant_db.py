@@ -126,6 +126,29 @@ class TenantMetadataDB:
                 )
             """)
 
+            # Spec facts table: structured (entity, attribute, value) assertions
+            # extracted from authoritative page text (NEVER from VLM descriptions).
+            # Assertion-level index so spec queries ("X 的 Y 是多少") bypass
+            # page/chapter granularity entirely — the missing abstraction layer
+            # that vector-hybrid / VLM-penalty / chapter-scope patches compensate for.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS spec_facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_id TEXT REFERENCES documents(id),
+                    entity TEXT,
+                    attribute TEXT,
+                    value TEXT,
+                    unit TEXT,
+                    page_num INTEGER,
+                    source_text TEXT,
+                    extractor TEXT DEFAULT 'rule',
+                    verified INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_spec_facts_doc ON spec_facts(doc_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_spec_facts_attr ON spec_facts(attribute)")
+
             # Migration: per-section identifier inventory (e.g. UART0-UART9)
             # so instance-level queries can match the right chapter.
             try:
@@ -651,6 +674,56 @@ class TenantMetadataDB:
                 WHERE doc_id = ? AND (section_title LIKE ? OR keywords LIKE ? OR summary LIKE ? OR entities LIKE ?)
                 ORDER BY section_level, start_page
             """, (doc_id, f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%")).fetchall()]
+
+    # === Spec Facts (assertion-level index) ===
+
+    def insert_spec_fact(self, doc_id: str, entity: str, attribute: str, value: str,
+                         page_num: int, source_text: str, unit: str = "",
+                         extractor: str = "rule", verified: int = 1):
+        with self.get_connection() as conn:
+            conn.execute("""
+                INSERT INTO spec_facts (doc_id, entity, attribute, value, unit,
+                                        page_num, source_text, extractor, verified)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (doc_id, entity, attribute, value, unit, page_num, source_text, extractor, verified))
+            conn.commit()
+
+    def clear_spec_facts(self, doc_id: Optional[str] = None):
+        """Clear spec facts (all docs or one doc) before re-extraction."""
+        with self.get_connection() as conn:
+            if doc_id:
+                conn.execute("DELETE FROM spec_facts WHERE doc_id = ?", (doc_id,))
+            else:
+                conn.execute("DELETE FROM spec_facts")
+            conn.commit()
+
+    def search_spec_facts(self, keywords: List[str], doc_id_filter: Optional[set] = None,
+                          limit: int = 20, verified_only: bool = True) -> List[Dict]:
+        """Match spec facts by keywords against entity/attribute/value/source_text.
+
+        Any keyword hit scores; more hits rank higher. Only verified facts by
+        default (values confirmed to appear in the original page text).
+        """
+        if not keywords:
+            return []
+        where, params = [], []
+        if verified_only:
+            where.append("verified = 1")
+        if doc_id_filter:
+            where.append(f"doc_id IN ({','.join('?' * len(doc_id_filter))})")
+            params.extend(doc_id_filter)
+        sql_where = ("WHERE " + " AND ".join(where)) if where else ""
+        with self.get_connection() as conn:
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM spec_facts {sql_where} LIMIT 2000", params).fetchall()]
+        scored = []
+        for r in rows:
+            hay = f"{r.get('entity','')} {r.get('attribute','')} {r.get('value','')} {r.get('source_text','')}".lower()
+            hits = sum(1 for kw in keywords if kw and kw.lower() in hay)
+            if hits:
+                scored.append((hits, r))
+        scored.sort(key=lambda x: (-x[0], x[1].get("page_num") or 0))
+        return [r for _, r in scored[:limit]]
 
     def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> List[int]:
         """Return page numbers whose raw_text contains the keyword verbatim.

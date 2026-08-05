@@ -244,6 +244,45 @@ CONTEXT_CONFIG = {
     # these pages heavily so authoritative text pages (Features) outrank them.
     # 0 disables the penalty.
     "vlm_page_penalty": 15.0,
+    # ── Spec facts bypass: assertion-level (entity, attribute, value) index ──
+    # Built from authoritative page text (never VLM descriptions). Spec queries
+    # ("X 的 Y 是多少") look up the index first; hits are prepended to the
+    # context as authoritative evidence, bypassing page/chapter-granularity
+    # retrieval weaknesses (the abstraction layer the vector-hybrid / VLM-
+    # penalty / chapter-scope patches were compensating for).
+    "spec_facts_enabled": True,
+    "spec_facts_max_inject": 6,           # max facts prepended to context
+    "spec_facts_min_hits": 2,             # min keyword hits for a fact to qualify
+    # Chinese query-term -> English keyword expansion for spec-fact lookup.
+    # This is a QUERY-UNDERSTANDING layer (synonym expansion), extensible via
+    # config; it never hardcodes any answer.
+    "spec_query_terms": {
+        "球径": ["ball size", "ball diameter", "ball"],
+        "球间距": ["ball pitch", "pitch"],
+        "焊球": ["solder ball", "ball"],
+        "封装": ["package", "body"],
+        "数量": ["count", "number"],
+        "多少个": ["count", "number"],
+        "几路": ["count", "channels", "lanes"],
+        "分辨率": ["resolution"],
+        "编码": ["encoder", "h.264", "h.265", "hevc"],
+        "解码": ["decoder", "h.264", "h.265", "hevc"],
+        "算力": ["tops", "compute power"],
+        "功耗": ["power", "tdp"],
+        "制程": ["process", "nm"],
+        "内存": ["memory", "ddr", "lpddr"],
+        "主频": ["frequency", "ghz", "mhz", "clock"],
+        "核心数": ["cores", "core count", "quad", "dual", "octa"],
+        # English synonym expansion (query contains the English term already,
+        # but the fact attribute may use a different surface form, e.g. query
+        # "GPU" vs fact attribute "3D Graphics Engine"). Case-insensitive.
+        "gpu": ["gpu", "graphics", "graphics engine", "3d graphics"],
+        "npu": ["npu", "neural", "compute power", "tops"],
+        "cpu": ["cpu", "cortex", "processor"],
+        "uart": ["uart", "serial"],
+        "h.264": ["h.264", "h264"],
+        "h.265": ["h.265", "h265", "hevc"],
+    },
     # ── Page type detection keywords (for layout analyzer) ──
     # Generic document structure keywords used to detect cover/TOC pages
     # These are cross-language and not specific to any industry
