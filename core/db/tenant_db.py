@@ -384,6 +384,7 @@ class TenantMetadataDB:
                 conn.execute("DELETE FROM doc_pages WHERE doc_id = ?", (doc_id,))
                 conn.execute("DELETE FROM doc_structure_index WHERE doc_id = ?", (doc_id,))
                 conn.execute("DELETE FROM doc_fragments WHERE doc_id = ?", (doc_id,))
+                conn.execute("DELETE FROM spec_facts WHERE doc_id = ?", (doc_id,))
                 conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
                 conn.commit()
                 return True

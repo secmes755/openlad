@@ -427,6 +427,11 @@ class DocumentIndexBuilder:
         # Clean up old data
         metadata_db.delete_document(doc_id)
 
+        # Document-level entity for spec facts (from filename — the only
+        # reliable title source at this stage).
+        from .spec_facts_extractor import infer_doc_entity
+        spec_entity = infer_doc_entity(parsed_doc.filename) if parsed_doc else ""
+
         # Industry package document subtype detection
         doc_subtype = None
         if plugin and hasattr(plugin.ingestion, 'detect_document_subtype'):
@@ -607,6 +612,22 @@ class DocumentIndexBuilder:
                 "section_title": section_title,
                 "page_text": r["page_text"]
             })
+
+            # Extract assertion-level spec facts from this page's authoritative
+            # text. The extractor strips VLM description blocks first and
+            # self-verifies every value against the original line — fully local,
+            # rule-based (no LLM, no external API). Failure never blocks ingest.
+            if settings.CONTEXT_CONFIG.get("spec_facts_enabled", True):
+                try:
+                    from .spec_facts_extractor import extract_spec_facts_from_text
+                    for fact in extract_spec_facts_from_text(r["page_text"], r["page_num"], spec_entity, doc_id):
+                        metadata_db.insert_spec_fact(
+                            doc_id=fact["doc_id"], entity=fact["entity"],
+                            attribute=fact["attribute"], value=fact["value"],
+                            page_num=fact["page_num"], source_text=fact["source_text"],
+                            verified=fact["verified"])
+                except Exception as e:
+                    logger.warning(f"spec fact extraction failed for page {r['page_num']}: {e}")
 
         self._save_structure_index_to_db(doc_id, structure_index, page_results, tenant_id=tid,
                                          explicit_sections=explicit_sections)
