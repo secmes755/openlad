@@ -237,7 +237,13 @@ CONTEXT_CONFIG = {
         "copyright", "revision history", "table of content",
         "figure index", "table index", "warranty disclaimer",
         "acknowledgment", "preface", "foreword",
+        "page visual analysis",
     ],
+    # FIX: VLM-generated page descriptions are AI hallucination risk (e.g. a VLM
+    # miscounted FCBGA636L as 560 solder balls on a package drawing). Penalize
+    # these pages heavily so authoritative text pages (Features) outrank them.
+    # 0 disables the penalty.
+    "vlm_page_penalty": 15.0,
     # ── Page type detection keywords (for layout analyzer) ──
     # Generic document structure keywords used to detect cover/TOC pages
     # These are cross-language and not specific to any industry

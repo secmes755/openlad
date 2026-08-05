@@ -527,6 +527,7 @@ class HierarchicalRetriever:
 
         # Phase 2 FIX: Determine page_filter from chapter_pages for ALL docs in filter
         # When structure index locates chapter ranges, FTS only searches within those pages
+        cfg = settings.CONTEXT_CONFIG
         page_filter = None
         if chapter_pages:
             # Union all chapter pages from all matched docs
@@ -534,6 +535,26 @@ class HierarchicalRetriever:
             for pages in chapter_pages.values():
                 all_chapter_pages.update(pages)
             if all_chapter_pages:
+                # FIX: A mixed page (e.g. Features page whose last line carries
+                # "Package Type: FCBGA636L ... ball size: 0.35mm") lives in a chapter
+                # whose title/summary/entities do not mention the queried topic, so a
+                # narrow chapter scope excludes the authoritative answer page entirely.
+                # When the structure-index scope is small, widen it by the pages
+                # adjacent to each located chapter page so FTS can still find the
+                # genuine text page. Configured threshold; 0 disables widening.
+                min_scope = cfg.get("structure_fts_min_scope", 10)
+                widen_radius = cfg.get("structure_fts_widen_radius", 2)
+                if min_scope > 0 and widen_radius > 0 and len(all_chapter_pages) < min_scope:
+                    widened = set()
+                    for pn in all_chapter_pages:
+                        for d in range(-widen_radius, widen_radius + 1):
+                            if pn + d >= 1:
+                                widened.add(pn + d)
+                    if widened:
+                        logger.info(
+                            f"[RETRIEVER] Phase 2: chapter scope small ({len(all_chapter_pages)} pages), "
+                            f"widened FTS scope to {len(widened)} pages")
+                        all_chapter_pages = widened
                 page_filter = all_chapter_pages
                 logger.info(f"[RETRIEVER] Phase 2: FTS restricted to {len(page_filter)} pages from structure index chapters")
 
@@ -1110,6 +1131,17 @@ class HierarchicalRetriever:
             content = raw_text or chunk_text
         # Compatible with extra_data (new) and schematic_data (old)
         extra_data = page.get("extra_data") or page.get("schematic_data")
+        # Structured marker for AI-generated page descriptions (VLM vision analysis).
+        # Prefer the structured content_json.vlm_analysis field over string matching
+        # so downstream penalties survive VLM output-format / language changes
+        # (generalization, not a hardcoded marker string).
+        try:
+            cj = json.loads(page.get("content_json") or "{}")
+            if cj.get("vlm_analysis"):
+                extra_data = dict(extra_data or {})
+                extra_data["has_vlm_description"] = True
+        except Exception:
+            pass
         return SearchResult(
             doc_id=result["doc_id"], page_id=result.get("page_id", page.get("id")),
             page_num=page.get("page_num"), score=result.get("score", 0.0),
@@ -1117,7 +1149,7 @@ class HierarchicalRetriever:
             filename=doc.get("filename", ""), title=doc.get("title", ""),
             text_source=page.get("text_source", "direct_extract"),
             page_image_path=page.get("page_image_path"),
-            extra_data=extra_data,
+            extra_data=extra_data or {},
         )
 
 
@@ -1472,6 +1504,26 @@ class SegmentMerger:
                     old_score = r.score
                     r.score -= low_value_penalty  # Significantly lower low-value page priority
                     logger.warning(f"[MERGER] low-value page penalty: doc={r.doc_id} page={r.page_num} title={r.section_title} score={old_score:.2f} -> {r.score:.2f}")
+
+                # FIX: AI-generated page descriptions (VLM vision analysis) are a
+                # hallucination risk (e.g. VLM miscounted FCBGA636L as 560 solder
+                # balls on a package drawing). Penalize these pages heavily so
+                # authoritative text pages (Features with correct values) outrank
+                # them. Detection is GENERALIZED: prefer the structured
+                # content_json.vlm_analysis marker (set by _create_search_result),
+                # fall back to the legacy text marker for pre-existing data.
+                vlm_penalty = cfg.get("vlm_page_penalty", 15.0)
+                if vlm_penalty:
+                    is_vlm = False
+                    ed = r.extra_data if isinstance(r.extra_data, dict) else {}
+                    if ed.get("has_vlm_description"):
+                        is_vlm = True
+                    elif "Page Visual Analysis (VLM)" in (r.content or ""):
+                        is_vlm = True  # legacy data without structured marker
+                    if is_vlm:
+                        old_score = r.score
+                        r.score -= vlm_penalty
+                        logger.warning(f"[MERGER] VLM-description page penalty: doc={r.doc_id} page={r.page_num} title={r.section_title} score={old_score:.2f} -> {r.score:.2f}")
             
             # Re-sort (after penalty)
             doc_results.sort(key=lambda x: x.score, reverse=True)
