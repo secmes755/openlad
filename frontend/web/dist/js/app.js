@@ -864,19 +864,31 @@ function closeUserMgmt() {
     document.getElementById('userMgmtModal').style.display = 'none';
 }
 
+function renderExpiry(expiresAt) {
+    if (!expiresAt) return `<span style="color:#059669;font-size:12px;">${__('usermgmt.never')}</span>`;
+    const exp = new Date(expiresAt);
+    const days = Math.ceil((exp - new Date()) / 86400000);
+    const dateStr = exp.toISOString().slice(0, 10);
+    if (days < 0) {
+        return `<span style="color:#dc2626;font-size:12px;font-weight:600;">${__('usermgmt.expired')}</span><br><span style="font-size:11px;color:#9ca3af;">${dateStr}</span>`;
+    }
+    const color = days <= 7 ? '#dc2626' : (days <= 30 ? '#d97706' : '#059669');
+    return `<span style="color:${color};font-size:12px;font-weight:600;">${days}${__('usermgmt.daysLeft')}</span><br><span style="font-size:11px;color:#9ca3af;">${dateStr}</span>`;
+}
+
 async function loadUsers() {
     const tbody = document.getElementById('userTableBody');
-    tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#9ca3af;">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#9ca3af;">Loading...</td></tr>';
     try {
         const res = await fetch(`${API_BASE}/admin/users`, { headers: getAuthHeaders() });
         if (!res.ok) {
-            tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#dc2626;">Load failed</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#dc2626;">Load failed</td></tr>';
             return;
         }
         const data = await res.json();
         const users = data.users || [];
         if (users.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#9ca3af;">No Users</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#9ca3af;">No Users</td></tr>';
             return;
         }
         tbody.innerHTML = users.map(u => `
@@ -887,13 +899,15 @@ async function loadUsers() {
                 </td>
                 <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;">${escapeHtml(u.tenant_id)}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;font-family:monospace;">${escapeHtml(u.api_key)}</td>
-                <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;text-align:center;">
-                    ${u.role !== 'admin' ? `<button onclick="deleteUser('${u.id}', '${escapeHtml(u.username)}')" style="background:#dc2626;color:white;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">${__('usermgmt.delete')}</button>` : '<span style="color:#9ca3af;font-size:12px;">—</span>'}
+                <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;">${renderExpiry(u.api_key_expires_at)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;text-align:center;white-space:nowrap;">
+                    <button onclick="regenerateKey('${u.id}', '${escapeHtml(u.username)}')" title="Rotate API Key" style="background:#2563eb;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;margin-right:4px;"><i class="fas fa-sync-alt"></i> ${__('usermgmt.regenerate')}</button>
+                    ${u.role !== 'admin' ? `<button onclick="deleteUser('${u.id}', '${escapeHtml(u.username)}')" style="background:#dc2626;color:white;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">${__('usermgmt.delete')}</button>` : ''}
                 </td>
             </tr>
         `).join('');
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#dc2626;">Load Error</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#dc2626;">Load Error</td></tr>';
     }
 }
 
@@ -901,6 +915,7 @@ async function createUser() {
     const username = document.getElementById('newUserName').value.trim();
     const password = document.getElementById('newUserPassword').value.trim();
     const role = document.getElementById('newUserRole').value;
+    const ttl = parseInt(document.getElementById('newUserTtl').value, 10);
     if (!username) {
         alert(__('login.errorEmpty'));
         return;
@@ -909,16 +924,36 @@ async function createUser() {
         const res = await fetch(`${API_BASE}/admin/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify({ username, password: password || undefined, role })
+            body: JSON.stringify({ username, password: password || undefined, role, api_key_ttl_days: ttl })
         });
         const data = await res.json();
         if (!res.ok) {
             alert(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'));
             return;
         }
-        alert('OK\nUsername: ' + data.username + '\nPassword: ' + data.password + '\nAPI Key: ' + data.api_key);
+        alert('OK\nUsername: ' + data.username + '\nPassword: ' + data.password + '\nAPI Key: ' + data.api_key + '\n' + __('usermgmt.column.expires') + ': ' + (data.api_key_expires_at || __('usermgmt.never')));
         document.getElementById('newUserName').value = '';
         document.getElementById('newUserPassword').value = '';
+        loadUsers();
+    } catch (e) {
+        alert(__('misc.error') + ': ' + e.message);
+    }
+}
+
+async function regenerateKey(userId, username) {
+    if (!confirm(__('usermgmt.confirmRegenerate'))) return;
+    try {
+        const res = await fetch(`${API_BASE}/admin/users/${userId}/regenerate-key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'));
+            return;
+        }
+        alert(username + '\nNew API Key: ' + data.api_key + '\n' + __('usermgmt.column.expires') + ': ' + (data.api_key_expires_at || __('usermgmt.never')));
         loadUsers();
     } catch (e) {
         alert(__('misc.error') + ': ' + e.message);

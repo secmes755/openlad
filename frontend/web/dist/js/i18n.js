@@ -64,6 +64,17 @@ const I18N_DICT = {
     "usermgmt.delete":           { zh: "删除", en: "Delete" },
     "usermgmt.confirmDelete":    { zh: "确定删除用户 ", en: "Are you sure to delete " },
     "usermgmt.confirmDeleteSuffix": { zh: " ？", en: "?" },
+    "usermgmt.ttl.label":        { zh: "有效期", en: "Validity" },
+    "usermgmt.ttl.90":           { zh: "90 天", en: "90 days" },
+    "usermgmt.ttl.180":          { zh: "180 天", en: "180 days" },
+    "usermgmt.ttl.365":          { zh: "365 天", en: "365 days" },
+    "usermgmt.ttl.never":        { zh: "永不过期", en: "Never expires" },
+    "usermgmt.column.expires":   { zh: "有效期", en: "Expires" },
+    "usermgmt.regenerate":       { zh: "轮换", en: "Rotate" },
+    "usermgmt.confirmRegenerate": { zh: "确定轮换该用户的 API Key？旧 Key 立即失效，有效期重置。", en: "Rotate this user's API Key? The old key stops working immediately and validity resets." },
+    "usermgmt.expired":          { zh: "已过期", en: "Expired" },
+    "usermgmt.daysLeft":         { zh: " 天后到期", en: " days left" },
+    "usermgmt.never":            { zh: "永不过期", en: "Never" },
 
     // === Service Status Bar ===
     "status.label":              { zh: "服务", en: "Service" },
