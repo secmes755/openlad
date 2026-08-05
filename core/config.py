@@ -448,6 +448,20 @@ RATE_LIMIT_CONFIG = {
     "agent_step_timeout_seconds": 120,
 }
 
+# Login rate limit (dual-track: per-username + per-IP). Throttle only, no lockout.
+# Lenient defaults for internal-network deployment; overridable via env vars.
+LOGIN_RATE_LIMIT = {
+    "username_per_minute": int(os.environ.get("OPENLAD_LOGIN_USER_PER_MIN", "5")),
+    "ip_per_minute": int(os.environ.get("OPENLAD_LOGIN_IP_PER_MIN", "20")),
+}
+
+# API Key lifecycle. Default TTL for newly created users (days).
+# 0 / negative = never expires. Preset options surfaced in the admin UI.
+API_KEY_CONFIG = {
+    "default_ttl_days": int(os.environ.get("OPENLAD_API_KEY_TTL_DAYS", "90")),
+    "ttl_presets_days": [90, 180, 365],  # 3 months / half year / 1 year
+}
+
 # =============================================================================
 # Multi-Tenant Configuration
 # =============================================================================
@@ -503,6 +517,8 @@ class Settings:
     CONTEXT_CONFIG = CONTEXT_CONFIG
     EMBEDDING_CONFIG = EMBEDDING_CONFIG
     RATE_LIMIT_CONFIG = RATE_LIMIT_CONFIG
+    LOGIN_RATE_LIMIT = LOGIN_RATE_LIMIT
+    API_KEY_CONFIG = API_KEY_CONFIG
     TENANT_CONFIG = TENANT_CONFIG
     PLUGIN_CONFIG = PLUGIN_CONFIG
     PLANNER_CONFIG = PLANNER_CONFIG

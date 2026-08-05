@@ -5,7 +5,7 @@ Supports API Key + username/password authentication
 import logging
 import secrets
 import bcrypt
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
 from .models import UserInfo
@@ -38,12 +38,44 @@ class AuthManager:
         """Generate API Key"""
         return "ak_" + secrets.token_urlsafe(32)
 
+    @staticmethod
+    def _compute_api_key_expiry(ttl_days: Optional[int]) -> Optional[datetime]:
+        """Compute API key expiry from TTL days.
+
+        ttl_days=None  -> use configured default
+        ttl_days<=0    -> never expires (returns None)
+        ttl_days>0     -> now + ttl_days
+        """
+        from ..config import settings
+        if ttl_days is None:
+            ttl_days = settings.API_KEY_CONFIG["default_ttl_days"]
+        if ttl_days is None or ttl_days <= 0:
+            return None
+        return datetime.now() + timedelta(days=ttl_days)
+
+    @staticmethod
+    def is_api_key_expired(user: UserInfo) -> bool:
+        """True if the user's API key has an expiry set and it is in the past."""
+        return user.api_key_expires_at is not None and datetime.now() >= user.api_key_expires_at
+
     def create_user(self, tenant_id: str, username: str, password: str = None,
-                    email: str = None, role: str = "user") -> UserInfo:
-        """Create user"""
+                    email: Optional[str] = None, role: str = "user",
+                    api_key_ttl_days: Optional[int] = None) -> UserInfo:
+        """Create user
+
+        Raises ValueError if a user with the same username already exists in this tenant
+        (application-level guard; DB unique index is the last line of defense).
+        api_key_ttl_days: API key lifetime in days (None=config default, <=0=never expires).
+        """
+        existing = self.system_db.find_users_by_username(username, tenant_id)
+        if existing:
+            raise ValueError(
+                f"Username already exists in tenant '{tenant_id}': {username}"
+            )
         user_id = secrets.token_hex(16)
         api_key = self._generate_api_key()
         password_hash = self._hash_password(password) if password else None
+        expires_at = self._compute_api_key_expiry(api_key_ttl_days)
 
         user = UserInfo(
             id=user_id,
@@ -53,6 +85,7 @@ class AuthManager:
             role=role,
             api_key=api_key,
             created_at=datetime.now(),
+            api_key_expires_at=expires_at,
         )
         self.system_db.create_user(user, password_hash)
         logger.info(f"[AUTH] Created user: {username} in tenant {tenant_id}")
@@ -94,10 +127,16 @@ class AuthManager:
             kwargs["password_hash"] = self._hash_password(kwargs.pop("password"))
         return self.system_db.update_user(user_id, **kwargs)
 
-    def regenerate_api_key(self, user_id: str) -> Optional[str]:
-        """Regenerate API Key"""
+    def regenerate_api_key(self, user_id: str,
+                           api_key_ttl_days: Optional[int] = None) -> Optional[str]:
+        """Regenerate API Key and reset its expiry.
+
+        api_key_ttl_days: new lifetime in days (None=config default, <=0=never expires).
+        Returns the new key, or None on failure.
+        """
         new_key = self._generate_api_key()
-        if self.system_db.update_user_api_key(user_id, new_key):
+        expires_at = self._compute_api_key_expiry(api_key_ttl_days)
+        if self.system_db.update_user_api_key(user_id, new_key, expires_at):
             return new_key
         return None
 

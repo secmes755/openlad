@@ -115,6 +115,25 @@ class SystemDB:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
 
+            # Schema migration: add api_key_expires_at column if missing (idempotent)
+            cols = [r[1] for r in cursor.execute("PRAGMA table_info(users)").fetchall()]
+            if "api_key_expires_at" not in cols:
+                cursor.execute("ALTER TABLE users ADD COLUMN api_key_expires_at TIMESTAMP")
+                logger.info("[SYSTEM_DB] Migrated users table: added api_key_expires_at column")
+            # Unique guard: one username per tenant (application checks first, this is the backstop).
+            # Tolerate pre-existing duplicate rows: log a clear error instead of crashing startup,
+            # since the application-level guard in AuthManager.create_user already prevents new duplicates.
+            try:
+                cursor.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username)"
+                )
+            except sqlite3.IntegrityError:
+                logger.error(
+                    "[SYSTEM_DB] Cannot create unique index idx_users_tenant_username: "
+                    "duplicate (tenant_id, username) rows exist. Remove duplicate usernames, "
+                    "then restart to build the index. Application-level duplicate check is still active."
+                )
+
             conn.commit()
 
     # === Tenant Operations ===
@@ -188,12 +207,16 @@ class SystemDB:
         try:
             with self.get_connection() as conn:
                 conn.execute("""
-                    INSERT INTO users (id, tenant_id, username, email, password_hash, role, api_key, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO users (id, tenant_id, username, email, password_hash, role, api_key, created_at, api_key_expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (user.id, user.tenant_id, user.username, user.email,
-                      password_hash, user.role, user.api_key, user.created_at))
+                      password_hash, user.role, user.api_key, user.created_at, user.api_key_expires_at))
                 conn.commit()
                 return True
+        except sqlite3.IntegrityError as e:
+            # Unique index (tenant_id, username) violation — duplicate username in tenant
+            logger.warning(f"[SYSTEM_DB] Duplicate user rejected: {user.username} in tenant {user.tenant_id}: {e}")
+            return False
         except Exception as e:
             logger.error(f"[SYSTEM_DB] Failed to create user: {e}")
             return False
@@ -282,20 +305,43 @@ class SystemDB:
             logger.error(f"[SYSTEM_DB] Failed to update user: {e}")
             return False
 
-    def update_user_api_key(self, user_id: str, new_api_key: str) -> bool:
+    def update_user_api_key(self, user_id: str, new_api_key: str,
+                            api_key_expires_at=None) -> bool:
+        """Rotate API key. Optionally reset its expiry (None keeps existing expiry)."""
         try:
             with self.get_connection() as conn:
-                conn.execute(
-                    "UPDATE users SET api_key = ? WHERE id = ?",
-                    (new_api_key, user_id)
-                )
+                if api_key_expires_at is not None:
+                    conn.execute(
+                        "UPDATE users SET api_key = ?, api_key_expires_at = ? WHERE id = ?",
+                        (new_api_key, api_key_expires_at, user_id)
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE users SET api_key = ? WHERE id = ?",
+                        (new_api_key, user_id)
+                    )
                 conn.commit()
                 return True
         except Exception as e:
             logger.error(f"[SYSTEM_DB] Failed to update API Key: {e}")
             return False
 
+    def update_user_api_key_expiry(self, user_id: str, api_key_expires_at) -> bool:
+        """Set/clear a user's API key expiry (None = never expires)."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    "UPDATE users SET api_key_expires_at = ? WHERE id = ?",
+                    (api_key_expires_at, user_id)
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"[SYSTEM_DB] Failed to update API key expiry: {e}")
+            return False
+
     def _row_to_user(self, row) -> UserInfo:
+        expires_raw = row["api_key_expires_at"] if "api_key_expires_at" in row.keys() else None
         return UserInfo(
             id=row["id"],
             tenant_id=row["tenant_id"],
@@ -305,6 +351,7 @@ class SystemDB:
             api_key=row["api_key"],
             password_hash=row["password_hash"],
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else datetime.now(),
+            api_key_expires_at=datetime.fromisoformat(expires_raw) if expires_raw else None,
         )
 
     # === Industry Package Registry ===

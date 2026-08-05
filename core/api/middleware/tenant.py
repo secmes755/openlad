@@ -66,6 +66,16 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 content={"error": "Invalid API Key"}
             )
 
+        # API key lifecycle: reject expired keys
+        if auth_mgr.is_api_key_expired(user):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "API Key expired",
+                    "detail": "This API Key has expired. Please contact an admin to rotate it."
+                }
+            )
+
         user_id = user.id
         user_role = user.role
         # If tenant_id not explicitly specified, derive from user association

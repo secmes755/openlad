@@ -33,6 +33,7 @@ class CreateUserRequest(BaseModel):
     auto_username: Optional[bool] = False
     count: Optional[int] = 1
     custom_tenant_id: Optional[str] = None  # Specify custom tenant ID for ordinary users
+    api_key_ttl_days: Optional[int] = None  # API key lifetime: None=config default(90d), <=0=never expires
 
 
 def _require_admin():
@@ -191,13 +192,18 @@ async def create_user(req: CreateUserRequest):
                     # Tenant ID already exists (rare), skip creation
                     pass
 
-        user = auth.create_user(
-            tenant_id=target_tenant_id,
-            username=username,
-            password=password,
-            email=req.email,
-            role=target_role
-        )
+        try:
+            user = auth.create_user(
+                tenant_id=target_tenant_id,
+                username=username,
+                password=password,
+                email=req.email,
+                role=target_role,
+                api_key_ttl_days=req.api_key_ttl_days
+            )
+        except ValueError as e:
+            # Duplicate username in tenant (application-level guard)
+            raise HTTPException(status_code=409, detail=str(e))
         users.append({
             "user_id": user.id,
             "username": user.username,
@@ -205,6 +211,7 @@ async def create_user(req: CreateUserRequest):
             "tenant_id": user.tenant_id,
             "role": user.role,
             "api_key": user.api_key,
+            "api_key_expires_at": user.api_key_expires_at.isoformat() if user.api_key_expires_at else None,
             "created_at": user.created_at.isoformat()
         })
 
@@ -228,6 +235,7 @@ async def list_all_users():
                 "email": u.email,
                 "role": u.role,
                 "api_key": u.api_key[:16] + "..." if u.api_key else None,
+                "api_key_expires_at": u.api_key_expires_at.isoformat() if u.api_key_expires_at else None,
                 "created_at": u.created_at.isoformat()
             }
             for u in users
@@ -282,6 +290,34 @@ async def update_user(user_id: str, req: UpdateUserRequest):
     return {"success": True, "message": "No updates"}
 
 
+class RegenerateKeyRequest(BaseModel):
+    api_key_ttl_days: Optional[int] = None  # None=config default(90d), <=0=never expires
+
+
+@router.post("/users/{user_id}/regenerate-key")
+async def regenerate_api_key(user_id: str, req: Optional[RegenerateKeyRequest] = None):
+    """Rotate a user's API key and reset its expiry (admin only).
+
+    Use this when a key expires or needs rotation. Returns the new key.
+    """
+    _require_admin()
+    auth = get_auth_manager()
+    user = auth.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    ttl = req.api_key_ttl_days if req else None
+    new_key = auth.regenerate_api_key(user_id, ttl)
+    if not new_key:
+        raise HTTPException(status_code=500, detail="Failed to regenerate API key")
+    updated = auth.get_user(user_id)
+    return {
+        "user_id": user_id,
+        "username": user.username,
+        "api_key": new_key,
+        "api_key_expires_at": updated.api_key_expires_at.isoformat() if updated and updated.api_key_expires_at else None,
+    }
+
+
 @router.get("/tenants/{tenant_id}/users")
 async def list_tenant_users(tenant_id: str):
     """List users under a tenant"""
@@ -295,6 +331,7 @@ async def list_tenant_users(tenant_id: str):
                 "username": u.username,
                 "email": u.email,
                 "role": u.role,
+                "api_key_expires_at": u.api_key_expires_at.isoformat() if u.api_key_expires_at else None,
                 "created_at": u.created_at.isoformat()
             }
             for u in users

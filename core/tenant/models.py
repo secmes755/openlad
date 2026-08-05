@@ -31,3 +31,4 @@ class UserInfo:
     api_key: Optional[str]
     created_at: datetime
     password_hash: Optional[str] = None  # Internal use only, not returned by API
+    api_key_expires_at: Optional[datetime] = None  # None = never expires
