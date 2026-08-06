@@ -191,6 +191,11 @@ async def create_user(req: CreateUserRequest):
                 except ValueError:
                     # Tenant ID already exists (rare), skip creation
                     pass
+            elif existing_tenant.status != "active":
+                # Tenant record exists but is unusable (soft-deleted): reactivate
+                # it so the recreated user's API key works immediately instead of
+                # every request returning 403 "Tenant not found or inactive".
+                tenant_mgr.reactivate_tenant(target_tenant_id)
 
         try:
             user = auth.create_user(

@@ -91,6 +91,30 @@ class TenantManager:
         self.system_db.update_tenant_status(tenant_id, "deleted")
         return True
 
+    def reactivate_tenant(self, tenant_id: str) -> Optional[TenantInfo]:
+        """Reactivate a soft-deleted tenant so it can be reused.
+
+        A tenant record marked ``deleted`` may have had its data directory
+        removed (hard delete) or kept (soft delete). Recreate the directory
+        and databases, then mark the tenant active again. Used e.g. when a
+        user is re-created after their independent tenant was deleted — the
+        recreated user's API key must work against an active tenant.
+        """
+        existing = self.system_db.get_tenant(tenant_id)
+        if not existing:
+            raise ValueError(f"Tenant not found: {tenant_id}")
+        if existing.status == "active":
+            return existing
+
+        from ..db.tenant_db import TenantDBFactory
+        tenant_dir = settings.get_tenant_data_dir(tenant_id)
+        for subdir in ["documents", "images"]:
+            (tenant_dir / subdir).mkdir(parents=True, exist_ok=True)
+        TenantDBFactory.init_tenant_databases(tenant_id)
+        self.system_db.update_tenant_status(tenant_id, "active")
+        logger.info(f"[TENANT] Reactivated tenant: {tenant_id}")
+        return self.system_db.get_tenant(tenant_id)
+
     def get_tenant(self, tenant_id: str) -> Optional[TenantInfo]:
         """Get tenant info"""
         return self.system_db.get_tenant(tenant_id)
