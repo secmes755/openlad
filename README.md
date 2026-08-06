@@ -26,6 +26,7 @@ hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
 <tr><td><b>🧠 Hybrid Retrieval</b></td><td>Full-text search (FTS5) + vector search (sqlite-vec) + LLM-driven planning. Three-phase pipeline: Plan → Retrieve → Synthesize.</td></tr>
 <tr><td><b>🏭 Industry Plugins</b></td><td>Extensible plugin system. 1 complete sample pack (Semiconductor) + 3 empty templates (Legal, Financial, Generic) for customization. Custom packs can be built for any domain.</td></tr>
 <tr><td><b>👥 Multi-Tenant</b></td><td>Isolated databases and vector spaces per tenant. Admin panel for user and document management.</td></tr>
+<tr><td><b>🔐 Security</b></td><td>Login rate limiting (per-username + per-IP, no account lockout), expiring API keys (default 90 days, rotatable via admin panel), per-tenant data isolation, unique usernames per tenant.</td></tr>
 <tr><td><b>🌐 Web UI</b></td><td>Built-in web interface. Admin panel at <code>/admin</code>, user Q&A at <code>/</code>. LAN-accessible.</td></tr>
 <tr><td><b>🧩 BYO-LLM Architecture</b></td><td>Choose your own LLM and embedding backends — llama.cpp, Ollama, vLLM, or any OpenAI-compatible API.</td></tr>
 </table>
@@ -169,6 +170,18 @@ All settings are environment variables. Create a `.env` file or export directly.
 | `OPENLAD_LLM_MODEL` | `qwen3.5-9b`               | Model name registered in backend |
 | `OPENLAD_EMB_URL`   | `http://127.0.0.1:8081/v1` | Embedding API endpoint           |
 | `OPENLAD_EMB_MODEL` | `qwen3-embedding`          | Embedding model name             |
+
+### Security & Authentication
+
+| Variable                     | Default | Description                                    |
+| ---------------------------- | ------- | ---------------------------------------------- |
+| `OPENLAD_LOGIN_USER_PER_MIN` | `5`     | Login attempts per username per minute (→ 429) |
+| `OPENLAD_LOGIN_IP_PER_MIN`   | `20`    | Login attempts per client IP per minute (→ 429)|
+| `OPENLAD_API_KEY_TTL_DAYS`   | `90`    | Default API key validity in days (`0` = never) |
+
+Login is rate-limited on both the username and IP axes without locking accounts.
+API keys expire after the TTL and can be rotated anytime from the admin
+user-management panel, or via `POST /api/v1/admin/users/{id}/regenerate-key`.
 
 ### llama-server Flags (Tested Baseline)
 

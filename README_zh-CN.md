@@ -25,6 +25,7 @@
 <tr><td><b>🧠 混合检索</b></td><td>全文检索（FTS5）+ 向量检索（sqlite-vec）+ LLM 驱动规划。三阶段流水线：规划 → 检索 → 合成。</td></tr>
 <tr><td><b>🏭 行业插件</b></td><td>可扩展的插件系统。1 个完整示例包（半导体）+ 3 个空模板（法律、金融、通用）供定制。可为任意领域定制行业包。</td></tr>
 <tr><td><b>👥 多租户</b></td><td>每租户独立数据库和向量空间。管理面板支持用户和文档管理。</td></tr>
+<tr><td><b>🔐 安全</b></td><td>登录限流（按用户名 + 按 IP，不锁定账号）、API 密钥过期（默认 90 天，管理面板可轮换）、每租户数据隔离、每租户用户名唯一。</td></tr>
 <tr><td><b>🌐 Web 界面</b></td><td>内置 Web 界面。管理面板 <code>/admin</code>，用户问答 <code>/</code>。局域网可访问。</td></tr>
 <tr><td><b>🧩 BYO-LLM 架构</b></td><td>自由选择 LLM 和 Embedding 后端 — llama.cpp、Ollama、vLLM，或任何 OpenAI 兼容 API。</td></tr>
 </table>
@@ -168,6 +169,17 @@ curl -X POST http://127.0.0.1:11296/api/v1/query \
 | `OPENLAD_LLM_MODEL` | `qwen3.5-9b`               | 后端注册的模型名称        |
 | `OPENLAD_EMB_URL`   | `http://127.0.0.1:8081/v1` | Embedding API 端点 |
 | `OPENLAD_EMB_MODEL` | `qwen3-embedding`          | Embedding 模型名称   |
+
+### 安全与认证
+
+| 变量                         | 默认值 | 说明                                     |
+| ---------------------------- | ------ | ---------------------------------------- |
+| `OPENLAD_LOGIN_USER_PER_MIN` | `5`    | 每用户名每分钟登录尝试次数（超限 → 429） |
+| `OPENLAD_LOGIN_IP_PER_MIN`   | `20`   | 每客户端 IP 每分钟登录尝试次数（→ 429）  |
+| `OPENLAD_API_KEY_TTL_DAYS`   | `90`   | API 密钥默认有效期（天，`0` = 永不过期） |
+
+登录在用户名和 IP 两个维度限流，但不锁定账号。API 密钥到期后失效，可随时在
+管理面板的用户管理中轮换，或调用 `POST /api/v1/admin/users/{id}/regenerate-key`。
 
 ### llama-server 参数（测试基线）
 
