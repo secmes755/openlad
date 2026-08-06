@@ -15,14 +15,13 @@ Thank you for your interest in contributing to OpenLAD!
 
 - **No hardcoding in core/**: All industry-specific logic belongs in `industries/`
 - **Environment variables**: Use `OPENLAD_*` prefix for all configurable parameters
-- **Tests**: Run smoke tests before submitting PRs
 - **Code style**: Follow PEP 8, use type hints where practical
 
 ## Submitting Changes
 
 1. Create a feature branch: `git checkout -b feature/your-feature`
 2. Make your changes with clear commit messages
-3. Add tests if applicable
+3. Verify your changes work locally
 4. Submit a pull request with a description of the changes
 
 ## Questions?

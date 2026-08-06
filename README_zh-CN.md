@@ -181,7 +181,7 @@ curl -X POST http://127.0.0.1:11296/api/v1/query \
 登录在用户名和 IP 两个维度限流，但不锁定账号。API 密钥到期后失效，可随时在
 管理面板的用户管理中轮换，或调用 `POST /api/v1/admin/users/{id}/regenerate-key`。
 
-### llama-server 参数（测试基线）
+### 推荐 llama-server 参数
 
 **LLM — Qwen3.5-9B Q5_K_M（推荐 16 GB VRAM）：**
 

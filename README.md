@@ -183,7 +183,7 @@ Login is rate-limited on both the username and IP axes without locking accounts.
 API keys expire after the TTL and can be rotated anytime from the admin
 user-management panel, or via `POST /api/v1/admin/users/{id}/regenerate-key`.
 
-### llama-server Flags (Tested Baseline)
+### Recommended llama-server Flags
 
 **LLM — Qwen3.5-9B Q5_K_M (16 GB VRAM recommended):**
 
