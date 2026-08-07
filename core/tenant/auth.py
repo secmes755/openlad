@@ -4,6 +4,7 @@ Supports API Key + username/password authentication
 """
 import logging
 import secrets
+import uuid
 from datetime import datetime, timedelta
 
 import bcrypt
@@ -116,8 +117,37 @@ class AuthManager:
         return None
 
     def authenticate_by_api_key(self, api_key: str) -> UserInfo | None:
-        """API Key authentication"""
+        """API Key authentication
+
+        A key can be either a login-session key (user_sessions) or the user's
+        primary account key (users.api_key); both resolve to the same user.
+        """
+        row = self.system_db.get_user_by_session_key(api_key)
+        if row is not None:
+            return row
         return self.system_db.get_user_by_api_key(api_key)
+
+    def create_session(self, user_id: str,
+                       api_key_ttl_days: int | None = None) -> str | None:
+        """Issue a login-session API key for a user.
+
+        Each login gets its own key; logout revokes only that key, so other
+        devices (other sessions) stay logged in. Returns the new key or None.
+        """
+        session_key = self._generate_api_key()
+        expires_at = self._compute_api_key_expiry(api_key_ttl_days)
+        if self.system_db.create_user_session(user_id, uuid.uuid4().hex,
+                                              session_key, expires_at):
+            return session_key
+        return None
+
+    def revoke_session_by_key(self, api_key: str) -> bool:
+        """Revoke one login session (current device logout)."""
+        return self.system_db.delete_session_by_key(api_key)
+
+    def revoke_all_sessions(self, user_id: str) -> int:
+        """Revoke every session of a user (account-level revocation)."""
+        return self.system_db.delete_sessions_by_user(user_id)
 
     def get_user(self, user_id: str) -> UserInfo | None:
         """Get user info"""
@@ -148,6 +178,9 @@ class AuthManager:
         api_key_ttl_days: new lifetime in days (None=config default, <=0=never expires).
         Returns the new key, or None on failure.
         """
+        # Rotation is an account-level revocation: all login sessions die too,
+        # so a leaked key cannot keep working through old sessions.
+        self.system_db.delete_sessions_by_user(user_id)
         new_key = self._generate_api_key()
         expires_at = self._compute_api_key_expiry(api_key_ttl_days)
         if self.system_db.update_user_api_key(user_id, new_key, expires_at):

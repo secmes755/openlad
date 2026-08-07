@@ -4,7 +4,7 @@ Username/password login, exchange for API Key
 """
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...tenant.auth import get_auth_manager
@@ -23,18 +23,22 @@ async def login(req: LoginRequest):
     """Username/password login
 
     Only username + password required, system auto-infers the associated tenant.
-    Returns tenant_id + api_key after successful verification.
+    Returns tenant_id + a fresh session api_key after successful verification.
+    Each login issues its own session key; logout revokes only that key.
     """
     auth = get_auth_manager()
     user = auth.authenticate_by_password(req.username, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
+    session_key = auth.create_session(user.id)
     return {
         "tenant_id": user.tenant_id,
         "username": user.username,
         "role": user.role,
-        "api_key": user.api_key,
+        # session key on success; fall back to the account key if session
+        # creation failed for any reason
+        "api_key": session_key or user.api_key,
     }
 
 
@@ -53,15 +57,18 @@ async def me():
 
 
 @router.post("/logout")
-async def logout():
-    """Logout: revoke the current API key (the key used for this request
-    becomes invalid immediately; the next login issues a fresh key)."""
-    ctx = get_tenant_context()
-    if ctx and ctx.user_id:
-        auth = get_auth_manager()
-        new_key = auth.regenerate_api_key(ctx.user_id)
-        if new_key:
-            logger.info(f"[AUTH] User logged out, API key revoked: {ctx.username} ({ctx.user_id})")
-        else:
-            logger.warning(f"[AUTH] Logout: failed to revoke API key for {ctx.username} ({ctx.user_id})")
+async def logout(request: Request):
+    """Logout: revoke the session key used for this request.
+
+    Only the current device's login session dies — other devices that logged
+    in with the same username keep working. The account's primary key is not
+    affected (admins can rotate it to force an account-wide revocation).
+    """
+    auth = get_auth_manager()
+    api_key = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if api_key:
+        revoked = auth.revoke_session_by_key(api_key)
+        if revoked:
+            logger.info("[AUTH] Session revoked via logout")
+        # No match: the request used the primary account key — leave it alone.
     return {"success": True, "message": "Logged out"}

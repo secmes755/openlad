@@ -140,6 +140,20 @@ class SystemDB:
                     "then restart to build the index. Application-level duplicate check is still active."
                 )
 
+            # Schema migration: user_sessions table (login sessions issue their
+            # own API keys; logout revokes only the current session key, so
+            # other devices stay logged in).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    api_key TEXT NOT NULL UNIQUE,
+                    expires_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)")
+
             conn.commit()
 
     # === Tenant Operations ===
@@ -283,9 +297,10 @@ class SystemDB:
             ).fetchall()]
 
     def delete_user(self, user_id: str) -> bool:
-        """Delete user"""
+        """Delete user (login sessions are cascaded)."""
         try:
             with self.get_connection() as conn:
+                conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
                 conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
                 conn.commit()
                 return True
@@ -297,6 +312,11 @@ class SystemDB:
         """Delete all users belonging to a tenant (cascade on tenant delete)."""
         try:
             with self.get_connection() as conn:
+                conn.execute(
+                    "DELETE FROM user_sessions WHERE user_id IN "
+                    "(SELECT id FROM users WHERE tenant_id = ?)",
+                    (tenant_id,)
+                )
                 conn.execute("DELETE FROM users WHERE tenant_id = ?", (tenant_id,))
                 conn.commit()
                 return True
@@ -342,6 +362,70 @@ class SystemDB:
         except Exception as e:
             logger.error(f"[SYSTEM_DB] Failed to update API Key: {e}")
             return False
+
+    # === User Sessions (login-issued API keys) ===
+    def create_user_session(self, user_id: str, session_id: str,
+                            api_key: str, expires_at=None) -> bool:
+        """Create a login session key (each login issues its own key)."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO user_sessions (id, user_id, api_key, expires_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (session_id, user_id, api_key, expires_at)
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"[SYSTEM_DB] Failed to create user session: {e}")
+            return False
+
+    def get_user_by_session_key(self, api_key: str) -> UserInfo | None:
+        """Resolve a session API key to its user (session expiry overrides).
+
+        Returns a UserInfo whose api_key_expires_at comes from the session
+        row, or None if the key is not a session key.
+        """
+        try:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    "SELECT u.*, s.expires_at AS session_expires_at "
+                    "FROM user_sessions s JOIN users u ON u.id = s.user_id "
+                    "WHERE s.api_key = ?",
+                    (api_key,)
+                ).fetchone()
+                if row is None:
+                    return None
+                d = dict(row)
+                d["api_key_expires_at"] = d.get("session_expires_at")
+                return self._row_to_user(d)
+        except Exception as e:
+            logger.error(f"[SYSTEM_DB] Failed to resolve session key: {e}")
+            return None
+
+    def delete_session_by_key(self, api_key: str) -> bool:
+        """Revoke a single session key (logout of one device)."""
+        try:
+            with self.get_connection() as conn:
+                cur = conn.execute(
+                    "DELETE FROM user_sessions WHERE api_key = ?", (api_key,))
+                conn.commit()
+                return cur.rowcount > 0
+        except Exception as e:
+            logger.error(f"[SYSTEM_DB] Failed to delete session: {e}")
+            return False
+
+    def delete_sessions_by_user(self, user_id: str) -> int:
+        """Revoke all sessions of a user (account-level revocation)."""
+        try:
+            with self.get_connection() as conn:
+                cur = conn.execute(
+                    "DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return cur.rowcount
+        except Exception as e:
+            logger.error(f"[SYSTEM_DB] Failed to delete user sessions: {e}")
+            return 0
 
     def update_user_api_key_expiry(self, user_id: str, api_key_expires_at) -> bool:
         """Set/clear a user's API key expiry (None = never expires)."""

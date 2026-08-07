@@ -5,6 +5,19 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Login sessions: each login issues its own API key; logout revokes only the
+  current session, so other devices logged in with the same username stay
+  online. Account-level revocation is done by an admin rotating the key.
+
+### Changed
+
+- `logout` no longer revokes the whole account — it revokes only the session
+  key used by the current request.
+
 ## [0.2.0] - 2026-08-07
 
 ### Added
