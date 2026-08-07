@@ -5,7 +5,7 @@ Directly inherits mature implementation from predecessor, fully generalized, no 
 import json
 import logging
 import threading
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 import requests
 
@@ -222,7 +222,7 @@ class ModelClient:
                     return ""
 
     def generate_json(self, prompt: str, system_prompt: str = None,
-                      max_tokens: int = 4096, temperature: float = 0.3) -> Dict[str, Any]:
+                      max_tokens: int = 4096, temperature: float = 0.3) -> dict[str, Any]:
         result = self._generate_json_inner(prompt, system_prompt, max_tokens, temperature)
         if isinstance(result, list) and result and isinstance(result[0], dict):
             return result[0]
@@ -231,7 +231,7 @@ class ModelClient:
         return {}
 
     def generate_json_array(self, prompt: str, system_prompt: str = None,
-                            max_tokens: int = 4096, temperature: float = 0.3) -> List[Dict]:
+                            max_tokens: int = 4096, temperature: float = 0.3) -> list[dict]:
         result = self._generate_json_inner(prompt, system_prompt, max_tokens, temperature,
                                            json_array_mode=True)
         if isinstance(result, list):
@@ -336,7 +336,7 @@ class ModelClient:
         logger.error(f"[MODEL] JSON parsing failed, raw={result[:500]!r}")
         return None
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Get embedding vector"""
         max_chars = settings.EMBEDDING_CONFIG["max_embed_chars"]
         if len(text) > max_chars:
@@ -354,7 +354,7 @@ class ModelClient:
         except Exception as e:
             raise EmbeddingError(f"Embedding call failed: {e}") from e
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         max_chars = settings.EMBEDDING_CONFIG["max_embed_chars"]
         truncated = [t[:max_chars] for t in texts]
         try:

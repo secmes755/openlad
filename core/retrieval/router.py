@@ -3,11 +3,11 @@ Intent Router
 """
 import logging
 import re
-from typing import Dict, Any, Optional, List
 from enum import Enum
+from typing import Any
 
-from ..models.client import get_model_client
 from ..config import settings
+from ..models.client import get_model_client
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +24,13 @@ class IntentType(Enum):
 
 class QueryPlan:
     def __init__(self, intent: IntentType, raw_query: str,
-                 target_entity_type: str = None, entities: List[str] = None,
-                 conditions: Dict[str, Any] = None, requires_comparison: bool = False,
+                 target_entity_type: str = None, entities: list[str] = None,
+                 conditions: dict[str, Any] = None, requires_comparison: bool = False,
                  deep_explore: bool = False, explore_reason: str = "",
-                 compare_targets: List[str] = None, reference_marks: List[str] = None,
+                 compare_targets: list[str] = None, reference_marks: list[str] = None,
                  source_doc_hint: str = None,
-                 time_periods: List[str] = None, subject: str = None,
-                 time_range: Dict[str, Any] = None,
+                 time_periods: list[str] = None, subject: str = None,
+                 time_range: dict[str, Any] = None,
                  industry_hint: str = None):
         self.intent = intent
         self.raw_query = raw_query
@@ -48,7 +48,7 @@ class QueryPlan:
         self.time_range = time_range or {}
         self.industry_hint = industry_hint
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "intent": self.intent.value, "raw_query": self.raw_query,
             "target_entity_type": self.target_entity_type, "entities": self.entities,
@@ -103,9 +103,8 @@ JSON format: {"intent":"","target_entity_type":"","entities":[],"conditions":{},
             logger.error(f"LLM routing failed: {e}")
             return QueryPlan(intent=IntentType.MACRO_QA, raw_query=query)
 
-    def extract_search_keywords(self, query: str) -> List[str]:
+    def extract_search_keywords(self, query: str) -> list[str]:
         """Directly return entity words from the query; no hardcoded filtering."""
-        import re
         # Only extract words that look like model/product names (letter+digit combinations)
         entities = []
         for pattern in [r'[A-Z]{2,}\d+[A-Z]*\d*', r'[A-Z]+\d+[A-Z\d\-]*', r'(?<![A-Za-z0-9])([A-Z]{1,}\d+[A-Z0-9\-]*)(?![A-Za-z0-9])']:

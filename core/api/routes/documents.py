@@ -5,19 +5,17 @@ Upload, List, Detail, Delete
 import asyncio
 import logging
 import os
-import time
 import uuid
-from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel
-from typing import List
 
-from ...tenant.context import get_tenant_context
+from pydantic import BaseModel
+
 from ...db.tenant_db import get_tenant_metadata_db
 from ...ingestion.parser import DocumentParser
+from ...tenant.context import get_tenant_context
 
 router = APIRouter()
 
@@ -37,10 +35,10 @@ def _get_system_db():
 class DocumentListResponse(BaseModel):
     id: str
     filename: str
-    title: Optional[str]
+    title: str | None
     status: str
-    category_level1: Optional[str]
-    industry_package_id: Optional[str]
+    category_level1: str | None
+    industry_package_id: str | None
     created_at: str
 
 
@@ -70,9 +68,9 @@ def _cleanup_old_tasks(max_age_seconds: int = 3600):
 
 
 def _process_document_async_sync(task_id: str, tenant_id: str, file_path: str,
-                                  industry: Optional[str], auto_detect: bool, builder):
+                                  industry: str | None, auto_detect: bool, builder):
     """Sync wrapper for document processing — runs directly in a thread pool.
-    
+
     Uses builder.ingest_document() entry point with built-in MD5 dedup protection.
     """
     def _progress_callback(p, msg):
@@ -145,7 +143,7 @@ def _process_document_async_sync(task_id: str, tenant_id: str, file_path: str,
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
-    industry: Optional[str] = Form(None),
+    industry: str | None = Form(None),
     auto_detect: bool = Form(True)
 ):
     """Upload document (async background processing)
@@ -230,14 +228,14 @@ async def upload_document(
         raise HTTPException(status_code=503, detail="Document builder not initialized")
 
     task_id = _create_task(doc_id, file.filename, tenant_id=ctx.tenant_id)
-    
+
     # Use a dedicated thread pool executor for document processing to avoid
     # competing with the default asyncio executor (which is limited to N threads).
     # The builder internally creates its own thread pools for page processing;
     # using a separate outer pool prevents deadlocks when all default threads
     # are occupied by nested ThreadPoolExecutor workers.
     import concurrent.futures
-    
+
     async def _background_process():
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="ol_upload_") as pool:
@@ -252,7 +250,7 @@ async def upload_document(
             logger.error(f"[UPLOAD] Background task failed: {e}", exc_info=True)
             _update_task(task_id, status="failed", progress=0,
                         message=f"Background processing error: {str(e)}", error=str(e))
-    
+
     asyncio.create_task(_background_process())
 
     # Periodically clean up old tasks
@@ -299,8 +297,8 @@ async def get_upload_progress(task_id: str):
 
 
 @router.get("/documents")
-async def list_documents(status: Optional[str] = None,
-                         industry: Optional[str] = None,
+async def list_documents(status: str | None = None,
+                         industry: str | None = None,
                          skip: int = 0, limit: int = 100):
     """List documents"""
     ctx = get_tenant_context()

@@ -2,15 +2,16 @@
 Global System Database
 Manages tenants, users, industry package registry, and global configuration
 """
-import logging
-import sqlite3
 import contextlib
 import json
+import logging
+import sqlite3
 import threading
 import time
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Generator
+from collections.abc import Generator
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from ..config import settings
 from ..tenant.models import TenantInfo, UserInfo
@@ -157,14 +158,14 @@ class SystemDB:
             logger.error(f"[SYSTEM_DB] Failed to create tenant: {e}")
             return False
 
-    def get_tenant(self, tenant_id: str) -> Optional[TenantInfo]:
+    def get_tenant(self, tenant_id: str) -> TenantInfo | None:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
             if row:
                 return self._row_to_tenant(row)
         return None
 
-    def list_tenants(self, include_deleted: bool = False) -> List[TenantInfo]:
+    def list_tenants(self, include_deleted: bool = False) -> list[TenantInfo]:
         query = "SELECT * FROM tenants"
         if not include_deleted:
             query += " WHERE status != 'deleted'"
@@ -227,7 +228,7 @@ class SystemDB:
             return False
 
     def authenticate_user(self, username: str, password_hash: str,
-                           tenant_id: str = None) -> Optional[UserInfo]:
+                           tenant_id: str = None) -> UserInfo | None:
         query = "SELECT * FROM users WHERE username = ? AND password_hash = ?"
         params = [username, password_hash]
         if tenant_id:
@@ -251,7 +252,7 @@ class SystemDB:
             rows = conn.execute(query, params).fetchall()
             return [self._row_to_user(r) for r in rows]
 
-    def get_user_by_api_key(self, api_key: str) -> Optional[UserInfo]:
+    def get_user_by_api_key(self, api_key: str) -> UserInfo | None:
         with self.get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM users WHERE api_key = ?",
@@ -261,20 +262,20 @@ class SystemDB:
                 return self._row_to_user(row)
         return None
 
-    def get_user(self, user_id: str) -> Optional[UserInfo]:
+    def get_user(self, user_id: str) -> UserInfo | None:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             if row:
                 return self._row_to_user(row)
         return None
 
-    def list_users(self, tenant_id: str) -> List[UserInfo]:
+    def list_users(self, tenant_id: str) -> list[UserInfo]:
         with self.get_connection() as conn:
             return [self._row_to_user(r) for r in conn.execute(
                 "SELECT * FROM users WHERE tenant_id = ? ORDER BY created_at DESC", (tenant_id,)
             ).fetchall()]
 
-    def list_all_users(self) -> List[UserInfo]:
+    def list_all_users(self) -> list[UserInfo]:
         """List all users (across all tenants)"""
         with self.get_connection() as conn:
             return [self._row_to_user(r) for r in conn.execute(
@@ -387,7 +388,7 @@ class SystemDB:
             logger.error(f"[SYSTEM_DB] Failed to register industry package: {e}")
             return False
 
-    def get_industry_packages(self) -> List[Dict[str, Any]]:
+    def get_industry_packages(self) -> list[dict[str, Any]]:
         with self.get_connection() as conn:
             rows = conn.execute("SELECT * FROM industry_packages WHERE is_active = 1").fetchall()
             return [{
@@ -397,7 +398,7 @@ class SystemDB:
             } for r in rows]
 
     # === System Config ===
-    def get_config(self, key: str, default: str = None) -> Optional[str]:
+    def get_config(self, key: str, default: str = None) -> str | None:
         with self.get_connection() as conn:
             row = conn.execute("SELECT value FROM system_config WHERE key = ?", (key,)).fetchone()
             return row["value"] if row else default
@@ -453,7 +454,7 @@ class SystemDB:
             conn.commit()
             return cursor.rowcount > 0
 
-    def get_upload_task(self, task_id: str) -> Optional[Dict]:
+    def get_upload_task(self, task_id: str) -> dict | None:
         """Get upload task by ID. JSON fields are deserialized."""
         import json as _json
         with self.get_connection() as conn:
@@ -478,15 +479,15 @@ class SystemDB:
         """Clean up old completed/failed tasks"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM upload_tasks 
+            cursor.execute(f"""
+                DELETE FROM upload_tasks
                 WHERE status IN ('completed', 'failed', 'error')
-                AND updated_at < datetime('now', '-{} hours')
-            """.format(max_age_hours))
+                AND updated_at < datetime('now', '-{max_age_hours} hours')
+            """)
             conn.commit()
             return cursor.rowcount
 
-    def restore_interrupted_tasks(self) -> List[Dict]:
+    def restore_interrupted_tasks(self) -> list[dict]:
         """Restore tasks that were interrupted (processing status)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -497,7 +498,7 @@ class SystemDB:
 
 
 # Singleton
-_system_db: Optional[SystemDB] = None
+_system_db: SystemDB | None = None
 _system_db_lock = threading.Lock()
 
 

@@ -115,8 +115,9 @@ CONTEXT_CONFIG = {
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.
     "map_reduce_threshold": 999999,  # Effectively disabled
-    # Map phase: per-chunk size
-    "map_reduce_chunk_size": 12000,
+    # Map phase: per-chunk size (duplicate of the one below; kept disabled
+    # together with Map-Reduce — the effective value is defined in the
+    # context-extraction section)
     # Max Map chunks (caps LLM calls = caps latency)
     "map_reduce_max_chunks": 5,
     # Reduce phase: input limit per Reduce call

@@ -3,19 +3,18 @@ OpenLAD Query Engine - Three-Phase Retrieval + Agent Exploration
 """
 import hashlib
 import logging
-import re
 import time
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
-from .router import IntentRouter, QueryPlan, IntentType
-from .retriever import HierarchicalRetriever, SegmentMerger
-from .synthesizer import AnswerSynthesizer
-from .decomposer import QueryDecomposer
-from .planner import QueryPlanner
-from .executor import RetrievalExecutor
 from .agentic_retriever import AgenticRetriever
+from .decomposer import QueryDecomposer
+from .executor import RetrievalExecutor
+from .planner import QueryPlanner
+from .retriever import HierarchicalRetriever, SegmentMerger
+from .router import IntentRouter
+from .synthesizer import AnswerSynthesizer
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,7 @@ class QueryEngine:
 
     def _get_components(self, tenant_id: str):
         """Get or create tenant-level retrieval components.
-        
+
         DESIGN NOTE: The admin tenant is a super-administrator role with cross-tenant
         read access. It loads the "default" tenant database as a fallback so that
         admin users can query data across all tenants for management and debugging
@@ -47,7 +46,7 @@ class QueryEngine:
             synthesizer = AnswerSynthesizer()
             retriever = HierarchicalRetriever(tenant_id=tenant_id)
             merger = SegmentMerger(tenant_id=tenant_id)
-            
+
             # DESIGN: admin tenant loads the default tenant database as fallback
             # for cross-tenant management queries. Regular tenants are isolated.
             fallback_metadata_db = None
@@ -56,10 +55,10 @@ class QueryEngine:
                 try:
                     fallback_metadata_db = get_tenant_metadata_db("default")
                     fallback_vector_db = get_tenant_vector_db("default")
-                    logger.info(f"[ENGINE] admin tenant loaded default tenant database as fallback")
+                    logger.info("[ENGINE] admin tenant loaded default tenant database as fallback")
                 except Exception as e:
                     logger.warning(f"[ENGINE] admin tenant failed to load default database: {e}")
-            
+
             self._agents[tenant_id] = {
                 "planner": planner,
                 "executor": executor,
@@ -79,7 +78,7 @@ class QueryEngine:
         raw = f"{tenant_id}:{industry_hint or 'auto'}:{history_hash}:{query_text}"
         return hashlib.md5(raw.encode()).hexdigest()
 
-    def _get_cached(self, cache_key: str) -> Optional[Dict]:
+    def _get_cached(self, cache_key: str) -> dict | None:
         """Retrieve cached result"""
         if cache_key not in self._cache:
             return None
@@ -90,7 +89,7 @@ class QueryEngine:
         logger.info(f"[ENGINE] cache hit: {cache_key[:8]}")
         return result
 
-    def _set_cached(self, cache_key: str, result: Dict):
+    def _set_cached(self, cache_key: str, result: dict):
         """Write to cache"""
         # LRU eviction
         if len(self._cache) >= self._cache_max_size:
@@ -98,7 +97,7 @@ class QueryEngine:
             del self._cache[oldest]
         self._cache[cache_key] = (time.time(), result)
 
-    def _execute_agentic(self, query_text: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    def _execute_agentic(self, query_text: str, tenant_id: str) -> dict[str, Any] | None:
         """Execute Agentic retrieval"""
         try:
             agent = AgenticRetriever(tenant_id)
@@ -111,7 +110,7 @@ class QueryEngine:
 
     def _classify_query(self, query: str) -> str:
         """OpenLAD: Detect query type: traditional / deep_research
-        
+
         Uses LLM for language-agnostic classification instead of hardcoded keywords.
         """
         system_prompt = """You are a query classification assistant. Classify the user query into one of two types:
@@ -120,7 +119,7 @@ class QueryEngine:
 - "traditional": The query asks for a single fact, lookup, or simple answer from one document.
 
 Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"""
-        
+
         prompt = f"Query: {query}"
         # Use router's model_client (shared via get_model_client singleton)
         from ..models.client import get_model_client
@@ -131,7 +130,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                 return result["type"]
         except Exception as e:
             logger.warning(f"[ENGINE] LLM query classification failed: {e}, falling back to heuristic")
-        
+
         # Fallback: simple entity count heuristic (language-agnostic)
         import re as _re
         # Extract alphanumeric model numbers / entity names (generic pattern, not chip-specific)
@@ -139,20 +138,20 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         unique_entities = set(entities)
         if len(unique_entities) >= 2:
             return "deep_research"
-        
+
         return "traditional"
 
     def _execute_deep_research(self, query_text: str, tenant_id: str,
-                                components: Dict, chat_history: str = None,
-                                industry_hint: str = None) -> Dict[str, Any]:
+                                components: dict, chat_history: str = None,
+                                industry_hint: str = None) -> dict[str, Any]:
         """Execute deep research retrieval (decompose query + retrieve separately + merge & synthesize)
-        
+
         FIX: Prefer Agentic retrieval; fall back to traditional decomposition when Agentic fails.
         """
         planner = components["planner"]
         executor = components["executor"]
         synthesizer = components["synthesizer"]
-        metadata_db = components["metadata_db"]
+        components["metadata_db"]
         router_plan = self.router.route(query_text)
 
         # FIX: Try Agentic retrieval first (better for comparison queries)
@@ -291,7 +290,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         return retrieval_result, synthesis_result, router_plan
 
     @staticmethod
-    def _format_chat_history(chat_history: List[Dict]) -> str:
+    def _format_chat_history(chat_history: list[dict]) -> str:
         """Format frontend-provided List[Dict] chat history into a readable string"""
         if not chat_history:
             return ""
@@ -308,7 +307,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         return "\n".join(lines)
 
     def _lookup_spec_facts(self, query_text: str, tenant_id: str,
-                           metadata_db, plan: Dict) -> List[Dict]:
+                           metadata_db, plan: dict) -> list[dict]:
         """Look up the assertion-level spec_facts index for this query.
 
         Builds the keyword set from English tokens in the query plus the
@@ -325,7 +324,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             return []
 
         import re as _re
-        keywords: List[str] = []
+        keywords: list[str] = []
         # English / model tokens from the query itself (e.g. RK3568, H.264, UART).
         for tok in _re.findall(r'[A-Za-z][\w.\-]{1,20}', query_text):
             keywords.append(tok)
@@ -377,7 +376,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         return qualified[: cfg.get("spec_facts_max_inject", 6)]
 
     @staticmethod
-    def _format_spec_facts(facts: List[Dict]) -> str:
+    def _format_spec_facts(facts: list[dict]) -> str:
         """Render spec facts as an authoritative evidence block for the context."""
         lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
         for f in facts:
@@ -388,9 +387,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
     def query(self, query_text: str, tenant_id: str,
               industry_hint: str = None,
-              chat_history: List[Dict] = None) -> Dict[str, Any]:
+              chat_history: list[dict] = None) -> dict[str, Any]:
         start_time = time.time()
-        original_query = query_text
         # OpenLAD: No hardcoded language-specific rewrites in core.
         # Query normalization is handled by the industry pack's preprocess_query hook if needed.
         logger.info(f"[ENGINE] tenant: {tenant_id}, query: {query_text}, industry: {industry_hint}")

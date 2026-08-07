@@ -1,22 +1,22 @@
 """
 OpenLAD API Service Entry Point
 """
-import os
 import logging
+import os
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 # Load .env file before any other imports that might read env vars
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
 load_dotenv()
 
 from ..config import settings
-from ..plugins import get_plugin_registry
 from ..db.system_db import get_system_db
+from ..plugins import get_plugin_registry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,8 +41,8 @@ async def lifespan(app: FastAPI):
 
         # Auto-initialize built-in admin tenant + admin user
         try:
-            from ..tenant.tenant_manager import get_tenant_manager
             from ..tenant.auth import get_auth_manager
+            from ..tenant.tenant_manager import get_tenant_manager
             tenant_mgr = get_tenant_manager()
             auth_mgr = get_auth_manager()
 
@@ -65,13 +65,13 @@ async def lifespan(app: FastAPI):
                     logger.error("[LIFESPAN] OPENLAD_ADMIN_PASSWORD environment variable is not set. "
                                  "Admin user cannot be created. Please set it before first startup.")
                     raise RuntimeError("OPENLAD_ADMIN_PASSWORD is required for initial admin creation")
-                user = auth_mgr.create_user(
+                auth_mgr.create_user(
                     tenant_id="admin",
                     username="admin",
                     password=admin_password,
                     role="admin"
                 )
-                logger.info(f"[LIFESPAN] Built-in admin user created")
+                logger.info("[LIFESPAN] Built-in admin user created")
             else:
                 logger.info("[LIFESPAN] Built-in admin user already exists")
         except Exception as e:
@@ -131,10 +131,12 @@ app.add_middleware(
 
 # Register multi-tenant middleware
 from .middleware.tenant import TenantMiddleware
+
 app.add_middleware(TenantMiddleware)
 
 # Register rate limiting middleware
 from .middleware.rate_limit import RateLimitMiddleware
+
 app.add_middleware(RateLimitMiddleware)
 
 # Register global exception handlers
@@ -161,7 +163,7 @@ async def general_exception_handler(request, exc):
 
 
 # Register routes
-from .routes import health, admin, documents, query, skill, industries, auth, diagnostic
+from .routes import admin, auth, diagnostic, documents, health, industries, query, skill
 
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")

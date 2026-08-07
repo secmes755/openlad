@@ -4,10 +4,9 @@ External Model Service Manager (External mode)
 - Event log recording
 - Does not start/manage any processes — user provides LLM / Embedding API themselves
 """
+import json
 import logging
 import time
-import json
-from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -22,8 +21,8 @@ class ServiceStatus:
     name: str
     url: str
     status: str = "unknown"
-    http_status: Optional[int] = None
-    last_error: Optional[str] = None
+    http_status: int | None = None
+    last_error: str | None = None
 
 
 class ServiceManager:
@@ -101,7 +100,7 @@ class ServiceManager:
             logger.error(f"Failed to record service event: {e}")
 
     def get_logs(self, service: str = None, limit: int = 100,
-                 event_type: str = None, since_hours: int = 24) -> List[dict]:
+                 event_type: str = None, since_hours: int = 24) -> list[dict]:
         try:
             db = get_system_db()
             cutoff = time.time() - since_hours * 3600
@@ -138,7 +137,7 @@ class ServiceManager:
     # Status check (pure URL probing, no process inspection)
     # ------------------------------------------------------------------
 
-    def get_status(self) -> Dict[str, ServiceStatus]:
+    def get_status(self) -> dict[str, ServiceStatus]:
         """Perform HTTP health check on all configured service endpoints"""
         result = {}
         services = [
@@ -161,6 +160,7 @@ class ServiceManager:
 
 _service_manager = None
 import threading
+
 _service_manager_lock = threading.Lock()
 
 

@@ -3,12 +3,13 @@ Multi-tenant middleware
 Identify tenant on each request and set context
 """
 import logging
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from ...tenant.context import TenantContext, set_tenant_context, clear_tenant_context
 from ...tenant.auth import get_auth_manager
+from ...tenant.context import TenantContext, clear_tenant_context, set_tenant_context
 from ...tenant.tenant_manager import get_tenant_manager
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class TenantMiddleware(BaseHTTPMiddleware):
     """Multi-tenant middleware
-    
+
     Identify tenant from request headers:
     - X-Tenant-ID: tenant ID
     - Authorization: Bearer *** or username/password
@@ -25,7 +26,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Skip routes that don't require tenant
         path = request.url.path
-        method = request.method
         # Health check, root path, login — fully skip
         if path in ["/", "/api/v1/health", "/api/v1/login"]:
             return await call_next(request)

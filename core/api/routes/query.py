@@ -6,12 +6,11 @@ read by resource_capacity.py's get_query_concurrency_config().
 import asyncio
 import logging
 import time
-from fastapi import APIRouter, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import List, Optional
 
 from ...tenant.context import get_tenant_context
-from fastapi import Request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -45,9 +44,9 @@ CHAT_HISTORY_MSG_MAX_CHARS = 1500   # per-message content cap for history
 
 class QueryRequest(BaseModel):
     query: str
-    session_id: Optional[str] = None
-    industry: Optional[str] = None
-    chat_history: Optional[List[dict]] = []
+    session_id: str | None = None
+    industry: str | None = None
+    chat_history: list[dict] | None = []
 
 
 MAX_QUERY_LENGTH = 2000  # Default value, will be read from config in endpoint
@@ -55,7 +54,7 @@ MAX_QUERY_LENGTH = 2000  # Default value, will be read from config in endpoint
 
 class QueryResponse(BaseModel):
     answer: str
-    sources: List[dict]
+    sources: list[dict]
     confidence: str
     elapsed_ms: int
 
@@ -63,7 +62,7 @@ class QueryResponse(BaseModel):
 @router.post("/query")
 async def query(req: QueryRequest, request: Request):
     """Document query (protected by global concurrency lock)
-    
+
     Concurrency strategy is dynamically determined by hardware configuration:
     - Single GPU / consumer-grade GPU: serial execution (Lock)
     - Multi-GPU / server-grade GPU: limited concurrency allowed (Semaphore)
@@ -133,7 +132,7 @@ async def query(req: QueryRequest, request: Request):
             chat_history=chat_history
         )
         elapsed_ms = int((time.time() - query_start) * 1000)
-        
+
         result["tenant_id"] = ctx.tenant_id
         result["industry"] = req.industry or "auto"
         result["elapsed_ms"] = elapsed_ms
@@ -141,8 +140,9 @@ async def query(req: QueryRequest, request: Request):
         if wait_ms > 1000:
             result["queue_notice"] = f"Current query queued for {wait_ms//1000} seconds, system is processing"
 
-    from ...db.tenant_db import get_tenant_metadata_db
     import json
+
+    from ...db.tenant_db import get_tenant_metadata_db
     db = get_tenant_metadata_db(ctx.tenant_id)
 
     # Auto-create anonymous session (if no session_id provided)
@@ -188,7 +188,7 @@ async def query(req: QueryRequest, request: Request):
 
 
 @router.post("/chat/sessions")
-async def create_chat_session(title: Optional[str] = "New conversation", industry: str = "auto"):
+async def create_chat_session(title: str | None = "New conversation", industry: str = "auto"):
     """Create chat session"""
     ctx = get_tenant_context()
     if not ctx:

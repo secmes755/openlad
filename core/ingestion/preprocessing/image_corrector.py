@@ -3,9 +3,10 @@ V4 Image Corrector - CPU-based processing using OpenCV
 Supports: perspective correction, deskewing, lighting equalization, denoising, binarization
 """
 import logging
-import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Any
+
+import numpy as np
 from PIL import Image
 
 try:
@@ -26,7 +27,7 @@ class ImageCorrector:
         if not self.enabled:
             logger.warning("ImageCorrector disabled - OpenCV not available")
 
-    def correct(self, image_path: str) -> Tuple[np.ndarray, Dict[str, Any]]:
+    def correct(self, image_path: str) -> tuple[np.ndarray, dict[str, Any]]:
         """
         Apply correction processing to an image
 
@@ -83,7 +84,7 @@ class ImageCorrector:
             img = Image.open(image_path).convert('RGB')
             return np.array(img), {"error": str(e)}
 
-    def _analyze_quality(self, img: np.ndarray) -> Dict[str, Any]:
+    def _analyze_quality(self, img: np.ndarray) -> dict[str, Any]:
         """Analyze image quality"""
         metrics = {}
         h, w = img.shape[:2]
@@ -261,12 +262,12 @@ class ImageCorrector:
         """Lighting equalization (CLAHE)"""
         try:
             lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
+            lab_l, a, b = cv2.split(lab)
 
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            l = clahe.apply(l)
+            lab_l = clahe.apply(lab_l)
 
-            lab = cv2.merge([l, a, b])
+            lab = cv2.merge([lab_l, a, b])
             return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         except Exception as e:
             logger.warning(f"Lighting equalization failed: {e}")

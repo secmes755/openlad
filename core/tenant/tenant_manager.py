@@ -3,12 +3,10 @@ Tenant Manager
 Responsible for tenant creation, deletion, querying, and data directory management
 """
 import logging
-import uuid
 import shutil
-from dataclasses import dataclass
+import uuid
 from datetime import datetime
-from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from ..config import settings
 from .models import TenantInfo
@@ -18,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class TenantManager:
     """Tenant Manager
-    
+
     Each tenant has an independent data directory:
     data/tenants/{tenant_id}/
       - metadata.db       (SQLite metadata + FTS5 + structure index)
@@ -36,7 +34,7 @@ class TenantManager:
         pass  # SystemDB initialization is handled automatically in get_system_db()
 
     def create_tenant(self, name: str, description: str = "",
-                      industry_packages: List[str] = None,
+                      industry_packages: list[str] = None,
                       storage_quota_mb: int = None,
                       tenant_id: str = None) -> TenantInfo:
         """Create new tenant
@@ -78,7 +76,7 @@ class TenantManager:
 
     def delete_tenant(self, tenant_id: str, hard_delete: bool = False) -> bool:
         """Delete tenant
-        
+
         soft_delete: mark as deleted, preserve data
         hard_delete: permanently remove data directory
         """
@@ -94,7 +92,7 @@ class TenantManager:
         self.system_db.update_tenant_status(tenant_id, "deleted")
         return True
 
-    def reactivate_tenant(self, tenant_id: str) -> Optional[TenantInfo]:
+    def reactivate_tenant(self, tenant_id: str) -> TenantInfo | None:
         """Reactivate a soft-deleted tenant so it can be reused.
 
         A tenant record marked ``deleted`` may have had its data directory
@@ -118,11 +116,11 @@ class TenantManager:
         logger.info(f"[TENANT] Reactivated tenant: {tenant_id}")
         return self.system_db.get_tenant(tenant_id)
 
-    def get_tenant(self, tenant_id: str) -> Optional[TenantInfo]:
+    def get_tenant(self, tenant_id: str) -> TenantInfo | None:
         """Get tenant info"""
         return self.system_db.get_tenant(tenant_id)
 
-    def list_tenants(self, include_deleted: bool = False) -> List[TenantInfo]:
+    def list_tenants(self, include_deleted: bool = False) -> list[TenantInfo]:
         """List all tenants"""
         return self.system_db.list_tenants(include_deleted=include_deleted)
 
@@ -130,7 +128,7 @@ class TenantManager:
         """Update tenant info"""
         return self.system_db.update_tenant(tenant_id, **kwargs)
 
-    def get_tenant_storage_usage(self, tenant_id: str) -> Dict[str, Any]:
+    def get_tenant_storage_usage(self, tenant_id: str) -> dict[str, Any]:
         """Get tenant storage usage"""
         tenant_dir = settings.get_tenant_data_dir(tenant_id)
         if not tenant_dir.exists():
@@ -162,7 +160,7 @@ class TenantManager:
 
 
 # Singleton
-_tenant_manager: Optional[TenantManager] = None
+_tenant_manager: TenantManager | None = None
 
 
 def get_tenant_manager() -> TenantManager:

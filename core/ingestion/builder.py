@@ -2,22 +2,22 @@
 Four-Level Knowledge Pyramid Index Builder
 Multi-tenant + industry plugin system adapter
 """
-import logging
-import hashlib
-import uuid
 import gc
+import hashlib
+import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any
+
 from PIL import Image
 
-from ..config import settings, INGEST_MAX_WORKERS, SECTION_ENTITY_HARVEST_ENABLED
+from ..config import INGEST_MAX_WORKERS, SECTION_ENTITY_HARVEST_ENABLED, settings
+from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models import get_model_client
 from ..plugins import get_plugin_registry
-from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
-from .parser import DocumentParser, ParsedDocument, ParsedPage
 from .classifier import DocumentClassifier
+from .layout import ChartAnalyzer, FormulaRecognizer, LayoutAnalyzer
+from .parser import DocumentParser, ParsedDocument, ParsedPage
 from .preprocessing import DocumentPreprocessor, PagePreprocessResult
-from .layout import LayoutAnalyzer, FormulaRecognizer, ChartAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class DocumentIndexBuilder:
     def ingest_document(self, file_path: str, tenant_id: str = None,
                         industry_hint: str = None,
                         auto_confirm: bool = False,
-                        progress_callback=None) -> Dict[str, Any]:
+                        progress_callback=None) -> dict[str, Any]:
         """Complete document ingestion workflow"""
         tid = tenant_id or self.tenant_id or "default"
         # Store for backward compat (some downstream code may read self.tenant_id)
@@ -116,11 +116,11 @@ class DocumentIndexBuilder:
         return result
 
     def build_index(self, doc_id: str, parsed_doc: ParsedDocument = None,
-                    preprocessed_pages: List = None,
+                    preprocessed_pages: list = None,
                     industry_hint: str = None,
                     progress_callback=None,
                     file_hash: str = None,
-                    tenant_id: str = None) -> Dict[str, Any]:
+                    tenant_id: str = None) -> dict[str, Any]:
         """Build document index (two layers: L2 content index + vector embeddings)
 
         Supports progress_callback(progress_percent, message) for reporting progress.
@@ -248,10 +248,10 @@ class DocumentIndexBuilder:
         }
 
     def _preprocess_document(self, parsed_doc: ParsedDocument,
-                            doc_id: str) -> List[Any]:
+                            doc_id: str) -> list[Any]:
         """Concurrently preprocess all pages of the document"""
-        from concurrent.futures import ThreadPoolExecutor
         import threading
+        from concurrent.futures import ThreadPoolExecutor
 
         _thread_local = threading.local()
 
@@ -419,7 +419,7 @@ class DocumentIndexBuilder:
         return text
 
     def _build_l2(self, doc_id: str, parsed_doc: ParsedDocument,
-                  preprocessed_pages: List, tid: str, plugin=None) -> List[Dict]:
+                  preprocessed_pages: list, tid: str, plugin=None) -> list[dict]:
         """Build L2 layer: page-level processing"""
         from concurrent.futures import ThreadPoolExecutor
         metadata_db, vector_db = self._get_dbs(tid)
@@ -633,7 +633,7 @@ class DocumentIndexBuilder:
                                          explicit_sections=explicit_sections)
         return l2_results
 
-    def _build_structure_index(self, doc_id: str, page_results: Dict[int, Dict],
+    def _build_structure_index(self, doc_id: str, page_results: dict[int, dict],
                                 parsed_doc=None):
         """Build document structure index
 
@@ -665,9 +665,9 @@ class DocumentIndexBuilder:
                     if result:
                         logger.info(f"[STRUCTURE] Using extrapolated PDF bookmarks: {len(result)} pages")
                         return result, explicit_sections
-                    logger.info(f"[STRUCTURE] PDF bookmark extrapolation failed, using LLM full analysis")
+                    logger.info("[STRUCTURE] PDF bookmark extrapolation failed, using LLM full analysis")
             else:
-                logger.info(f"[STRUCTURE] PDF bookmarks empty or invalid, using LLM full analysis")
+                logger.info("[STRUCTURE] PDF bookmarks empty or invalid, using LLM full analysis")
 
         # Force LLM full analysis (ensure highest quality) - DISABLED for background tasks
         # LLM analysis is too slow for background processing, use text rules instead
@@ -678,7 +678,7 @@ class DocumentIndexBuilder:
             return result, None
 
         # Final fallback: return empty structure index
-        logger.warning(f"[STRUCTURE] All methods failed, returning empty structure index")
+        logger.warning("[STRUCTURE] All methods failed, returning empty structure index")
         return {}, None
 
     _NON_CONTENT_PATTERNS = [
@@ -716,8 +716,8 @@ class DocumentIndexBuilder:
         title = re.sub(r'\s+', ' ', title)
         return title
 
-    def _build_structure_from_toc(self, doc_id: str, page_results: Dict[int, Dict],
-                                   toc: List):
+    def _build_structure_from_toc(self, doc_id: str, page_results: dict[int, dict],
+                                   toc: list):
         """
         Build structure index from PDF TOC/bookmarks.
 
@@ -725,7 +725,7 @@ class DocumentIndexBuilder:
           structure_index: page_num -> page-level chapter info (for page labeling)
           explicit_sections: ordered section list — one entry per TOC item,
                              including multiple sections sharing the same page
-        
+
         V5.0 Fixes:
         1. Same-page multi-chapter: collect ALL entries, merge into composite title
         2. Title pollution: clean trailing page numbers, dots, extra spaces
@@ -762,7 +762,7 @@ class DocumentIndexBuilder:
         # path -> {level, title, page_num, parent_path}
         toc_entries = []
         path_map = {}  # path -> entry info
-        
+
         for level, title, page_num in valid_toc:
             num_match = re.match(r'^(\d+(?:\.\d+)*)\s+(.+)', title)
             if num_match:
@@ -780,17 +780,17 @@ class DocumentIndexBuilder:
                 else:
                     path = title
                     display_title = title
-            
+
             # V5.0: Build parent path for full hierarchy
             parent_path = ""
             if '.' in path:
                 parent_path = '.'.join(path.split('.')[:-1])
-            
+
             entry = {
-                "page_num": page_num, 
-                "level": level, 
+                "page_num": page_num,
+                "level": level,
                 "path": path,
-                "title": display_title, 
+                "title": display_title,
                 "raw_title": title,
                 "parent_path": parent_path
             }
@@ -829,7 +829,7 @@ class DocumentIndexBuilder:
                     best_entry = entry
                 else:
                     break
-            
+
             if best_entry:
                 # V5.0: Use full path for better identification
                 full_path = build_full_path(best_entry)
@@ -849,19 +849,19 @@ class DocumentIndexBuilder:
         # Group consecutive pages with same short_path into sections
         section_ranges = []  # [(short_path, start_page, end_page, level, title)]
         sorted_pages = sorted(structure_index.keys())
-        
+
         current_path = None
         current_start = None
         current_end = None
         current_level = 0
         current_title = ""
-        
+
         for page_num in sorted_pages:
             s = structure_index[page_num]
             path = s.get("short_path", "")
             if not path:
                 continue
-            
+
             if path == current_path:
                 # Same path, extend end_page
                 current_end = page_num
@@ -874,11 +874,11 @@ class DocumentIndexBuilder:
                 current_end = page_num
                 current_level = s.get("level", 0)
                 current_title = s.get("title", "")
-        
+
         # Save last section
         if current_path:
             section_ranges.append((current_path, current_start, current_end, current_level, current_title))
-        
+
         # Apply end_page to all pages in each section
         for short_path, start_page, end_page, level, title in section_ranges:
             for pn in range(start_page, end_page + 1):
@@ -918,22 +918,22 @@ class DocumentIndexBuilder:
 
         return structure_index, explicit_sections
 
-    def _extrapolate_structure_to_all_pages(self, structure_index: Dict[int, Dict],
-                                             page_results: Dict[int, Dict]) -> Dict[int, Dict]:
+    def _extrapolate_structure_to_all_pages(self, structure_index: dict[int, dict],
+                                             page_results: dict[int, dict]) -> dict[int, dict]:
         """Extrapolate structure from bookmark-covered pages to all pages.
-        
+
         For pages without explicit bookmarks, use the nearest preceding bookmark's structure.
         """
         if not structure_index or not page_results:
             return structure_index
-        
+
         max_page = max(page_results.keys())
-        
+
         # Sort pages that have structure
         structured_pages = sorted(structure_index.keys())
         if not structured_pages:
             return structure_index
-        
+
         # For each page without structure, find nearest preceding structured page
         for page_num in range(1, max_page + 1):
             if page_num not in structure_index:
@@ -944,7 +944,7 @@ class DocumentIndexBuilder:
                         prev_structured = sp
                     else:
                         break
-                
+
                 if prev_structured:
                     structure_index[page_num] = {
                         "level": structure_index[prev_structured]["level"],
@@ -963,15 +963,14 @@ class DocumentIndexBuilder:
                         "is_table": False,
                         "table_caption": ""
                     }
-        
+
         return structure_index
 
-    def _build_structure_from_text(self, doc_id: str, page_results: Dict[int, Dict]) -> Dict[int, Dict]:
+    def _build_structure_from_text(self, doc_id: str, page_results: dict[int, dict]) -> dict[int, dict]:
         import re
         structure_index = {}
         current_path = ""
         current_level = 0
-        current_title = ""
         section_start_pages = {}
         # FIX: record chapter titles for inferring missing parent chapters
         chapter_titles = {}  # chapter_num -> title
@@ -1002,7 +1001,6 @@ class DocumentIndexBuilder:
                     else:
                         current_path = f"{current_path}.{title}"
                     current_level = level
-                    current_title = title
                     section_start_pages[current_path] = page_num
                     page_structure.update({"level": level, "path": current_path, "title": title})
                     break
@@ -1020,7 +1018,6 @@ class DocumentIndexBuilder:
                     path = f"{cn_num}.{cn_unit}.{title}"
                     current_path = path
                     current_level = level
-                    current_title = title
                     section_start_pages[path] = page_num
                     page_structure.update({"level": level, "path": path, "title": title})
                     break
@@ -1030,7 +1027,7 @@ class DocumentIndexBuilder:
                     path = num_heading_match.group(1)
                     title = num_heading_match.group(2).strip()
                     level = path.count(".") + 1
-                    
+
                     # FIX: detect new top-level chapter number, infer parent chapter
                     top_num = path.split('.')[0]
                     if top_num.isdigit() and int(top_num) > 0:
@@ -1043,10 +1040,9 @@ class DocumentIndexBuilder:
                                 chapter_titles[chapter_num] = parent_title
                             else:
                                 chapter_titles[chapter_num] = f"Chapter {chapter_num}"
-                    
+
                     current_path = path
                     current_level = level
-                    current_title = title
                     section_start_pages[path] = page_num
                     page_structure.update({"level": level, "path": current_path, "title": title})
                     break
@@ -1061,7 +1057,6 @@ class DocumentIndexBuilder:
                     path = f"{unit} {num}"
                     current_path = path
                     current_level = level
-                    current_title = title
                     section_start_pages[path] = page_num
                     # FIX: record Chapter title
                     if unit == "Chapter" and num.isdigit():
@@ -1099,7 +1094,7 @@ class DocumentIndexBuilder:
 
         return structure_index
 
-    def _extract_chapter_titles_from_toc(self, page_results: Dict[int, Dict], chapter_titles: Dict):
+    def _extract_chapter_titles_from_toc(self, page_results: dict[int, dict], chapter_titles: dict):
         """Extract chapter titles from TOC pages"""
         import re
         for page_num, r in page_results.items():
@@ -1121,7 +1116,7 @@ class DocumentIndexBuilder:
                     if title and not title.startswith('.'):
                         chapter_titles[num] = title
 
-    def _get_chapter_title_from_toc(self, page_results: Dict[int, Dict], chapter_num: int) -> str:
+    def _get_chapter_title_from_toc(self, page_results: dict[int, dict], chapter_num: int) -> str:
         """Find the title of a specific chapter from TOC pages"""
         import re
         for page_num, r in page_results.items():
@@ -1136,7 +1131,7 @@ class DocumentIndexBuilder:
                     return match.group(1).strip()
         return ""
 
-    def _fill_parent_chapters(self, structure_index: Dict[int, Dict], chapter_titles: Dict, page_results: Dict[int, Dict]):
+    def _fill_parent_chapters(self, structure_index: dict[int, dict], chapter_titles: dict, page_results: dict[int, dict]):
         """Fill parent chapter info for pages without titles"""
         import re
         current_chapter = None
@@ -1155,14 +1150,14 @@ class DocumentIndexBuilder:
                         if chapter_num in chapter_titles:
                             current_chapter = f"Chapter {chapter_num} {chapter_titles[chapter_num]}"
                 continue
-            
+
             # If current page has no title but has a parent chapter, fill parent chapter info
             if current_chapter and not s.get("title"):
                 s["path"] = current_chapter
                 s["title"] = current_chapter
                 s["level"] = 1
 
-    def _llm_analyze_structure(self, doc_id: str, page_results: Dict[int, Dict]) -> Dict[int, Dict]:
+    def _llm_analyze_structure(self, doc_id: str, page_results: dict[int, dict]) -> dict[int, dict]:
         """
         Use LLM to fully analyze the document and extract chapter structure.
         Called when both PDF bookmarks and text rules fail.
@@ -1173,7 +1168,6 @@ class DocumentIndexBuilder:
         3. If exceeds limit, analyze in chunks (each ≤ ~130K chars)
         4. LLM returns chapter structure in JSON format
         """
-        import json
 
         # Collect all page texts
         page_texts = []
@@ -1252,7 +1246,7 @@ Critical requirements:
             )
 
             if not result:
-                logger.warning(f"[LLM_STRUCTURE] LLM returned empty result")
+                logger.warning("[LLM_STRUCTURE] LLM returned empty result")
                 return {}
 
             return self._parse_llm_structure_result(result, page_results)
@@ -1261,10 +1255,9 @@ Critical requirements:
             logger.error(f"[LLM_STRUCTURE] LLM analysis failed: {e}")
             return {}
 
-    def _llm_analyze_structure_chunked(self, doc_id: str, page_results: Dict[int, Dict],
-                                        page_texts: List[str]) -> Dict[int, Dict]:
+    def _llm_analyze_structure_chunked(self, doc_id: str, page_results: dict[int, dict],
+                                        page_texts: list[str]) -> dict[int, dict]:
         """Chunked LLM analysis (oversized documents)"""
-        import json
 
         # Derive safe limit from CONTEXT_CONFIG to avoid triggering safety guard truncation
         llm_max = settings.CONTEXT_CONFIG.get("llm_max_tokens", 65536)
@@ -1326,7 +1319,7 @@ Requirements:
         merged = self._merge_chunked_sections(all_sections)
         return self._parse_llm_structure_result(merged, page_results)
 
-    def _merge_chunked_sections(self, sections: List[Dict]) -> List[Dict]:
+    def _merge_chunked_sections(self, sections: list[dict]) -> list[dict]:
         """Merge chunked analysis results, deduplicate"""
         seen = set()
         merged = []
@@ -1338,8 +1331,8 @@ Requirements:
             merged.append(s)
         return merged
 
-    def _parse_llm_structure_result(self, sections: List[Dict],
-                                     page_results: Dict[int, Dict]) -> Dict[int, Dict]:
+    def _parse_llm_structure_result(self, sections: list[dict],
+                                     page_results: dict[int, dict]) -> dict[int, dict]:
         """Parse LLM-returned chapter structure into structure_index format
 
 FIX: Correctly handle hierarchy, assign the most appropriate chapter to each page.
@@ -1380,7 +1373,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                 # Choose deepest-level section (most specific)
                 best_level = max(s.get("level", 1) for s in matching_sections)
                 deepest = [s for s in matching_sections if s.get("level", 1) == best_level]
-                
+
                 # Tiebreaker: when multiple sections at same deepest level match,
                 # prefer the one whose title text actually appears on this page
                 best_section = deepest[0]
@@ -1392,12 +1385,12 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                             if stitle and len(stitle) > 2 and stitle in page_text:
                                 best_section = s
                                 break
-                
+
                 title = best_section.get("title", "")
                 level = best_section.get("level", 1)
-                
-                # Strip hallucinated section numbers: if title starts with a number 
-                # pattern (e.g. "2.11 Analog Interfaces") but that number doesn't 
+
+                # Strip hallucinated section numbers: if title starts with a number
+                # pattern (e.g. "2.11 Analog Interfaces") but that number doesn't
                 # appear verbatim in the page text, remove the number prefix.
                 import re as _re
                 _num_match = _re.match(r'^(\d+(?:\.\d+)+)\s+(.+)', title)
@@ -1407,7 +1400,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     page_text = page_results.get(page_num, {}).get("page_text", "")
                     if page_text and _num_prefix not in page_text:
                         title = _clean_name
-                
+
                 # path includes level info for downstream processing
                 path = f"{level}.{title}"
                 structure_index[page_num] = {
@@ -1494,7 +1487,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                         sec_title = sec.get("title", "")
                         if sec_title not in distinct_sections:
                             distinct_sections[sec_title] = sec
-                    
+
                     if len(distinct_sections) >= 2 or first_raw_mismatch:
                         should_reassign = True
 
@@ -1515,7 +1508,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                         s_start = section.get("start_page", 1)
                         s_end = section.get("end_page", max_page)
                         s_level = section.get("level", 1)
-                        if (s_start <= page_num <= s_end and 
+                        if (s_start <= page_num <= s_end and
                             s_level < current_level and s_level >= 1):
                             if parent_section is None or s_level > parent_section.get("level", 0):
                                 parent_section = section
@@ -1534,7 +1527,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                         new_title = title
                         new_level = current.get("level", 0)
                         new_path = current.get("path", "")
-                    
+
                     logger.info(
                         f"[STRUCTURE] Multi-section reassign P{page_num}: "
                         f"'{title}' -> '{new_title}' "
@@ -1554,10 +1547,10 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
 
         return structure_index
 
-    def _save_structure_index_to_db(self, doc_id: str, structure_index: Dict[int, Dict],
-                                     page_results: Optional[Dict[int, Dict]] = None,
+    def _save_structure_index_to_db(self, doc_id: str, structure_index: dict[int, dict],
+                                     page_results: dict[int, dict] | None = None,
                                      tenant_id: str = None,
-                                     explicit_sections: Optional[List[Dict]] = None):
+                                     explicit_sections: list[dict] | None = None):
         """
         Save structure index to database.
         V5.0: Merge adjacent pages with same short_path to fix 1-page range issue.
@@ -1637,24 +1630,24 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
         elif page_results:
             # Sort pages by page_num
             sorted_pages = sorted(page_results.items(), key=lambda x: x[0])
-            
+
             for i, (page_num, r) in enumerate(sorted_pages):
                 s = structure_index.get(page_num, {})
                 short_path = s.get("short_path", "")
                 if not short_path:
                     continue
-                    
+
                 text = r.get("page_text", "")
                 if not text:
                     continue
-                
+
                 # V5.0 FIX: Check if this page contains previous section's tail
                 # This happens when a new chapter starts mid-page
                 if i > 0:
                     prev_page_num = sorted_pages[i-1][0]
                     prev_s = structure_index.get(prev_page_num, {})
                     prev_short_path = prev_s.get("short_path", "")
-                    
+
                     # If current page has a different short_path than previous page,
                     # check if current page contains previous section's content
                     if prev_short_path and prev_short_path != short_path:
@@ -1668,7 +1661,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                                 # Found title mid-page, use only content after title
                                 text = text[title_pos:]
                                 logger.debug(f"[STRUCTURE] Truncated page {page_num} for {short_path} at position {title_pos}")
-                
+
                 if short_path not in path_pages:
                     path_pages[short_path] = []
                 path_pages[short_path].append((page_num, text))
@@ -1698,7 +1691,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     # can match this chapter in the structure index.
                     if SECTION_ENTITY_HARVEST_ENABLED:
                         try:
-                            from .entity_harvest import harvest_section_entities, harvest_acronyms
+                            from .entity_harvest import harvest_acronyms, harvest_section_entities
                             entities = harvest_section_entities(full_text)
                             # Also harvest acronym/alias pairs (e.g. NPU=Neural Process Unit)
                             # to make FTS searches by abbreviation match the full term.
@@ -1767,7 +1760,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
         return f"{title} | Begin: {preview[:200]}... | End: {end_preview[:200]}..."
 
     def _generate_document_summary(self, doc_id: str, parsed_doc: Any,
-                                     l2_results: List[Dict]) -> str:
+                                     l2_results: list[dict]) -> str:
         """
         V5.0: Generate document-level summary for L2 retrieval.
         Uses LLM to summarize key chapters and their content.
@@ -1779,7 +1772,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
         # V5.0: Collect chapter info from structure_index (stored in page_results during _build_l2)
         # Since l2_results doesn't have chapter_info, we need to get it from the structure_index
         # which is built before l2_results. We'll use a fallback approach.
-        
+
         # V5.0: Get structure info from the first page of each section
         # First, collect all unique sections from page_map
         sections = {}  # section_title -> {page_nums, text_preview}
@@ -1794,7 +1787,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     first_line = text.split('\n')[0].strip()
                     if first_line and len(first_line) < 100:
                         section_title = first_line
-            
+
             if section_title:
                 if section_title not in sections:
                     sections[section_title] = {"pages": [], "texts": []}
@@ -1832,7 +1825,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                 preview = info["texts"][0][:300]
                 if preview:
                     content_previews.append(f"[{section_title}]\n{preview}")
-        
+
         preview_text = "\n\n".join(content_previews)
         if len(preview_text) > 2000:
             preview_text = preview_text[:2000] + "..."
@@ -1859,7 +1852,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
         # Fallback
         return f"Document: {parsed_doc.filename}\n\nChapters:\n{chapter_text}"
 
-    def _get_page_image_for_analysis(self, page, preprocessed) -> Optional[Image.Image]:
+    def _get_page_image_for_analysis(self, page, preprocessed) -> Image.Image | None:
         if preprocessed and preprocessed.page_image_path:
             try:
                 return Image.open(preprocessed.page_image_path).convert('RGB')
@@ -1869,7 +1862,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
             return page.page_image.convert('RGB')
         return None
 
-    def _extract_formulas(self, layout_result, doc_id: str) -> List[Dict]:
+    def _extract_formulas(self, layout_result, doc_id: str) -> list[dict]:
         formulas = []
         for elem in layout_result.elements:
             if elem.element_type == "formula":
@@ -1891,22 +1884,22 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     })
         return formulas
 
-    def _chunk_by_page_boundary(self, pages: List[tuple], max_chunk_size: int = 1200) -> List[str]:
+    def _chunk_by_page_boundary(self, pages: list[tuple], max_chunk_size: int = 1200) -> list[str]:
         """
         Chunk by page boundaries, keeping page content intact when possible.
         If single page content exceeds max_chunk_size, split by structure.
-        
+
         pages: [(page_id, page_num, raw_text), ...]
         return: List[chunk_text]
         """
         chunks = []
         current_chunk = ""
-        
+
         for page_id, page_num, raw_text in pages:
             text = raw_text.strip() if raw_text else ""
             if not text:
                 continue
-            
+
             # If adding this page to current chunk stays within limit, merge
             if current_chunk:
                 if len(current_chunk) + len(text) + 1 <= max_chunk_size:
@@ -1916,7 +1909,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     current_chunk = text
             else:
                 current_chunk = text
-            
+
             # If a single page exceeds limit, split immediately (by structure)
             if len(current_chunk) > max_chunk_size * 1.2:
                 if len(current_chunk) > max_chunk_size:
@@ -1926,41 +1919,41 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                         sub_chunks = self.parser._simple_chunk(current_chunk, chunk_size=max_chunk_size, overlap=80)
                     chunks.extend([c.strip() for c in sub_chunks if len(c.strip()) >= 20])
                     current_chunk = ""
-        
+
         if current_chunk:
             chunks.append(current_chunk)
-        
+
         return chunks
 
     def _process_section_chunks(self, pages, section_path, section_title,
                                  chunk_size, chunk_overlap, chunk_items):
         """Process a section's page list, generate chunks respecting section boundaries.
-        
+
         Strategy: Within the same section, merge adjacent pages as long as total
         stays within max_chunk_size. Only split when:
         1. A single page exceeds max_chunk_size (rare)
         2. Accumulated pages exceed max_chunk_size
-        
+
         This preserves section coherence while respecting embedding model limits.
         """
         if not pages:
             return
-        
+
         # Use max_chunk_size as the hard limit for section merging
         # Must respect embedding model's token limit to avoid 500 errors
         # llama-server batch size limits tokens per input; use chunk_size as safe upper bound
         max_chunk_size = min(chunk_size, settings.EMBEDDING_CONFIG.get("max_chunk_chars", chunk_size * 3))
-        
+
         chunks_with_pages = []  # [(chunk_text, [(page_id, page_num)], primary_page_id)]
-        
+
         current_chunk = ""
         current_pages = []
-        
+
         for page_id, page_num, raw_text in pages:
             text = raw_text.strip()
             if not text:
                 continue
-            
+
             # If single page exceeds max_chunk_size, we must split it
             # Save current chunk first, then handle oversized page
             if len(text) > max_chunk_size:
@@ -1976,7 +1969,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                     if len(sc) >= 20:
                         chunks_with_pages.append((sc, [(page_id, page_num)], page_id, page_num))
                 continue
-            
+
             if current_chunk:
                 # Within same section: merge if under max_chunk_size
                 if len(current_chunk) + len(text) + 1 <= max_chunk_size:
@@ -1991,11 +1984,11 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
             else:
                 current_chunk = text
                 current_pages = [(page_id, page_num)]
-        
+
         if current_chunk:
             primary_page = current_pages[0] if current_pages else (pages[0][0], pages[0][1])
             chunks_with_pages.append((current_chunk, current_pages, primary_page[0], primary_page[1]))
-        
+
         # Only split if a single chunk exceeds max_chunk_size significantly
         final_chunks = []
         for chunk_text, span_pages, primary_id, primary_num in chunks_with_pages:
@@ -2010,7 +2003,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                         final_chunks.append((sc, primary_id, primary_num))
             else:
                 final_chunks.append((chunk_text, primary_id, primary_num))
-        
+
         # Merge adjacent small chunks (within same section, under max_chunk_size)
         merged = []
         for chunk_text, primary_id, primary_num in final_chunks:
@@ -2018,7 +2011,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                 merged[-1] = (merged[-1][0] + "\n" + chunk_text, merged[-1][1], merged[-1][2])
             else:
                 merged.append((chunk_text, primary_id, primary_num))
-        
+
         # Add to chunk_items
         for chunk_idx, (chunk_text, primary_id, primary_num) in enumerate(merged):
             chunk_items.append((
@@ -2026,7 +2019,7 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
                 section_path, section_title, chunk_text
             ))
 
-    def _build_embeddings(self, doc_id: str, l2_results: List[Dict], tid: str):
+    def _build_embeddings(self, doc_id: str, l2_results: list[dict], tid: str):
         """Build L2 chunk-level vector embeddings
 FIX: aggregate text across pages by section before chunking to avoid scattering consecutive sections
 FIX2: batch embedding + limit chunk count
@@ -2049,14 +2042,14 @@ FIX3: dynamically adjust per-section chunk limit
             current_section = ""
             current_section_title = ""  # FIX: save current section title
             current_pages = []  # [(page_id, page_num, raw_text)]
-            
+
             for page in sorted(pages, key=lambda p: p["page_num"]):
                 raw_text = page.get("raw_text", "")
                 if not raw_text or len(raw_text.strip()) < 10:
                     continue
                 section_path = page.get("section_path", "") or ""
                 section_title = page.get("section_title", "") or ""
-                
+
                 # If section changes or current accumulation is too large, process previous first
                 if current_section and current_section != section_path:
                     # Process previous section - using saved current_section_title
@@ -2065,11 +2058,11 @@ FIX3: dynamically adjust per-section chunk limit
                         CHUNK_SIZE, CHUNK_OVERLAP, chunk_items
                     )
                     current_pages = []
-                
+
                 current_section = section_path
                 current_section_title = section_title  # FIX: update current section title
                 current_pages.append((page["id"], page["page_num"], raw_text))
-                
+
                 # If accumulated content exceeds threshold, process immediately (avoid oversized single section)
                 total_len = sum(len(p[2]) for p in current_pages)
                 if total_len > CHUNK_SIZE * 2:
@@ -2078,7 +2071,7 @@ FIX3: dynamically adjust per-section chunk limit
                         CHUNK_SIZE, CHUNK_OVERLAP, chunk_items
                     )
                     current_pages = []
-            
+
             # Process last section
             if current_pages:
                 self._process_section_chunks(
@@ -2167,7 +2160,7 @@ FIX3: dynamically adjust per-section chunk limit
             content += f":{page.raw_text[:500]}"
         return hashlib.md5(content.encode()).hexdigest()
 
-    def _determine_text_source(self, preprocessed_pages: List) -> str:
+    def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]
         if all(s == "direct_extract" for s in sources):
             return "direct_extract"
@@ -2175,7 +2168,7 @@ FIX3: dynamically adjust per-section chunk limit
             return "ocr"
         return "mixed"
 
-    def _get_content_sample_from_pages(self, pages: List[ParsedPage]) -> str:
+    def _get_content_sample_from_pages(self, pages: list[ParsedPage]) -> str:
         sample = []
         current_chars = 0
         max_chars = settings.EMBEDDING_CONFIG["chunk_size"] * 5
@@ -2198,7 +2191,7 @@ FIX3: dynamically adjust per-section chunk limit
             summary = summary[:200] + "..."
         return summary
 
-    def _extract_entities(self, text: str, plugin=None) -> Dict:
+    def _extract_entities(self, text: str, plugin=None) -> dict:
         """Extract entities based on industry plugin configuration"""
         import re
         entities = {}
@@ -2230,30 +2223,30 @@ FIX3: dynamically adjust per-section chunk limit
         """
         Find the position of section title in page text.
         Returns the position after the title, or 0 if not found.
-        
+
         V5.0: Used to detect when a new chapter starts mid-page,
         so we can exclude previous section's content from current section's summary.
         """
         if not text or not title:
             return 0
-        
+
         import re
-        
+
         # Try exact match first
-        title_lower = title.lower()
-        text_lower = text.lower()
-        
+        title.lower()
+        text.lower()
+
         # Look for title with various formats:
         # 1. "1.2.7 Video CODEC" (numbered prefix + title)
         # 2. "Video CODEC" (title only)
         # 3. "Video CODEC\n" (title with newline)
-        
+
         # Try to find with numbered prefix pattern
         num_match = re.match(r'^(\d+(?:\.\d+)*)\s+(.+)', title)
         if num_match:
             path = num_match.group(1)
             display_title = num_match.group(2).strip()
-            
+
             # Search for "1.2.7 Video CODEC" or "Video CODEC" in text
             patterns = [
                 rf'{re.escape(path)}\s+{re.escape(display_title)}',
@@ -2261,13 +2254,13 @@ FIX3: dynamically adjust per-section chunk limit
             ]
         else:
             patterns = [rf'{re.escape(title)}']
-        
+
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 # Return position after the matched title
                 return match.end()
-        
+
         return 0
 
     def _extract_keywords_from_title(self, title: str) -> str:
@@ -2288,7 +2281,6 @@ FIX3: dynamically adjust per-section chunk limit
         like "Core content summary as follows" or "I. Financial Performance" to become
         document titles. filename is the only reliable title source.
         """
-        import re
         filename_title = self._clean_filename_as_title(filename)
         if filename_title and not self._is_uuid_like(filename_title):
             return filename_title

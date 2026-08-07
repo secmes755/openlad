@@ -3,14 +3,12 @@ Answer Synthesizer
 Supports industry-specific Prompt routing: automatically loads synthesis rules for the corresponding industry based on document classification
 """
 import logging
-import os
 import re
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any
 
-from ..models.client import get_model_client
 from ..config import settings
-from .router import QueryPlan, IntentType
+from ..models.client import get_model_client
+from .router import IntentType, QueryPlan
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +30,10 @@ class AnswerSynthesizer:
         return registry
 
     def synthesize(self, query: str, plan: QueryPlan,
-                   context: str, sources: List[Dict],
+                   context: str, sources: list[dict],
                    chat_history: str = None,
                    routed_category: str = None,
-                   original_query: str = None) -> Dict[str, Any]:
+                   original_query: str = None) -> dict[str, Any]:
         # Last line of defense: if context is empty or very short, directly return a no-info message
         if not context or len(context.strip()) < 50:
             logger.warning("[SYNTHESIZER] Retrieval context is empty, refusing to generate answer")
@@ -49,10 +47,10 @@ class AnswerSynthesizer:
             return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query)
 
     def _synthesize_standard(self, query: str, plan: QueryPlan,
-                             context: str, sources: List[Dict],
+                             context: str, sources: list[dict],
                              chat_history: str = None,
                              routed_category: str = None,
-                             original_query: str = None) -> Dict[str, Any]:
+                             original_query: str = None) -> dict[str, Any]:
         history_section = f"\n\nChat history (for background reference only, absolutely do not repeat answers to these questions):\n{chat_history}" if chat_history else ""
 
         # corpus_taxonomy has no equivalent in OpenLAD, leave catalog empty
@@ -182,7 +180,6 @@ For example: if the user asks "is there an encoder?", the answer should include 
     @staticmethod
     def _get_language_instruction(query: str) -> str:
         """Detect query language and return matching output instruction."""
-        import re
         cn_chars = len(re.findall(r'[\u4e00-\u9fff]', query))
         if cn_chars > 0:
             return "你是中文助手，所有回答必须使用中文。"
@@ -276,7 +273,6 @@ Output only JSON."""
         keyword_sample = cfg.get("context_extract_keyword_sample", 3000)
         dedup_window = cfg.get("context_extract_dedup_window", 1000)
         fragment_size = cfg.get("context_extract_fragment_size", 3000)
-        import re
 
         # Extract potential keywords: article numbers, crime names, legal terms
         keywords = set()
@@ -362,7 +358,7 @@ Output only JSON."""
 
         return "\n\n".join(parts)
 
-    def _build_fallback_answer(self, query: str, context: str, sources: List[Dict]) -> str:
+    def _build_fallback_answer(self, query: str, context: str, sources: list[dict]) -> str:
         """When LLM is unavailable, organize retrieval results by document sections as a degraded answer"""
         lines = ["[System Notice: Model service is temporarily unavailable. The following is reference information organized from retrieval results]\n"]
         lines.append(f"**Question**: {query}\n")
@@ -414,7 +410,7 @@ Output only JSON."""
         When user requests a table, use generate_json to get structured data, render as Markdown table on the backend.
         JSON structured output is more reliably followed by models than free-form tables.
         """
-        import re, json
+        import json
         # Extract model names/entity names from the query
         model_pattern = re.findall(r'(?<![A-Za-z0-9])[A-Za-z]{1,}[-]?[A-Za-z0-9]+(?![A-Za-z0-9])', query)
         entities = [m.replace('-', '').replace(' ', '').upper() for m in model_pattern if len(m) >= 3]
@@ -533,7 +529,6 @@ Output JSON:
         has_not_found = any(m in ans_lower for m in not_found_markers)
 
         # ── Specificity indicators ──
-        import re
         # Count specific data points: numbers with units, model names, frequencies, voltages, etc.
         specificity = 0
         specificity += len(re.findall(r'\d+[\.\d]*\s*(?:MHz|GHz|KB|MB|GB|bps|V|W|nm|µm|mm|bit|core|pin|channel|port)', ans_lower))
@@ -575,7 +570,6 @@ Output JSON:
         Post-processing: strip LLM thinking process markers, extract clean final answer.
         Some models may output internal thinking text such as Self-Correction, Drafting, etc. in the answer.
         """
-        import re
         if not text:
             return text
 
@@ -615,7 +609,7 @@ Output JSON:
             start = table_match.start()
             # Keep at most 3 non-empty text lines before the table (usually title/intro)
             prefix = cleaned[:start]
-            prefix_lines = [l for l in prefix.split('\n') if l.strip()]
+            prefix_lines = [ln for ln in prefix.split('\n') if ln.strip()]
             keep_prefix = '\n'.join(prefix_lines[-3:]) if len(prefix_lines) > 3 else '\n'.join(prefix_lines)
             # Extract the table and content after it
             suffix = cleaned[start:]
@@ -641,7 +635,6 @@ Output JSON:
         FIX: Strictly exclude Markdown table rows to avoid misidentifying tables as ASCII diagrams.
         Markdown table rows are characterized by starting with '|' (possibly preceded by whitespace).
         """
-        import re
         lines = text.split('\n')
         result = []
         i = 0
@@ -680,7 +673,7 @@ Output JSON:
                     block_end += 1
                 block = lines[block_start:block_end]
                 # Only process blocks with length >= 3 and at least one line containing + (diagram characteristic)
-                if len(block) >= 3 and any('+' in l for l in block):
+                if len(block) >= 3 and any('+' in ln for ln in block):
                     result.append('```')
                     result.extend(block)
                     result.append('```')
@@ -694,7 +687,7 @@ Output JSON:
     # Map-Reduce chunked extraction (prevents LLM from getting lost in long context scenarios)
     # =========================================================================
 
-    def _split_context_into_chunks(self, context: str, chunk_size: int = None) -> List[str]:
+    def _split_context_into_chunks(self, context: str, chunk_size: int = None) -> list[str]:
         """Split context into chunks by page boundaries, each chunk not exceeding chunk_size"""
         cfg = settings.CONTEXT_CONFIG
         if chunk_size is None:
@@ -702,7 +695,6 @@ Output JSON:
         if len(context) <= chunk_size:
             return [context]
 
-        import re
         # Split by page boundaries: --- Chapter Title (Page N) --- or ===== Document: Title =====
         # Preserve separators as the start of each chunk
         # FIX: Page boundaries have two formats:

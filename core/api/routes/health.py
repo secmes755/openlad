@@ -2,6 +2,7 @@
 Health check routes
 """
 import logging
+
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
@@ -74,10 +75,10 @@ async def capacity_info():
 @router.get("/stats")
 async def system_stats():
     """System statistics"""
-    from ...plugins import get_plugin_registry
-    from ...tenant.tenant_manager import get_tenant_manager
-    from ...tenant.context import get_tenant_context
     from ...db.tenant_db import get_tenant_metadata_db
+    from ...plugins import get_plugin_registry
+    from ...tenant.context import get_tenant_context
+    from ...tenant.tenant_manager import get_tenant_manager
 
     registry = get_plugin_registry()
     tenant_mgr = get_tenant_manager()

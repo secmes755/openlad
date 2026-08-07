@@ -10,10 +10,8 @@ VRAM Management:
 - Dedicated models only loaded on demand for batch processing
 """
 import logging
-import re
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
-from PIL import Image
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +21,7 @@ class FormulaRecognizer:
     Formula Recognizer
     """
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: dict = None):
         self.config = config or {}
         self.model = self.config.get("model", "llm_fallback")  # llm_fallback / pix2tex / uni_mernet
         self.output_format = self.config.get("output_format", "latex")
@@ -40,7 +38,7 @@ class FormulaRecognizer:
             self._model_client = get_model_client()
         return self._model_client
 
-    def recognize(self, image_path: str, formula_id: str = "") -> Dict[str, Any]:
+    def recognize(self, image_path: str, formula_id: str = "") -> dict[str, Any]:
         """
         Recognize formula image
 
@@ -76,7 +74,7 @@ class FormulaRecognizer:
             "note": "Formula recognition requires a more advanced model or manual review"
         }
 
-    def _recognize_with_llm(self, image_path: str) -> Dict[str, Any]:
+    def _recognize_with_llm(self, image_path: str) -> dict[str, Any]:
         """Use multimodal LLM to recognize formula"""
         try:
             client = self._get_model_client()
@@ -176,7 +174,7 @@ Output only the LaTeX code, no other explanations."""
 
         return min(max(score, 0.0), 1.0)
 
-    def batch_recognize(self, formula_images: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
+    def batch_recognize(self, formula_images: list[tuple[str, str]]) -> list[dict[str, Any]]:
         """
         Batch formula recognition
 

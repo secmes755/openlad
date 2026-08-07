@@ -3,6 +3,7 @@ Authentication routes
 Username/password login, exchange for API Key
 """
 import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

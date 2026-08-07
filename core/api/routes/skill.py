@@ -5,12 +5,11 @@ Provides streamlined interfaces for AI Agents such as OpenClaw, HermesAgent, etc
 Shares query.py's global query lock; concurrency strategy is dynamically determined by hardware configuration
 """
 import asyncio
+import logging
 import time
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import List, Optional
-
-import logging
 
 from ...tenant.context import get_tenant_context
 from .query import _query_lock  # shares global query lock
@@ -22,26 +21,26 @@ router = APIRouter()
 
 class SkillQueryRequest(BaseModel):
     query: str
-    industry: Optional[str] = None
+    industry: str | None = None
     return_format: str = "structured"  # structured | text
     max_results: int = 10
 
 
 class SkillSearchRequest(BaseModel):
     query: str
-    industry: Optional[str] = None
+    industry: str | None = None
     max_results: int = 10
 
 
 class SkillIngestRequest(BaseModel):
-    doc_id: Optional[str] = None
-    industry: Optional[str] = None
+    doc_id: str | None = None
+    industry: str | None = None
 
 
 @router.post("/query")
 async def skill_query(req: SkillQueryRequest, request: Request):
     """Agent query endpoint (shares global concurrency lock)
-    
+
     Returns structured JSON for easy parsing and use by Agents.
     Shares the global lock with /query; concurrency strategy is dynamically determined by hardware configuration.
     """
@@ -52,7 +51,7 @@ async def skill_query(req: SkillQueryRequest, request: Request):
     engine = getattr(request.app.state, "query_engine", None)
     if engine is None:
         raise HTTPException(status_code=503, detail="Query engine not initialized. Service is starting up.")
-    
+
     wait_start = time.time()
     async with _query_lock:
         wait_ms = int((time.time() - wait_start) * 1000)
@@ -92,14 +91,14 @@ async def skill_search(req: SkillSearchRequest):
         raise HTTPException(status_code=401, detail="Authentication required")
 
     from ...retrieval.retriever import HierarchicalRetriever
-    from ...retrieval.router import IntentRouter, QueryPlan, IntentType
+    from ...retrieval.router import IntentRouter
 
     wait_ms = 0
     try:
         wait_start = time.time()
         async with _query_lock:
             wait_ms = int((time.time() - wait_start) * 1000)
-            
+
             router = IntentRouter()
             plan = router.route(req.query)
 

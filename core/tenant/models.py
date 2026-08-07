@@ -4,7 +4,6 @@ Independent module, avoids circular imports
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 
 @dataclass
@@ -26,9 +25,9 @@ class UserInfo:
     id: str
     tenant_id: str
     username: str
-    email: Optional[str]
+    email: str | None
     role: str
-    api_key: Optional[str]
+    api_key: str | None
     created_at: datetime
-    password_hash: Optional[str] = None  # Internal use only, not returned by API
-    api_key_expires_at: Optional[datetime] = None  # None = never expires
+    password_hash: str | None = None  # Internal use only, not returned by API
+    api_key_expires_at: datetime | None = None  # None = never expires

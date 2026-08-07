@@ -2,13 +2,13 @@
 Tenant Database Factory
 Creates and manages independent database connections (MetadataDB + VectorDB) per tenant
 """
-import logging
-import sqlite3
 import contextlib
 import json
+import logging
+import sqlite3
 import threading
+from collections.abc import Generator
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Generator, Set
 
 from ..config import settings
 
@@ -320,12 +320,12 @@ class TenantMetadataDB:
             conn.commit()
         return doc_id
 
-    def get_document(self, doc_id: str) -> Optional[Dict]:
+    def get_document(self, doc_id: str) -> dict | None:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
             return _doc_from_row(row) if row else None
 
-    def get_document_by_hash(self, file_hash: str) -> Optional[Dict]:
+    def get_document_by_hash(self, file_hash: str) -> dict | None:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM documents WHERE file_hash = ?", (file_hash,)).fetchone()
             return _doc_from_row(row) if row else None
@@ -350,7 +350,7 @@ class TenantMetadataDB:
             return row[0] if row else 0
 
     def list_documents(self, status: str = None, industry_package_id: str = None,
-                       skip: int = 0, limit: int = 100) -> List[Dict]:
+                       skip: int = 0, limit: int = 100) -> list[dict]:
         query = "SELECT * FROM documents WHERE 1=1"
         params = []
         if status:
@@ -364,7 +364,7 @@ class TenantMetadataDB:
         with self.get_connection() as conn:
             return [_doc_from_row(r) for r in conn.execute(query, params).fetchall()]
 
-    def get_all_documents(self, status: str = None) -> List[Dict]:
+    def get_all_documents(self, status: str = None) -> list[dict]:
         """Get all documents (for internal components like Planner, no pagination)"""
         query = "SELECT * FROM documents WHERE 1=1"
         params = []
@@ -423,7 +423,7 @@ class TenantMetadataDB:
             conn.commit()
             return page_id
 
-    def get_document_pages(self, doc_id: str) -> List[Dict]:
+    def get_document_pages(self, doc_id: str) -> list[dict]:
         with self.get_connection() as conn:
             return [_page_from_row(r) for r in conn.execute(
                 "SELECT * FROM doc_pages WHERE doc_id = ? ORDER BY page_num", (doc_id,)
@@ -437,7 +437,7 @@ class TenantMetadataDB:
             ).fetchone()
             return row[0] if row else 0
 
-    def get_document_pages_batch(self, doc_id: str, offset: int = 0, limit: int = 100) -> List[Dict]:
+    def get_document_pages_batch(self, doc_id: str, offset: int = 0, limit: int = 100) -> list[dict]:
         """Get pages in batches (streaming) to avoid loading all pages into memory"""
         with self.get_connection() as conn:
             return [_page_from_row(r) for r in conn.execute(
@@ -445,7 +445,7 @@ class TenantMetadataDB:
                 (doc_id, limit, offset)
             ).fetchall()]
 
-    def get_page(self, page_id: int) -> Optional[Dict]:
+    def get_page(self, page_id: int) -> dict | None:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM doc_pages WHERE id = ?", (page_id,)).fetchone()
             return _page_from_row(row) if row else None
@@ -470,7 +470,7 @@ class TenantMetadataDB:
             conn.commit()
             return chunk_db_id
 
-    def get_document_chunks(self, doc_id: str, page_id: int = None) -> List[Dict]:
+    def get_document_chunks(self, doc_id: str, page_id: int = None) -> list[dict]:
         """Get document chunks"""
         with self.get_connection() as conn:
             if page_id:
@@ -485,12 +485,12 @@ class TenantMetadataDB:
                 ).fetchall()
             return [dict(r) for r in rows]
 
-    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: Optional[Set[int]] = None) -> List[Dict]:
+    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: set[int] | None = None) -> list[dict]:
         """Chunk-level FTS search (OpenLAD: downgraded from page-level to chunk-level)
-        
+
         FIX: When force_bigram_only=True, skip FTS trigram search and go directly to bigram LIKE search.
         This handles queries consisting entirely of 2-character Chinese words, since the trigram tokenizer cannot index 2-character words.
-        
+
         Phase 2 FIX: Added page_filter parameter to restrict search to specific page numbers.
         When page_filter is provided, only chunks from those pages are returned.
         This enables "L2 structure index → FTS within chapter range" workflow.
@@ -602,7 +602,7 @@ class TenantMetadataDB:
                     conditions = " OR ".join(["dc.chunk_text LIKE ?" for _ in bigram_tokens])
                     params = [f"%{t}%" for t in bigram_tokens]
                     # Calculate match quality: more matched keywords → higher ranking
-                    match_score = " + ".join([f"CASE WHEN dc.chunk_text LIKE ? THEN 1 ELSE 0 END" for _ in bigram_tokens])
+                    match_score = " + ".join(["CASE WHEN dc.chunk_text LIKE ? THEN 1 ELSE 0 END" for _ in bigram_tokens])
                     if seen_chunk_ids:
                         exclude_sql = f"AND dc.id NOT IN ({','.join(['?'] * len(seen_chunk_ids))})"
                         sql = f"""
@@ -662,13 +662,13 @@ class TenantMetadataDB:
             conn.commit()
             return cursor.lastrowid
 
-    def get_structure_index(self, doc_id: str) -> List[Dict]:
+    def get_structure_index(self, doc_id: str) -> list[dict]:
         with self.get_connection() as conn:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM doc_structure_index WHERE doc_id = ? ORDER BY section_path", (doc_id,)
             ).fetchall()]
 
-    def search_structure_index(self, doc_id: str, keyword: str) -> List[Dict]:
+    def search_structure_index(self, doc_id: str, keyword: str) -> list[dict]:
         with self.get_connection() as conn:
             return [dict(r) for r in conn.execute("""
                 SELECT * FROM doc_structure_index
@@ -689,7 +689,7 @@ class TenantMetadataDB:
             """, (doc_id, entity, attribute, value, unit, page_num, source_text, extractor, verified))
             conn.commit()
 
-    def clear_spec_facts(self, doc_id: Optional[str] = None):
+    def clear_spec_facts(self, doc_id: str | None = None):
         """Clear spec facts (all docs or one doc) before re-extraction."""
         with self.get_connection() as conn:
             if doc_id:
@@ -698,8 +698,8 @@ class TenantMetadataDB:
                 conn.execute("DELETE FROM spec_facts")
             conn.commit()
 
-    def search_spec_facts(self, keywords: List[str], doc_id_filter: Optional[set] = None,
-                          limit: int = 20, verified_only: bool = True) -> List[Dict]:
+    def search_spec_facts(self, keywords: list[str], doc_id_filter: set | None = None,
+                          limit: int = 20, verified_only: bool = True) -> list[dict]:
         """Match spec facts by keywords against entity/attribute/value/source_text.
 
         Any keyword hit scores; more hits rank higher. Only verified facts by
@@ -726,7 +726,7 @@ class TenantMetadataDB:
         scored.sort(key=lambda x: (-x[0], x[1].get("page_num") or 0))
         return [r for _, r in scored[:limit]]
 
-    def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> List[int]:
+    def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> list[int]:
         """Return page numbers whose raw_text contains the keyword verbatim.
 
         Used by the retriever's rare-token rescue: exact identifiers that are rare
@@ -739,7 +739,7 @@ class TenantMetadataDB:
                 (doc_id, f"%{keyword}%", limit)).fetchall()]
 
     # === FTS Search ===
-    def search_fts(self, query: str, limit: int = 20) -> List[Dict]:
+    def search_fts(self, query: str, limit: int = 20) -> list[dict]:
         import re
         clean_query = re.sub(r'[^\w\s\u4e00-\u9fff]', ' ', query)
         clean_query = re.sub(r'\s+', ' ', clean_query).strip()
@@ -769,10 +769,10 @@ class TenantMetadataDB:
         trigram_tokens = [t for t in tokens if len(t) >= 3 and not re.match(r'^\d+$', t)]
         # OpenLAD FIX: All 2-character words cannot be indexed by the trigram tokenizer; all need LIKE fallback
         bigram_tokens = [t for t in tokens if len(t) == 2]
-        
+
         all_results = []
         seen_page_ids = set()
-        
+
         # 1. FTS5 trigram search (3+ characters)
         # OpenLAD FIX: Try AND logic first (reduces noise), then supplement with OR if insufficient
         if trigram_tokens:
@@ -797,7 +797,7 @@ class TenantMetadataDB:
                                 })
                 except Exception as e:
                     logger.warning(f"FTS AND search error: {e}")
-            
+
             # If AND results are less than 30% of limit, supplement with OR
             if len(all_results) < int(max(limit * 0.3, 3)):
                 match_query = ' OR '.join(trigram_tokens)
@@ -819,10 +819,10 @@ class TenantMetadataDB:
                                 })
                 except Exception as e:
                     logger.warning(f"FTS OR search error: {e}")
-        
+
         # Deduplicate and sort by score (AND results typically have higher scores, ranked first)
         all_results.sort(key=lambda x: x["score"], reverse=True)
-        
+
         # 2. Supplementary recall: search 2-character Chinese words with LIKE (FTS5 trigram tokenizer doesn't index 2-character words)
         # OpenLAD FIX: Sort by number of matched keywords; more matches rank higher
         if bigram_tokens:
@@ -831,7 +831,7 @@ class TenantMetadataDB:
                 with self.get_connection() as conn:
                     conditions = " OR ".join(["dp.raw_text LIKE ?" for _ in bigram_tokens])
                     params = [f"%{t}%" for t in bigram_tokens]
-                    match_score = " + ".join([f"CASE WHEN dp.raw_text LIKE ? THEN 1 ELSE 0 END" for _ in bigram_tokens])
+                    match_score = " + ".join(["CASE WHEN dp.raw_text LIKE ? THEN 1 ELSE 0 END" for _ in bigram_tokens])
                     if seen_page_ids:
                         exclude_sql = f"AND dp.id NOT IN ({','.join(['?'] * len(seen_page_ids))})"
                         sql = f"""
@@ -865,7 +865,7 @@ class TenantMetadataDB:
                             })
             except Exception as e:
                 logger.warning(f"Bigram LIKE search error: {e}")
-        
+
         return all_results[:limit]
 
     # === Chat ===
@@ -877,7 +877,7 @@ class TenantMetadataDB:
             conn.commit()
         return session_id
 
-    def get_chat_sessions(self, user_id: str = None, limit: int = 100) -> List[Dict]:
+    def get_chat_sessions(self, user_id: str = None, limit: int = 100) -> list[dict]:
         query = """
             SELECT s.id, s.title, s.industry, s.created_at, s.updated_at, COUNT(m.id) as message_count
             FROM chat_sessions s LEFT JOIN chat_messages m ON s.id = m.session_id
@@ -903,7 +903,7 @@ class TenantMetadataDB:
             conn.commit()
             return cursor.lastrowid
 
-    def get_chat_messages(self, session_id: str) -> List[Dict]:
+    def get_chat_messages(self, session_id: str) -> list[dict]:
         with self.get_connection() as conn:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at",
@@ -913,7 +913,7 @@ class TenantMetadataDB:
     # === Query Log ===
     def log_query(self, query: str, user_id: str = None, intent: str = None,
                   industry_package_id: str = None, elapsed_ms: int = 0,
-                  results_count: int = 0, answer_length: int = 0, trace: Dict = None) -> int:
+                  results_count: int = 0, answer_length: int = 0, trace: dict = None) -> int:
         import hashlib
         query_hash = hashlib.md5(query.encode()).hexdigest()
         trace_json = json.dumps(trace) if trace else None
@@ -930,7 +930,7 @@ class TenantMetadataDB:
 
     def log_audit(self, action: str, resource_type: str = None, resource_id: str = None,
                   user_id: str = None, tenant_id: str = None,
-                  details: Dict = None, ip_address: str = None) -> int:
+                  details: dict = None, ip_address: str = None) -> int:
         """Record audit log"""
         details_json = json.dumps(details, ensure_ascii=False) if details else None
         with self.get_connection() as conn:
@@ -963,14 +963,14 @@ class TenantMetadataDB:
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         if not updates:
             return False
-        
+
         # Add updated_at
         updates['updated_at'] = 'CURRENT_TIMESTAMP'
-        
+
         set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
         values = list(updates.values())
         values.append(task_id)
-        
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
@@ -979,7 +979,7 @@ class TenantMetadataDB:
             conn.commit()
             return cursor.rowcount > 0
 
-    def get_upload_task(self, task_id: str) -> Optional[Dict]:
+    def get_upload_task(self, task_id: str) -> dict | None:
         """Get upload task by ID"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -995,21 +995,21 @@ class TenantMetadataDB:
         """Clean up old completed/failed tasks"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM upload_tasks 
-                WHERE updated_at < datetime('now', '-{} hours')
+            cursor.execute(f"""
+                DELETE FROM upload_tasks
+                WHERE updated_at < datetime('now', '-{max_age_hours} hours')
                 AND status IN ('completed', 'failed', 'already_imported')
-            """.format(max_age_hours))
+            """)
             conn.commit()
             return cursor.rowcount
 
-    def restore_interrupted_tasks(self, tenant_id: str = None) -> List[Dict]:
+    def restore_interrupted_tasks(self, tenant_id: str = None) -> list[dict]:
         """On API startup, find tasks that were 'processing' when API last crashed"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             if tenant_id:
                 cursor.execute("""
-                    SELECT * FROM upload_tasks 
+                    SELECT * FROM upload_tasks
                     WHERE status = 'processing' AND tenant_id = ?
                 """, (tenant_id,))
             else:
@@ -1072,7 +1072,7 @@ class TenantVectorDB:
             logger.error(f"sqlite-vec init failed: {e}")
 
     # --- Legacy interface: page-level (kept for compatibility) ---
-    def store_l2_embedding(self, page_id: int, doc_id: str, embedding: List[float]):
+    def store_l2_embedding(self, page_id: int, doc_id: str, embedding: list[float]):
         try:
             conn = sqlite3.connect(self.vec_db_path)
             import struct
@@ -1084,8 +1084,8 @@ class TenantVectorDB:
         except Exception as e:
             logger.error(f"L2 embedding failed: {e}")
 
-    def search_l2(self, query_embedding: List[float], limit: int = 20,
-                  doc_id_filter: Set[str] = None, min_score: float = 0.40) -> List[Dict]:
+    def search_l2(self, query_embedding: list[float], limit: int = 20,
+                  doc_id_filter: set[str] = None, min_score: float = 0.40) -> list[dict]:
         """Legacy page-level search (compatibility)"""
         try:
             conn = sqlite3.connect(self.vec_db_path)
@@ -1118,7 +1118,7 @@ class TenantVectorDB:
 
     # --- New interface: chunk-level ---
     def store_l2_chunk(self, page_id: int, chunk_idx: int, doc_id: str,
-                       embedding: List[float], chunk_text_preview: str = "",
+                       embedding: list[float], chunk_text_preview: str = "",
                        chunk_text: str = ""):
         """Store chunk-level embedding"""
         try:
@@ -1136,8 +1136,8 @@ class TenantVectorDB:
         except Exception as e:
             logger.error(f"L2 chunk store failed: {e}")
 
-    def search_l2_chunks(self, query_embedding: List[float], limit: int = 20,
-                         doc_id_filter: Set[str] = None, min_score: float = 0.35) -> List[Dict]:
+    def search_l2_chunks(self, query_embedding: list[float], limit: int = 20,
+                         doc_id_filter: set[str] = None, min_score: float = 0.35) -> list[dict]:
         """Chunk-level semantic search, returns page_id-level aggregated results (multiple chunks in the same page take the highest score)"""
         try:
             conn = sqlite3.connect(self.vec_db_path)
@@ -1203,12 +1203,12 @@ class TenantVectorDB:
 
 class TenantDBFactory:
     """Tenant Database Factory
-    
+
     Creates and manages independent database instances per tenant.
     Uses singleton pattern with caching; one set of instances per tenant.
     """
 
-    _instances: Dict[str, tuple] = {}  # tenant_id -> (metadata_db, vector_db)
+    _instances: dict[str, tuple] = {}  # tenant_id -> (metadata_db, vector_db)
     _lock = threading.Lock()
 
     @classmethod
@@ -1267,7 +1267,7 @@ def get_tenant_vector_db(tenant_id: str) -> TenantVectorDB:
 # Helper functions
 # =============================================================================
 
-def _doc_from_row(row) -> Dict:
+def _doc_from_row(row) -> dict:
     doc = dict(row)
     if doc.get("topic_tags"):
         doc["topic_tags"] = doc["topic_tags"].split(",")
@@ -1276,7 +1276,7 @@ def _doc_from_row(row) -> Dict:
     return doc
 
 
-def _page_from_row(row) -> Optional[Dict]:
+def _page_from_row(row) -> dict | None:
     if not row:
         return None
     page = dict(row)

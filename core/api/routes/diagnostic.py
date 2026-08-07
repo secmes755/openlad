@@ -7,16 +7,16 @@ Provides system-level diagnostic functions, including:
 - Database health check
 """
 import logging
-import sqlite3
 import os
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends
+import sqlite3
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ...tenant.context import get_tenant_context
-from ...db.system_db import get_system_db
-from ...db.tenant_db import get_tenant_metadata_db
 from ...config import settings
+from ...db.system_db import get_system_db
+from ...tenant.context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,7 +27,7 @@ class UserInfo(BaseModel):
     role: str
     tenant_id: str
     api_key_prefix: str
-    created_at: Optional[str]
+    created_at: str | None
 
 
 class DocumentInfo(BaseModel):
@@ -36,38 +36,38 @@ class DocumentInfo(BaseModel):
     filename: str
     doc_type: str
     status: str
-    page_count: Optional[int]
-    chunk_count: Optional[int]
-    category_level1: Optional[str]
-    category_level2: Optional[str]
-    category_level3: Optional[str]
+    page_count: int | None
+    chunk_count: int | None
+    category_level1: str | None
+    category_level2: str | None
+    category_level3: str | None
     tenant_id: str
-    tenant_name: Optional[str]
-    created_at: Optional[str]
-    updated_at: Optional[str]
+    tenant_name: str | None
+    created_at: str | None
+    updated_at: str | None
 
 
 class TenantInfo(BaseModel):
     tenant_id: str
     name: str
-    description: Optional[str]
+    description: str | None
     document_count: int
     user_count: int
-    storage_used_mb: Optional[float]
+    storage_used_mb: float | None
 
 
 class CategoryNode(BaseModel):
     name: str
     level: int
     document_count: int
-    children: List[Any]  # Recursive type, use Any to avoid Pydantic recursion issues
-    documents: List[DocumentInfo]
+    children: list[Any]  # Recursive type, use Any to avoid Pydantic recursion issues
+    documents: list[DocumentInfo]
 
 
 class DiagnosticResponse(BaseModel):
     status: str
     timestamp: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
 
 
 @router.get("/diagnostic/users")
@@ -76,21 +76,21 @@ async def list_all_users():
     ctx = get_tenant_context()
     if not ctx or ctx.user_role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
-    
+
     try:
-        system_db = get_system_db()
+        get_system_db()
         # Query all users directly from SQLite
         db_path = str(settings.SYSTEM_DB_PATH)
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
         cursor.execute("""
-            SELECT username, role, tenant_id, api_key, created_at 
-            FROM users 
+            SELECT username, role, tenant_id, api_key, created_at
+            FROM users
             ORDER BY tenant_id, username
         """)
-        
+
         users = []
         for row in cursor.fetchall():
             users.append({
@@ -100,9 +100,9 @@ async def list_all_users():
                 "api_key_prefix": row["api_key"][:8] + "..." if row["api_key"] else None,
                 "created_at": row["created_at"]
             })
-        
+
         conn.close()
-        
+
         return {
             "status": "ok",
             "count": len(users),
@@ -119,21 +119,21 @@ async def list_all_tenants():
     ctx = get_tenant_context()
     if not ctx or ctx.user_role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
-    
+
     try:
-        system_db = get_system_db()
+        get_system_db()
         db_path = str(settings.SYSTEM_DB_PATH)
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
         # Get all tenants
         cursor.execute("SELECT id, name, description, storage_quota_mb FROM tenants")
         tenants = []
-        
+
         for row in cursor.fetchall():
             tenant_id = row["id"]
-            
+
             # Count documents for this tenant
             doc_count = 0
             try:
@@ -146,11 +146,11 @@ async def list_all_tenants():
                     meta_conn.close()
             except Exception:
                 pass
-            
+
             # Count users for this tenant
             cursor.execute("SELECT COUNT(*) FROM users WHERE tenant_id = ?", (tenant_id,))
             user_count = cursor.fetchone()[0]
-            
+
             tenants.append({
                 "tenant_id": tenant_id,
                 "name": row["name"],
@@ -159,9 +159,9 @@ async def list_all_tenants():
                 "user_count": user_count,
                 "storage_quota_mb": row["storage_quota_mb"]
             })
-        
+
         conn.close()
-        
+
         return {
             "status": "ok",
             "count": len(tenants),
@@ -174,8 +174,8 @@ async def list_all_tenants():
 
 @router.get("/diagnostic/documents")
 async def list_all_documents(
-    tenant_id: Optional[str] = None,
-    category: Optional[str] = None
+    tenant_id: str | None = None,
+    category: str | None = None
 ):
     """
     List all documents, organized by tenant and category hierarchy
@@ -185,7 +185,7 @@ async def list_all_documents(
     ctx = get_tenant_context()
     if not ctx or ctx.user_role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
-    
+
     try:
         # Get all tenants or specified tenant
         target_tenants = []
@@ -198,21 +198,21 @@ async def list_all_documents(
             cursor.execute("SELECT id FROM tenants")
             target_tenants = [row[0] for row in cursor.fetchall()]
             conn.close()
-        
+
         all_documents = []
         tenant_stats = {}
-        
+
         for tid in target_tenants:
             metadata_db_path = str(settings.TENANTS_DIR / tid / "metadata.db")
-            
+
             if not os.path.exists(metadata_db_path):
                 continue
-            
+
             try:
                 meta_conn = sqlite3.connect(metadata_db_path)
                 meta_conn.row_factory = sqlite3.Row
                 meta_cursor = meta_conn.cursor()
-                
+
                 # Get tenant name
                 system_db_path = str(settings.SYSTEM_DB_PATH)
                 sys_conn = sqlite3.connect(system_db_path)
@@ -222,26 +222,26 @@ async def list_all_documents(
                 tenant_row = sys_cursor.fetchone()
                 tenant_name = tenant_row["name"] if tenant_row else tid
                 sys_conn.close()
-                
+
                 # Build query conditions
                 query = """
-                    SELECT id, title, filename, doc_type, status, 
+                    SELECT id, title, filename, doc_type, status,
                            category_level1, category_level2, category_level3,
                            metadata_json, created_at, updated_at
                     FROM documents
                     WHERE 1=1
                 """
                 params = []
-                
+
                 if category:
                     # Support filtering by any category level
                     query += " AND (category_level1 = ? OR category_level2 = ? OR category_level3 = ?)"
                     params.extend([category, category, category])
-                
+
                 query += " ORDER BY category_level1, category_level2, category_level3, title"
-                
+
                 meta_cursor.execute(query, params)
-                
+
                 for row in meta_cursor.fetchall():
                     # Parse metadata_json to get page count
                     page_count = None
@@ -251,17 +251,17 @@ async def list_all_documents(
                         page_count = metadata.get("num_pages")
                     except Exception:
                         pass
-                    
+
                     # Get chunk count
                     try:
                         meta_cursor.execute(
-                            "SELECT COUNT(*) FROM doc_chunks WHERE document_id = ?", 
+                            "SELECT COUNT(*) FROM doc_chunks WHERE document_id = ?",
                             (row["id"],)
                         )
                         chunk_count = meta_cursor.fetchone()[0]
                     except Exception:
                         pass
-                    
+
                     doc_info = {
                         "id": row["id"],
                         "title": row["title"] or "Untitled",
@@ -279,20 +279,20 @@ async def list_all_documents(
                         "updated_at": row["updated_at"]
                     }
                     all_documents.append(doc_info)
-                
+
                 tenant_stats[tid] = {
                     "name": tenant_name,
                     "document_count": len([d for d in all_documents if d["tenant_id"] == tid])
                 }
-                
+
                 meta_conn.close()
             except Exception as e:
                 logger.warning(f"[DIAGNOSTIC] Failed to query documents for tenant {tid}: {e}")
                 continue
-        
+
         # Build hierarchy structure
         hierarchy = _build_category_hierarchy(all_documents)
-        
+
         return {
             "status": "ok",
             "total_documents": len(all_documents),
@@ -305,27 +305,27 @@ async def list_all_documents(
         raise HTTPException(status_code=500, detail=f"Query documents failed: {str(e)}")
 
 
-def _build_category_hierarchy(documents: List[Dict]) -> List[Dict]:
+def _build_category_hierarchy(documents: list[dict]) -> list[dict]:
     """Build category hierarchy tree"""
     root = {}
-    
+
     for doc in documents:
         l1 = doc["category_level1"] or "Uncategorized"
         l2 = doc["category_level2"] or "Uncategorized"
         l3 = doc["category_level3"] or "Uncategorized"
-        
+
         if l1 not in root:
             root[l1] = {"name": l1, "level": 1, "document_count": 0, "children": {}, "documents": []}
         root[l1]["document_count"] += 1
-        
+
         if l2 not in root[l1]["children"]:
             root[l1]["children"][l2] = {"name": l2, "level": 2, "document_count": 0, "children": {}, "documents": []}
         root[l1]["children"][l2]["document_count"] += 1
-        
+
         if l3 not in root[l1]["children"][l2]["children"]:
             root[l1]["children"][l2]["children"][l3] = {"name": l3, "level": 3, "document_count": 0, "documents": []}
         root[l1]["children"][l2]["children"][l3]["document_count"] += 1
-        
+
         # Add document to deepest level
         root[l1]["children"][l2]["children"][l3]["documents"].append({
             "id": doc["id"],
@@ -336,7 +336,7 @@ def _build_category_hierarchy(documents: List[Dict]) -> List[Dict]:
             "chunk_count": doc["chunk_count"],
             "status": doc["status"]
         })
-    
+
     # Convert to list structure
     def convert_to_list(node_dict):
         result = []
@@ -352,7 +352,7 @@ def _build_category_hierarchy(documents: List[Dict]) -> List[Dict]:
                 converted["children"] = convert_to_list(node["children"])
             result.append(converted)
         return result
-    
+
     return convert_to_list(root)
 
 
@@ -364,14 +364,14 @@ async def system_health():
     ctx = get_tenant_context()
     if not ctx or ctx.user_role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
-    
+
     try:
         health_status = {
             "api": "ok",
             "databases": {},
             "services": {}
         }
-        
+
         # Check system database
         system_db_path = str(settings.SYSTEM_DB_PATH)
         if os.path.exists(system_db_path):
@@ -389,7 +389,7 @@ async def system_health():
                 health_status["databases"]["system_db"] = {"status": "error", "error": str(e)}
         else:
             health_status["databases"]["system_db"] = {"status": "missing"}
-        
+
         # Check each tenant database
         tenants_dir = str(settings.TENANTS_DIR)
         if os.path.exists(tenants_dir):
@@ -408,10 +408,10 @@ async def system_health():
                         }
                     except Exception as e:
                         health_status["databases"][f"tenant_{tenant_dir}"] = {
-                            "status": "error", 
+                            "status": "error",
                             "error": str(e)
                         }
-        
+
         return {
             "status": "ok",
             "health": health_status
@@ -427,50 +427,50 @@ async def get_document_detail(doc_id: str, tenant_id: str):
     ctx = get_tenant_context()
     if not ctx or ctx.user_role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
-    
+
     try:
         metadata_db_path = str(settings.TENANTS_DIR / tenant_id / "metadata.db")
-        
+
         if not os.path.exists(metadata_db_path):
             raise HTTPException(status_code=404, detail="Tenant database does not exist")
-        
+
         conn = sqlite3.connect(metadata_db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
         # Get document basic info
         cursor.execute("""
-            SELECT id, title, filename, doc_type, status, 
+            SELECT id, title, filename, doc_type, status,
                    category_level1, category_level2, category_level3,
                    metadata_json, created_at, updated_at
             FROM documents WHERE id = ?
         """, (doc_id,))
-        
+
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
-        
+
         # Get page statistics
         cursor.execute("SELECT COUNT(*) FROM doc_pages WHERE doc_id = ?", (doc_id,))
         page_count = cursor.fetchone()[0]
-        
+
         # Get chunk statistics
         cursor.execute("SELECT COUNT(*) FROM doc_chunks WHERE document_id = ?", (doc_id,))
         chunk_count = cursor.fetchone()[0]
-        
+
         # Get page type distribution
         cursor.execute("""
-            SELECT page_type, COUNT(*) as count 
-            FROM doc_pages 
-            WHERE doc_id = ? 
+            SELECT page_type, COUNT(*) as count
+            FROM doc_pages
+            WHERE doc_id = ?
             GROUP BY page_type
         """, (doc_id,))
         page_types = {row[0]: row[1] for row in cursor.fetchall()}
-        
+
         # Get section structure
         cursor.execute("""
             SELECT DISTINCT section_path, section_title, page_num
-            FROM doc_pages 
+            FROM doc_pages
             WHERE doc_id = ? AND section_path IS NOT NULL
             ORDER BY page_num
         """, (doc_id,))
@@ -481,9 +481,9 @@ async def get_document_detail(doc_id: str, tenant_id: str):
                 "title": sec_row[1],
                 "page": sec_row[2]
             })
-        
+
         conn.close()
-        
+
         return {
             "status": "ok",
             "document": {

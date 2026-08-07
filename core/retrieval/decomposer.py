@@ -2,7 +2,6 @@
 Query Decomposer
 """
 import logging
-from typing import List
 
 from ..models.client import get_model_client
 
@@ -13,9 +12,9 @@ class QueryDecomposer:
     def __init__(self):
         self.model_client = get_model_client()
 
-    def decompose(self, query: str, entities: List[str] = None,
-                  time_periods: List[str] = None, subject: str = None,
-                  chat_history: str = None) -> List[str]:
+    def decompose(self, query: str, entities: list[str] = None,
+                  time_periods: list[str] = None, subject: str = None,
+                  chat_history: str = None) -> list[str]:
         if time_periods and len(time_periods) >= 2 and subject:
             return self._decompose_time_compare(query, subject, time_periods, chat_history)
         if entities and len(entities) >= 2:
@@ -23,8 +22,8 @@ class QueryDecomposer:
         return [query]
 
     def _decompose_time_compare(self, query: str, subject: str,
-                                 time_periods: List[str],
-                                 chat_history: str = None) -> List[str]:
+                                 time_periods: list[str],
+                                 chat_history: str = None) -> list[str]:
         sub_queries = []
         for period in time_periods:
             # OpenLAD: Generic template, not hardcoded Chinese text
@@ -32,8 +31,8 @@ class QueryDecomposer:
         logger.info(f"[DECOMPOSER] Time series: {len(sub_queries)} periods")
         return sub_queries
 
-    def _decompose_entity_compare(self, query: str, entities: List[str],
-                                   chat_history: str = None) -> List[str]:
+    def _decompose_entity_compare(self, query: str, entities: list[str],
+                                   chat_history: str = None) -> list[str]:
         """Entity comparison decomposition. Returns entity list directly; executor searches each entity with the original query."""
         sub_queries = []
         for entity in entities:

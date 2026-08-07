@@ -13,8 +13,6 @@ Design principles:
   resolution/fps declarations, table-like attribute rows.
 """
 import re
-from typing import List, Dict, Optional
-
 
 # --- VLM block stripping -----------------------------------------------------
 _VLM_BLOCK_RE = re.compile(r'---\s*#{0,3}\s*Page Visual Analysis \(VLM\).*', re.S | re.I)
@@ -35,7 +33,7 @@ _NUMBER_WORDS = {
 }
 
 
-def _num_word_to_int(word: str) -> Optional[int]:
+def _num_word_to_int(word: str) -> int | None:
     w = word.lower().strip()
     if w in _NUMBER_WORDS:
         return _NUMBER_WORDS[w]
@@ -101,7 +99,7 @@ def _clean(s: str) -> str:
 
 
 def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
-                                  doc_id: str) -> List[Dict]:
+                                  doc_id: str) -> list[dict]:
     """Extract spec facts from one page's raw text (VLM blocks stripped first).
 
     Returns list of dicts: {entity, attribute, value, unit, page_num,
@@ -110,7 +108,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
     text = strip_vlm_blocks(raw_text)
     if not text.strip():
         return []
-    facts: List[Dict] = []
+    facts: list[dict] = []
     seen = set()
 
     def add(attr: str, value: str, source: str, unit: str = "",

@@ -3,15 +3,15 @@ V4 OCR Engine - Pluggable multi-engine architecture
 Load models on demand, release VRAM after processing
 Supports: PaddleOCR / Tesseract / Multimodal LLM (image description)
 """
-import logging
-import gc
 import base64
-import requests
-from io import BytesIO
-import numpy as np
+import gc
+import logging
 from enum import Enum
+from io import BytesIO
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
+
+import requests
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -41,13 +41,13 @@ except ImportError:
 class OCRResult:
     """OCR recognition result"""
     def __init__(self, text: str, confidence: float = 0.0,
-                 bbox: List[int] = None, page_num: int = 1):
+                 bbox: list[int] = None, page_num: int = 1):
         self.text = text
         self.confidence = confidence
         self.bbox = bbox or [0, 0, 0, 0]  # [x1, y1, x2, y2]
         self.page_num = page_num
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "text": self.text,
             "confidence": self.confidence,
@@ -65,7 +65,7 @@ class OCREngine:
     - Share the same engine instance during batch processing
     """
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: dict = None):
         self.config = config or {}
         self.engine_name = self.config.get("engine", "auto")
         self.language = self.config.get("language", "zh_en")
@@ -76,7 +76,7 @@ class OCREngine:
         self._paddle_ocr = None
         self._tesseract_lang = None
 
-    def _get_paddle_ocr(self) -> Optional[Any]:
+    def _get_paddle_ocr(self) -> Any | None:
         """Get or create PaddleOCR instance"""
         if not HAS_PADDLEOCR:
             return None
@@ -122,7 +122,7 @@ class OCREngine:
             self._tesseract_lang = lang_map.get(self.language, "chi_sim+eng")
         return self._tesseract_lang
 
-    def recognize(self, image_path: str, page_num: int = 1) -> Tuple[str, List[OCRResult], Dict[str, Any]]:
+    def recognize(self, image_path: str, page_num: int = 1) -> tuple[str, list[OCRResult], dict[str, Any]]:
         """
         Recognize text in an image
 
@@ -184,7 +184,7 @@ class OCREngine:
         else:
             return "vlm"
 
-    def _recognize_paddleocr(self, image_path: str, page_num: int) -> Tuple[str, List[OCRResult], Dict]:
+    def _recognize_paddleocr(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
         """Recognize using PaddleOCR - V4: added confidence filtering"""
         ocr = self._get_paddle_ocr()
         if ocr is None:
@@ -257,7 +257,7 @@ class OCREngine:
                 return self._recognize_tesseract(image_path, page_num)
             return "", [], {"error": str(e)}
 
-    def _recognize_tesseract(self, image_path: str, page_num: int) -> Tuple[str, List[OCRResult], Dict]:
+    def _recognize_tesseract(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
         """
         Recognize using Tesseract - V4: added confidence filtering
         """
@@ -330,7 +330,7 @@ class OCREngine:
             logger.error(f"Tesseract failed: {e}")
             return "", [], {"error": str(e)}
 
-    def _recognize_vlm(self, image_path: str, page_num: int) -> Tuple[str, List[OCRResult], Dict]:
+    def _recognize_vlm(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
         """Recognize using VLM (9B multimodal model) - V4: fallback when PaddleOCR/Tesseract unavailable"""
         try:
             # Load and encode image
@@ -417,7 +417,7 @@ class TextQualityChecker:
     Solves quality issues with hidden text layers in searchable PDFs
     """
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: dict = None):
         self.config = config or {}
         self.garbled_threshold = self.config.get("garbled_threshold", 0.05)
         self.min_dictionary_hit_rate = self.config.get("min_dictionary_hit_rate", 0.3)
@@ -429,7 +429,7 @@ class TextQualityChecker:
             "及", "对", "或", "将", "从", "到", "也", "而", "其", "之",
             "中", "上", "下", "内", "外", "时", "后", "前", "间",
         ])
-        
+
         # Industry-specific terms injected from industry pack, not hardcoded in core
         self._industry_terms = set()
 
@@ -447,7 +447,7 @@ class TextQualityChecker:
         """Set industry pack, load industry-specific terms"""
         self._load_industry_terms(industry_pack)
 
-    def check(self, text: str) -> Dict[str, Any]:
+    def check(self, text: str) -> dict[str, Any]:
         """
         Check text quality - V4 three-tier degradation decision
 
@@ -522,7 +522,7 @@ class TextQualityChecker:
             "details": details
         }
 
-    def compare_and_decide(self, direct_text: str, ocr_text: str) -> Tuple[str, str, Dict]:
+    def compare_and_decide(self, direct_text: str, ocr_text: str) -> tuple[str, str, dict]:
         """
         Compare directly extracted text and OCR text, based on V4 three-tier degradation decision
 
@@ -657,9 +657,9 @@ class TextQualityChecker:
         # Check if line length distribution is reasonable
         line_lengths = [len(line.strip()) for line in lines if line.strip()]
         if line_lengths:
-            avg_len = sum(line_lengths) / len(line_lengths)
+            sum(line_lengths) / len(line_lengths)
             # Most lines should have reasonable length
-            reasonable_lines = sum(1 for l in line_lengths if 5 < l < 200)
+            reasonable_lines = sum(1 for ln in line_lengths if 5 < ln < 200)
             scores.append(reasonable_lines / len(line_lengths))
 
         # Check for many truncated words (very short line followed by very long line)

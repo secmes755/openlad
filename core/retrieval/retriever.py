@@ -6,12 +6,12 @@ import json
 import logging
 import os
 import re
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import Any
 
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
-from ..models.client import get_model_client, EmbeddingError
-from .router import QueryPlan, IntentType
+from ..models.client import EmbeddingError, get_model_client
+from .router import IntentType, QueryPlan
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class SearchResult:
                  fragment_id: str = None,
                  text_source: str = "direct_extract",
                  page_image_path: str = None,
-                 extra_data: Dict = None):
+                 extra_data: dict = None):
         self.doc_id = doc_id
         self.page_id = page_id
         self.page_num = page_num
@@ -38,7 +38,7 @@ class SearchResult:
         self.page_image_path = page_image_path
         self.extra_data = extra_data  # generic structured data (backward-compatible with old schematic_data)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "doc_id": self.doc_id, "page_id": self.page_id, "page_num": self.page_num,
             "score": self.score, "content": self.content, "section_title": self.section_title,
@@ -54,7 +54,7 @@ class HierarchicalRetriever:
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
         self.vector_db = get_tenant_vector_db(tenant_id) if tenant_id else None
         self.model_client = get_model_client()
-        
+
         # FIX: admin tenant also loads the default tenant database
         self.fallback_metadata_db = None
         self.fallback_vector_db = None
@@ -62,11 +62,11 @@ class HierarchicalRetriever:
             try:
                 self.fallback_metadata_db = get_tenant_metadata_db("default")
                 self.fallback_vector_db = get_tenant_vector_db("default")
-                logger.info(f"[RETRIEVER] admin tenant loaded default tenant database as fallback")
+                logger.info("[RETRIEVER] admin tenant loaded default tenant database as fallback")
             except Exception as e:
                 logger.warning(f"[RETRIEVER] admin tenant failed to load default database: {e}")
 
-    def _load_industry_boost_rules_for_retrieval(self) -> Dict[str, Any]:
+    def _load_industry_boost_rules_for_retrieval(self) -> dict[str, Any]:
         """Load retrieval-phase rules from all registered industry packages (low-value section penalty, spec section boost, etc.)"""
         try:
             from ..plugins import get_plugin_registry
@@ -92,8 +92,8 @@ class HierarchicalRetriever:
             return {}
 
     def retrieve(self, query: str, plan: QueryPlan, max_results: int = 20,
-                 explicit_doc_filter: Set[str] = None,
-                 max_context_quota: int = None) -> List[SearchResult]:
+                 explicit_doc_filter: set[str] = None,
+                 max_context_quota: int = None) -> list[SearchResult]:
         doc_id_filter = explicit_doc_filter if explicit_doc_filter else {"__ALL__"}
 
         intent_map = {
@@ -108,17 +108,17 @@ class HierarchicalRetriever:
                               max_context_quota if plan.intent == IntentType.EXACT_LOOKUP else None)
         return results
 
-    def _search_fts(self, query: str, limit: int, doc_id_filter: Optional[Set[str]] = None,
-                    page_filter: Optional[Set[int]] = None) -> List[Dict]:
+    def _search_fts(self, query: str, limit: int, doc_id_filter: set[str] | None = None,
+                    page_filter: set[int] | None = None) -> list[dict]:
         """Execute chunk-level FTS via TenantMetadataDB with doc_id post-filtering.
         Coarse recall + full delivery - chunks are only used to locate relevant pages,
         the final result returns complete page content.
-        
+
         Phase 2 FIX: Added page_filter parameter to restrict search to specific page numbers.
         When structure index locates relevant chapter ranges, FTS only searches within
         those pages, dramatically reducing noise for broad queries like "performance".
-        
-        FIX: 
+
+        FIX:
         1. When query consists entirely of 2-character CJK words, FTS trigram tokenizer
            cannot index them; fall back to bigram LIKE search.
         2. When FTS returns 0 results, also fall back to bigram LIKE search.
@@ -128,10 +128,10 @@ class HierarchicalRetriever:
         """
         import re
         cjk_chars = re.findall(r'[\u4e00-\u9fff]', query)
-        has_trigram = len(cjk_chars) >= 3
-        
+        len(cjk_chars) >= 3
+
         all_chunk_results = []
-        
+
         # Primary tenant search
         # FIX: Always try FTS first — even for 2-char CJK queries. If the query
         # contains non-CJK tokens like "AB1234" or "MCU", those can still be matched
@@ -140,12 +140,12 @@ class HierarchicalRetriever:
         if not chunk_results:
             logger.info(f"[RETRIEVER] query '{query}' FTS returned 0 results, falling back to bigram LIKE")
             chunk_results = self.metadata_db.search_fts_chunks(query, limit=limit * 5, force_bigram_only=True, page_filter=page_filter)
-        
+
         # Tag primary tenant results
         for r in chunk_results:
             r["_tenant"] = self.tenant_id or "default"
         all_chunk_results.extend(chunk_results)
-        
+
         # FIX: admin tenant also searches default tenant documents
         if self.tenant_id == "admin" and self.fallback_metadata_db:
             try:
@@ -153,7 +153,7 @@ class HierarchicalRetriever:
                 fallback_chunks = self.fallback_metadata_db.search_fts_chunks(query, limit=limit * 10, page_filter=page_filter)
                 if not fallback_chunks:
                     fallback_chunks = self.fallback_metadata_db.search_fts_chunks(query, limit=limit * 5, force_bigram_only=True, page_filter=page_filter)
-                
+
                 # Tag fallback results
                 for r in fallback_chunks:
                     r["_tenant"] = "default"
@@ -162,17 +162,17 @@ class HierarchicalRetriever:
                 logger.info(f"[RETRIEVER] admin tenant fallback search on default: {len(fallback_chunks)} chunks")
             except Exception as e:
                 logger.warning(f"[RETRIEVER] admin tenant fallback search failed: {e}")
-        
+
         if doc_id_filter and "__ALL__" not in doc_id_filter:
             all_chunk_results = [r for r in all_chunk_results if r["doc_id"] in doc_id_filter]
 
         return self._aggregate_chunks_to_pages(all_chunk_results, query, limit, doc_id_filter)
-    
-    def _aggregate_chunks_to_pages(self, chunk_results: List[Dict], query: str,
-                                    limit: int, doc_id_filter: Optional[Set[str]] = None) -> List[Dict]:
+
+    def _aggregate_chunks_to_pages(self, chunk_results: list[dict], query: str,
+                                    limit: int, doc_id_filter: set[str] | None = None) -> list[dict]:
         """
         Aggregate chunk-level match results to the page level.
-        
+
         Principles:
         - Chunks are only used to identify which pages contain query-relevant information
         - Final output returns full page raw_text, letting the LLM find answers in full context
@@ -180,7 +180,7 @@ class HierarchicalRetriever:
         - Control page count to avoid context explosion
         """
         import re
-        
+
         # Extract query keywords (for bonus scoring)
         cjk_range = r'\u4e00-\u9fff'
         # 2+ character CJK words + 3+ character English/digit tokens
@@ -190,7 +190,7 @@ class HierarchicalRetriever:
         for m in re.finditer(r'[A-Za-z0-9]{3,}', query):
             if not re.match(r'^\d+$', m.group()):  # filter out pure digits
                 query_keywords.append(m.group())
-        
+
         # Aggregate by page
         page_stats = {}  # (doc_id, page_id) -> {chunks, score_sum, chunk_texts, page_num}
         for r in chunk_results:
@@ -207,14 +207,14 @@ class HierarchicalRetriever:
             page_stats[key]["chunks"] += 1
             page_stats[key]["score_sum"] += r.get("score", 0.1)
             page_stats[key]["chunk_texts"].append(r.get("chunk_text", "")[:200])
-        
+
         # Fetch full page text and compute page-level score
         page_scores = []
         for key, stats in page_stats.items():
             doc_id, page_id = key
             if doc_id_filter and "__ALL__" not in doc_id_filter and doc_id not in doc_id_filter:
                 continue
-            
+
             # FIX: admin tenant tries primary tenant first for page fetch, then fallback
             page = self.metadata_db.get_page(page_id)
             if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
@@ -224,13 +224,13 @@ class HierarchicalRetriever:
                     pass
             if not page:
                 continue
-            
+
             raw_text = page.get("raw_text", "") or ""
             section_title = page.get("section_title", "") or ""
-            
+
             # Base score: matched chunk count and quality
             base_score = stats["score_sum"] + stats["chunks"] * 0.2
-            
+
             # Keyword hit bonus
             keyword_bonus = 0
             text_lower = raw_text.lower()
@@ -241,7 +241,7 @@ class HierarchicalRetriever:
                     keyword_bonus += 0.5
                 if kw_lower in text_lower:
                     keyword_bonus += 0.3
-            
+
             # FIX: Exact phrase match bonus (e.g., "Cortex-A53" full match)
             exact_phrase_bonus = 0
             for kw in query_keywords:
@@ -250,14 +250,14 @@ class HierarchicalRetriever:
                 count = text_lower.count(kw_lower)
                 if count >= 1:
                     exact_phrase_bonus += min(count * 0.5, 2.0)  # capped at 2.0
-            
+
             # Title containing core query keyword gets extra bonus
             title_match = any(kw in title_lower for kw in query_keywords)
             if title_match:
                 base_score += 0.4
-            
+
             total_score = base_score + keyword_bonus + exact_phrase_bonus
-            
+
             page_scores.append({
                 "doc_id": doc_id,
                 "page_id": page_id,
@@ -267,25 +267,25 @@ class HierarchicalRetriever:
                 "section_title": section_title,
                 "matched_chunks": stats["chunks"]
             })
-        
+
         # Sort by score, take top N pages
         page_scores.sort(key=lambda x: x["score"], reverse=True)
         selected = page_scores[:limit]
-        
+
         if selected:
             logger.info(f"[RETRIEVER] coarse recall returned {len(selected)} pages: "
                        f"{[(p['page_num'], round(p['score'], 2)) for p in selected[:5]]}")
-        
+
         return selected
 
-    def _tokenize_query(self, query: str) -> List[str]:
+    def _tokenize_query(self, query: str) -> list[str]:
         """Extract meaningful keywords from a query for structure index / FTS search.
-        
+
         Handles CJK and ASCII consistently:
         - CJK: 2+ character sequences (e.g., "详细规格", "是什么")
         - ASCII: 2+ character tokens (e.g., "AB1234", "MCU", "NPU")
         - Pure digit tokens are excluded
-        
+
         This replaces the naive .split() approach which fails on Chinese
         (no spaces = 1 giant keyword = 0 structure index matches).
         """
@@ -301,8 +301,8 @@ class HierarchicalRetriever:
         return keywords
 
     def _retrieve_exact(self, query: str, plan: QueryPlan,
-                         max_results: int, doc_id_filter: Set[str] = None,
-                         max_context_quota: int = None) -> List[SearchResult]:
+                         max_results: int, doc_id_filter: set[str] = None,
+                         max_context_quota: int = None) -> list[SearchResult]:
         all_results = []
         query_lower = query.lower()
         query_keywords = self._tokenize_query(query_lower)
@@ -686,11 +686,11 @@ class HierarchicalRetriever:
                         # V5.0: Use configurable low-value section indicators + industry package rules
                         section_title = (p.get("section_title", "") or "").lower()
                         raw_text = (p.get("raw_text", "") or "")[:200].lower()
-                        
+
                         # Check generic low-value indicators from config
                         generic_indicators = settings.CONTEXT_CONFIG.get("low_value_section_indicators", [])
                         is_low_value = any(ind in section_title or ind in raw_text for ind in generic_indicators)
-                        
+
                         # Check industry-specific low-value sections from rules
                         if not is_low_value:
                             industry_rules = self._load_industry_boost_rules_for_retrieval()
@@ -700,7 +700,7 @@ class HierarchicalRetriever:
                                     if any(k in section_title or k in raw_text for k in keywords):
                                         is_low_value = True
                                         break
-                        
+
                         # Low-value pages get low scores to avoid ranking above Features/Overview
                         page_score = 0.15 if is_low_value else 0.35
                         all_results.append(SearchResult(
@@ -953,7 +953,7 @@ class HierarchicalRetriever:
         return all_results[:max(max_total_results, max_results)]
 
     def _retrieve_relation(self, query: str, plan: QueryPlan,
-                            max_results: int, doc_id_filter: Set[str] = None) -> List[SearchResult]:
+                            max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
         all_results = []
         entities = plan.entities or []
         if not entities:
@@ -972,19 +972,19 @@ class HierarchicalRetriever:
         return unique[:max_results]
 
     def _retrieve_feature(self, query: str, plan: QueryPlan,
-                           max_results: int, doc_id_filter: Set[str] = None) -> List[SearchResult]:
+                           max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
         try:
             query_emb = self.model_client.embed(query)
             if query_emb:
                 # FIX: admin tenant also searches fallback vector database
                 all_vec_results = []
-                
+
                 # Primary tenant vector search
                 vec_results = self.vector_db.search_l2_chunks(query_emb, limit=max_results, doc_id_filter=doc_id_filter)
                 for r in vec_results:
                     r["_tenant"] = self.tenant_id or "default"
                 all_vec_results.extend(vec_results)
-                
+
                 # Fallback tenant vector search
                 if self.tenant_id == "admin" and self.fallback_vector_db:
                     try:
@@ -996,7 +996,7 @@ class HierarchicalRetriever:
                         logger.info(f"[RETRIEVER] admin tenant fallback vector search: {len(fallback_vec_results)} results")
                     except Exception as e:
                         logger.warning(f"[RETRIEVER] admin tenant fallback vector search failed: {e}")
-                
+
                 results = []
                 for result in all_vec_results:
                     # FIX: admin tenant tries primary tenant first, then fallback
@@ -1016,7 +1016,7 @@ class HierarchicalRetriever:
         return self._retrieve_macro(query, plan, max_results, doc_id_filter)
 
     def _retrieve_macro(self, query: str, plan: QueryPlan,
-                         max_results: int, doc_id_filter: Set[str] = None) -> List[SearchResult]:
+                         max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
         all_results = []
         fts_results = self._search_fts(query, limit=max_results * 2, doc_id_filter=doc_id_filter)
         for result in fts_results:
@@ -1037,12 +1037,12 @@ class HierarchicalRetriever:
                 if query_emb:
                     # FIX: admin tenant also searches fallback vector database
                     all_vec_results = []
-                    
+
                     vec_results = self.vector_db.search_l2_chunks(query_emb, limit=max_results, doc_id_filter=doc_id_filter, min_score=0.35)
                     for r in vec_results:
                         r["_tenant"] = self.tenant_id or "default"
                     all_vec_results.extend(vec_results)
-                    
+
                     if self.tenant_id == "admin" and self.fallback_vector_db:
                         try:
                             fallback_vec_results = self.fallback_vector_db.search_l2_chunks(query_emb, limit=max_results, doc_id_filter=doc_id_filter, min_score=0.35)
@@ -1052,7 +1052,7 @@ class HierarchicalRetriever:
                             all_vec_results.extend(fallback_vec_results)
                         except Exception:
                             pass
-                    
+
                     for result in all_vec_results:
                         if not any(r.page_id == result["page_id"] for r in all_results) and len(all_results) < max_results * 2:
                             # FIX: admin tenant tries primary tenant first, then fallback
@@ -1087,13 +1087,13 @@ class HierarchicalRetriever:
                 pass
         all_results.sort(key=lambda x: x.score, reverse=True)
         # DEBUG: log top pages
-        logger.warning(f"[RETRIEVER-DEBUG] _retrieve_macro all_results top 30:")
+        logger.warning("[RETRIEVER-DEBUG] _retrieve_macro all_results top 30:")
         for i, r in enumerate(all_results[:30]):
             logger.warning(f"  [{i+1}] score={r.score:.2f} doc={r.doc_id[:16] if r.doc_id else 'None'} page={r.page_num} title={r.section_title[:60]}")
         return all_results[:max_results]
 
     def _retrieve_version_compare(self, query: str, plan: QueryPlan,
-                                   max_results: int, doc_id_filter: Set[str] = None) -> List[SearchResult]:
+                                   max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
         all_results = []
         targets = plan.compare_targets or plan.entities[:2]
         for target in targets:
@@ -1104,7 +1104,7 @@ class HierarchicalRetriever:
         return unique[:max_results]
 
     def _retrieve_cross_reference(self, query: str, plan: QueryPlan,
-                                   max_results: int, doc_id_filter: Set[str] = None) -> List[SearchResult]:
+                                   max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
         all_results = list(self._retrieve_macro(query, plan, max_results, doc_id_filter))
         for ref in (plan.reference_marks or []):
             all_results.extend(self._retrieve_exact(ref, plan, 5, doc_id_filter))
@@ -1113,11 +1113,11 @@ class HierarchicalRetriever:
         unique.sort(key=lambda x: x.score, reverse=True)
         return unique[:max_results]
 
-    def _create_search_result(self, result: Dict, page: Dict, doc: Dict) -> SearchResult:
+    def _create_search_result(self, result: dict, page: dict, doc: dict) -> SearchResult:
         # Support chunk-level results (using chunk_text) and page-level results (using raw_text)
         # FIX: Prefer full page raw_text to avoid chunk truncation causing critical info loss.
         # Chunk retrieval may only match partial page content, but answer synthesis needs full context.
-        # 
+        #
         # FIX2: When chunks span multiple pages (e.g., legal docs aggregated by chapter),
         # the chunk is linked to the chapter's first page, but that page's raw_text doesn't
         # include the second half of the chunk. In this case, if chunk_text is not a sub-string
@@ -1157,13 +1157,13 @@ class SegmentMerger:
     def __init__(self, tenant_id: str = None):
         self.tenant_id = tenant_id
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
-        
+
         # FIX: admin tenant also loads the default tenant database
         self.fallback_metadata_db = None
         if tenant_id == "admin":
             try:
                 self.fallback_metadata_db = get_tenant_metadata_db("default")
-                logger.info(f"[MERGER] admin tenant loaded default tenant database as fallback")
+                logger.info("[MERGER] admin tenant loaded default tenant database as fallback")
             except Exception as e:
                 logger.warning(f"[MERGER] admin tenant failed to load default database: {e}")
 
@@ -1172,7 +1172,7 @@ class SegmentMerger:
             return ""
         return f"/images/{os.path.basename(path)}"
 
-    def _load_industry_boost_rules(self, industry_hint: str) -> Dict[str, Any]:
+    def _load_industry_boost_rules(self, industry_hint: str) -> dict[str, Any]:
         """Load industry package chapter boost rules (for merge phase)"""
         if not industry_hint or industry_hint == "auto":
             return {}
@@ -1193,10 +1193,10 @@ class SegmentMerger:
         return content
 
     def _expand_section_pages(self, doc_id: str, existing_pages: set,
-                               metadata_db) -> Dict[int, Dict]:
+                               metadata_db) -> dict[int, dict]:
         """Section-level recall: use structure_index to expand the full page range of a section,
         including adjacent context pages.
-        
+
         Returns {page_num: {'section_title': str, 'raw_text': str}} mapping for missing pages.
         """
         if not metadata_db:
@@ -1209,7 +1209,7 @@ class SegmentMerger:
                 "WHERE doc_id = ? ORDER BY start_page",
                 (doc_id,)
             ).fetchall() if hasattr(metadata_db, 'execute') else []
-            
+
             if not sections:
                 # Try with cursor
                 with metadata_db.get_connection() as conn:
@@ -1220,7 +1220,7 @@ class SegmentMerger:
                         "WHERE doc_id = ? ORDER BY start_page",
                         (doc_id,)
                     ).fetchall()
-            
+
             # Build a map: section_path -> (start, end, level, parent_path)
             section_map = {}
             for row in sections:
@@ -1229,11 +1229,11 @@ class SegmentMerger:
                     'level': row[2], 'parent': row[5],
                     'title': row[1]
                 }
-            
+
             # For each existing page, find all sections that cover it
             pages_to_add = set()
             parent_ranges = {}  # parent_path -> (min_page, max_page)
-            
+
             # Build parent section ranges
             for sp, info in section_map.items():
                 parent = info['parent']
@@ -1241,7 +1241,7 @@ class SegmentMerger:
                     ps = section_map[parent]
                     if parent not in parent_ranges:
                         parent_ranges[parent] = [ps['start'], ps['end']]
-            
+
             for page_num in existing_pages:
                 # Find which sections contain this page
                 for sp, info in section_map.items():
@@ -1256,12 +1256,12 @@ class SegmentMerger:
                             for p in [page_num - 1, page_num + 1]:
                                 if parent_range[0] <= p <= parent_range[1]:
                                     pages_to_add.add(p)
-            
+
             # Find which pages are missing
             missing = pages_to_add - existing_pages
             if not missing:
                 return {}
-            
+
             # Fetch missing pages from doc_pages
             placeholders = ','.join('?' * len(missing))
             with metadata_db.get_connection() as conn:
@@ -1271,10 +1271,10 @@ class SegmentMerger:
                     f"ORDER BY page_num",
                     (doc_id,) + tuple(sorted(missing))
                 ).fetchall()
-            
+
             logger.info(f"[MERGER] section expansion: doc={doc_id}, retrieved={len(existing_pages)} pages, "
                         f"expanded +{len(rows)} pages (missing={len(missing)})")
-            
+
             return {r[0]: {'section_title': r[1], 'raw_text': r[2] or ''} for r in rows}
         except Exception as e:
             logger.warning(f"[MERGER] section expansion failed: doc={doc_id}, err={e}")
@@ -1283,7 +1283,7 @@ class SegmentMerger:
     def _smart_truncate(self, page_text: str, query: str, max_len: int) -> str:
         """
         Intelligently truncate page content, prioritizing paragraphs containing query keywords.
-        
+
         Strategy:
         1. Extract sentences containing query keywords (priority preservation)
         2. Preserve content beginning (usually has title/overview)
@@ -1291,10 +1291,10 @@ class SegmentMerger:
         4. Truncate middle sections as needed
         """
         import re
-        
+
         if len(page_text) <= max_len:
             return page_text
-        
+
         # Extract query keywords (2+ character CJK, 3+ character English)
         keywords = []
         for m in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
@@ -1302,12 +1302,12 @@ class SegmentMerger:
         for m in re.finditer(r'[A-Za-z0-9]{3,}', query):
             if not re.match(r'^\d+$', m.group()):
                 keywords.append(m.group())
-        
+
         # Find sentences containing keywords
         sentences = re.split(r'(?<=[。！？\.\!\?])\s+', page_text)
         keyword_sentences = []
         other_sentences = []
-        
+
         for s in sentences:
             s = s.strip()
             if not s:
@@ -1317,20 +1317,20 @@ class SegmentMerger:
                 keyword_sentences.append(s)
             else:
                 other_sentences.append(s)
-        
+
         # Build result: keyword sentences + head + tail
         parts = []
         parts.append("...[excerpt]...")
-        
+
         # Add keyword sentences
         if keyword_sentences:
             parts.append("\n[Relevant paragraphs]")
             parts.extend(keyword_sentences[:10])  # at most 10 sentences
-        
+
         # Calculate remaining space
         used = len("\n".join(parts))
         remaining = max_len - used - 100
-        
+
         if remaining > 500:
             # Preserve head and tail
             half = remaining // 2
@@ -1339,7 +1339,7 @@ class SegmentMerger:
             parts.append(f"\n{head}")
             if tail and tail not in head:
                 parts.append(f"\n...\n{tail}")
-        
+
         result = "\n".join(parts)
         if len(result) > max_len:
             result = result[:max_len] + "\n...[truncated]"
@@ -1348,20 +1348,20 @@ class SegmentMerger:
     def _segment_page_content(self, content: str, section_title: str) -> str:
         """
         Simple content segmentation - split by blank lines, number each segment.
-        
+
         No dependency on heading format; works for any document type.
         Helps the LLM notice multiple paragraphs within a page, but does not infer topics.
         """
         if not content or len(content) < 1000:
             return content
-        
+
         # Split by blank lines (2+ consecutive newlines)
         paragraphs = content.split('\n\n')
-        
+
         # If too few paragraphs, no segmentation needed
         if len(paragraphs) <= 3:
             return content
-        
+
         # Simple labeling of each paragraph to help LLM locate
         result_lines = []
         for i, para in enumerate(paragraphs):
@@ -1369,10 +1369,10 @@ class SegmentMerger:
                 result_lines.append(f"[Section {i+1}]")
             result_lines.append(para)
             result_lines.append("")  # Preserve blank lines
-        
+
         return '\n'.join(result_lines)
 
-    def _match_boost_rule(self, query: str, section_title: str, rules: Dict[str, Any]) -> float:
+    def _match_boost_rule(self, query: str, section_title: str, rules: dict[str, Any]) -> float:
         """Match boost rules based on query and section title, return boost score"""
         if not rules:
             return 0.0
@@ -1417,10 +1417,10 @@ class SegmentMerger:
         else:
             return cfg.get("merger_content_cap_floor", 3000)
 
-    def merge(self, results: List[SearchResult],
+    def merge(self, results: list[SearchResult],
               max_context_chars: int = None,
               query: str = "",
-              industry_hint: str = None) -> Tuple[str, List[Dict]]:
+              industry_hint: str = None) -> tuple[str, list[dict]]:
         cfg = settings.CONTEXT_CONFIG
         if max_context_chars is None:
             max_context_chars = cfg.get("merger_default_max_chars", 32000)
@@ -1492,13 +1492,13 @@ class SegmentMerger:
                 # Generic indicators from config (cross-language document metadata pages)
                 generic_indicators = settings.CONTEXT_CONFIG.get("low_value_section_indicators", [])
                 low_value_keywords = list(generic_indicators)
-                
+
                 # Add industry-specific low-value sections from rules
                 industry_rules = self._load_industry_boost_rules(industry_hint) if hasattr(self, '_load_industry_boost_rules') else {}
                 if industry_rules and "low_value_sections" in industry_rules:
                     for rule in industry_rules.get("low_value_sections", []):
                         low_value_keywords.extend(rule.get("keywords", []))
-                
+
                 low_value_penalty = cfg.get("merger_low_value_penalty", 3.0)
                 if any(kw in section_lower or kw in content_preview for kw in low_value_keywords):
                     old_score = r.score
@@ -1524,7 +1524,7 @@ class SegmentMerger:
                         old_score = r.score
                         r.score -= vlm_penalty
                         logger.warning(f"[MERGER] VLM-description page penalty: doc={r.doc_id} page={r.page_num} title={r.section_title} score={old_score:.2f} -> {r.score:.2f}")
-            
+
             # Re-sort (after penalty)
             doc_results.sort(key=lambda x: x.score, reverse=True)
 
@@ -1569,14 +1569,14 @@ class SegmentMerger:
                 # Guard: some pages may have no extracted text (e.g., scanned/image-only pages),
                 # downstream segmentation and truncation assume a string.
                 content = self._enhance_list_content(result.content or "", result.section_title)
-                
+
                 # NEW: Smart content segmentation - identify multiple topic regions within a page.
                 # When a page contains distinct sub-section headings, segment and label them
                 # to help the LLM notice different topics.
                 segmented_content = self._segment_page_content(content, result.section_title)
                 if segmented_content != content:
                     content = segmented_content
-                
+
                 # FIX: Limit single-page content length to avoid one long page consuming the entire quota.
                 # FIX: After context budget increased to 80K, proportionally relax single-page content cap.
                 # FIX2: Dynamically allocate quota based on page score; higher-score pages get more content.
@@ -1588,7 +1588,7 @@ class SegmentMerger:
                                       int(max_per_doc * cfg.get("merger_single_page_cap_fraction", 0.33)))
                 if max_content_len > single_page_cap:
                     max_content_len = single_page_cap
-                
+
                 if len(content) > max_content_len:
                     # FIX: When truncating, prioritize preserving paragraphs containing query keywords
                     content = self._smart_truncate(content, query, max_content_len)
@@ -1625,7 +1625,7 @@ class SegmentMerger:
                     if len(content) > max_content_len:
                         content = self._smart_truncate(content, query, max_content_len)
                     source_content_parts.append(section_header + content)
-            
+
             source_content = "\n".join(source_content_parts)
             # Limit total content length returned to client to avoid oversized response
             max_source_content = cfg.get("merger_max_source_content", 8000)

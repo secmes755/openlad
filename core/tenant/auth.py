@@ -4,9 +4,9 @@ Supports API Key + username/password authentication
 """
 import logging
 import secrets
-import bcrypt
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+
+import bcrypt
 
 from .models import UserInfo
 
@@ -39,7 +39,7 @@ class AuthManager:
         return "ak_" + secrets.token_urlsafe(32)
 
     @staticmethod
-    def _compute_api_key_expiry(ttl_days: Optional[int]) -> Optional[datetime]:
+    def _compute_api_key_expiry(ttl_days: int | None) -> datetime | None:
         """Compute API key expiry from TTL days.
 
         ttl_days=None  -> use configured default
@@ -59,8 +59,8 @@ class AuthManager:
         return user.api_key_expires_at is not None and datetime.now() >= user.api_key_expires_at
 
     def create_user(self, tenant_id: str, username: str, password: str = None,
-                    email: Optional[str] = None, role: str = "user",
-                    api_key_ttl_days: Optional[int] = None) -> UserInfo:
+                    email: str | None = None, role: str = "user",
+                    api_key_ttl_days: int | None = None) -> UserInfo:
         """Create user
 
         Raises ValueError if the username already exists (usernames are globally
@@ -96,7 +96,7 @@ class AuthManager:
         return user
 
     def authenticate_by_password(self, username: str, password: str,
-                                   tenant_id: str = None) -> Optional[UserInfo]:
+                                   tenant_id: str = None) -> UserInfo | None:
         """Username/password authentication, supports exact tenant matching.
 
         Username is globally unique, so a lookup yields at most one user; if
@@ -115,19 +115,19 @@ class AuthManager:
                 return user
         return None
 
-    def authenticate_by_api_key(self, api_key: str) -> Optional[UserInfo]:
+    def authenticate_by_api_key(self, api_key: str) -> UserInfo | None:
         """API Key authentication"""
         return self.system_db.get_user_by_api_key(api_key)
 
-    def get_user(self, user_id: str) -> Optional[UserInfo]:
+    def get_user(self, user_id: str) -> UserInfo | None:
         """Get user info"""
         return self.system_db.get_user(user_id)
 
-    def list_users(self, tenant_id: str) -> List[UserInfo]:
+    def list_users(self, tenant_id: str) -> list[UserInfo]:
         """List all users under a tenant"""
         return self.system_db.list_users(tenant_id)
 
-    def list_all_users(self) -> List[UserInfo]:
+    def list_all_users(self) -> list[UserInfo]:
         """List all users (across all tenants)"""
         return self.system_db.list_all_users()
 
@@ -142,7 +142,7 @@ class AuthManager:
         return self.system_db.update_user(user_id, **kwargs)
 
     def regenerate_api_key(self, user_id: str,
-                           api_key_ttl_days: Optional[int] = None) -> Optional[str]:
+                           api_key_ttl_days: int | None = None) -> str | None:
         """Regenerate API Key and reset its expiry.
 
         api_key_ttl_days: new lifetime in days (None=config default, <=0=never expires).
@@ -156,7 +156,7 @@ class AuthManager:
 
 
 # Singleton
-_auth_manager: Optional[AuthManager] = None
+_auth_manager: AuthManager | None = None
 
 
 def get_auth_manager() -> AuthManager:

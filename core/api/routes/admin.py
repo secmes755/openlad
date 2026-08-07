@@ -4,36 +4,35 @@ Tenant management, user management
 Built-in admin tenant (admin) and admin user, auto-initialized on startup.
 When admin creates ordinary users, each user is automatically assigned an independent tenant (physical isolation).
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
 
-from ...tenant.tenant_manager import get_tenant_manager, TenantInfo
-from ...tenant.auth import get_auth_manager
-from ...db.system_db import get_system_db
 from ...services.resource_capacity import get_capacity_manager
+from ...tenant.auth import get_auth_manager
+from ...tenant.tenant_manager import get_tenant_manager
 
 router = APIRouter()
 
 
 class CreateTenantRequest(BaseModel):
     name: str
-    description: Optional[str] = ""
-    industry_packages: Optional[List[str]] = []
-    storage_quota_mb: Optional[int] = None
-    tenant_id: Optional[str] = None  # Supports custom tenant ID, e.g. u001, zhangsan
+    description: str | None = ""
+    industry_packages: list[str] | None = []
+    storage_quota_mb: int | None = None
+    tenant_id: str | None = None  # Supports custom tenant ID, e.g. u001, zhangsan
 
 
 class CreateUserRequest(BaseModel):
-    tenant_id: Optional[str] = "admin"  # When admin creates users, ordinary users get independent tenants
-    username: Optional[str] = None
-    password: Optional[str] = None
-    email: Optional[str] = None
-    role: Optional[str] = "user"
-    auto_username: Optional[bool] = False
-    count: Optional[int] = 1
-    custom_tenant_id: Optional[str] = None  # Specify custom tenant ID for ordinary users
-    api_key_ttl_days: Optional[int] = None  # API key lifetime: None=config default(90d), <=0=never expires
+    tenant_id: str | None = "admin"  # When admin creates users, ordinary users get independent tenants
+    username: str | None = None
+    password: str | None = None
+    email: str | None = None
+    role: str | None = "user"
+    auto_username: bool | None = False
+    count: int | None = 1
+    custom_tenant_id: str | None = None  # Specify custom tenant ID for ordinary users
+    api_key_ttl_days: int | None = None  # API key lifetime: None=config default(90d), <=0=never expires
 
 
 def _require_admin():
@@ -267,9 +266,9 @@ async def delete_user(user_id: str):
 
 
 class UpdateUserRequest(BaseModel):
-    role: Optional[str] = None
-    email: Optional[str] = None
-    password: Optional[str] = None
+    role: str | None = None
+    email: str | None = None
+    password: str | None = None
 
 
 @router.patch("/users/{user_id}")
@@ -296,11 +295,11 @@ async def update_user(user_id: str, req: UpdateUserRequest):
 
 
 class RegenerateKeyRequest(BaseModel):
-    api_key_ttl_days: Optional[int] = None  # None=config default(90d), <=0=never expires
+    api_key_ttl_days: int | None = None  # None=config default(90d), <=0=never expires
 
 
 @router.post("/users/{user_id}/regenerate-key")
-async def regenerate_api_key(user_id: str, req: Optional[RegenerateKeyRequest] = None):
+async def regenerate_api_key(user_id: str, req: RegenerateKeyRequest | None = None):
     """Rotate a user's API key and reset its expiry (admin only).
 
     Use this when a key expires or needs rotation. Returns the new key.

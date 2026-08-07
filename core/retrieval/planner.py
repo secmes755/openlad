@@ -1,18 +1,17 @@
 """
 PHASE-1: QueryPlanner three-tier routing task decomposition
 """
-import json
 import logging
 import re
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Any
 
-from ..models.client import get_model_client
-from ..db.tenant_db import get_tenant_metadata_db
 # corpus_taxonomy / corpus_overview not yet available; functionality temporarily simplified
 # from ..ingestion.corpus_taxonomy import CorpusTaxonomyBuilder, get_taxonomy_text
 # from ..ingestion.corpus_overview import get_candidate_details
 from ..config import settings
+from ..db.tenant_db import get_tenant_metadata_db
+from ..models.client import get_model_client
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +48,13 @@ Available retrieval tools:
         self.metadata_db = get_tenant_metadata_db(tenant_id)
         self.tenant_id = tenant_id
         self.taxonomy_text = ""
-        
+
         # FIX: admin tenant also loads the default tenant's database
         self.fallback_metadata_db = None
         if tenant_id == "admin":
             try:
                 self.fallback_metadata_db = get_tenant_metadata_db("default")
-                logger.info(f"[PLANNER] Admin tenant loaded default tenant database as fallback")
+                logger.info("[PLANNER] Admin tenant loaded default tenant database as fallback")
             except Exception as e:
                 logger.warning(f"[PLANNER] Admin tenant failed to load default database: {e}")
         # taxonomy functionality temporarily simplified
@@ -66,15 +65,15 @@ Available retrieval tools:
         # taxonomy functionality temporarily simplified
         self.taxonomy_text = ""
 
-    def plan(self, query: str, chat_history: str = None) -> Dict[str, Any]:
-        logger.info(f"[PHASE-1] ===== Three-tier routing started =====")
+    def plan(self, query: str, chat_history: str = None) -> dict[str, Any]:
+        logger.info("[PHASE-1] ===== Three-tier routing started =====")
         raw_query = query
-        
+
         # Step 0: Basic rewrite (e.g. "数据库" -> "知识库")
         query = self._rewrite_query(query)
         if query != raw_query:
             logger.info(f"[PHASE-1] Query rewrite: '{raw_query}' -> '{query}'")
-        
+
         # Step 0.5: Conversation-aware rewrite (resolve pronouns to concrete entities).
         # The rewritten text is used to enrich context sent to downstream LLMs
         # (coarse filter, fine plan), but the ORIGINAL query is never replaced — the
@@ -121,7 +120,7 @@ Available retrieval tools:
         self._log_plan(plan)
         return plan
 
-    def _route_category(self, query: str, chat_history: str = None) -> Optional[str]:
+    def _route_category(self, query: str, chat_history: str = None) -> str | None:
         """Simplified category routing: infer category from document metadata distribution.
 
         Avoid returning None directly (which triggers fallback); instead use simple
@@ -134,7 +133,7 @@ Available retrieval tools:
             if not docs:
                 docs = self.metadata_db.get_all_documents(status="completed") or []
             all_docs.extend(docs)
-            
+
             if self.tenant_id == "admin" and self.fallback_metadata_db:
                 try:
                     fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
@@ -175,7 +174,7 @@ Available retrieval tools:
         if not docs:
             docs = self.metadata_db.get_all_documents(status="completed") or []
         all_docs.extend(docs)
-        
+
         if self.tenant_id == "admin" and self.fallback_metadata_db:
             try:
                 fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
@@ -184,7 +183,7 @@ Available retrieval tools:
                 all_docs.extend(fallback_docs)
             except Exception as e:
                 logger.warning(f"[PLANNER] Admin tenant failed to load fallback documents: {e}")
-        
+
         if not all_docs:
             return [], {}
         doc_list_lines = []
@@ -235,7 +234,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             logger.error(f"[PHASE-1] Coarse filter failed: {e}")
             return [], {}
 
-    def _ensure_entity_coverage(self, query: str, candidate_ids: List[str], docs: List[Dict], chat_history: str = None) -> List[str]:
+    def _ensure_entity_coverage(self, query: str, candidate_ids: list[str], docs: list[dict], chat_history: str = None) -> list[str]:
         """
         Check whether product model names / entities mentioned in the query
         are covered by candidate_ids. If an entity appears explicitly in the query
@@ -274,7 +273,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
 
         candidate_set = set(candidate_ids)
         added = []
-        
+
         for entity in entities:
             entity_upper = entity.upper() if isinstance(entity, str) else entity
             # Collect all documents containing this entity (match by title and filename)
@@ -286,13 +285,13 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
                 searchable = ((doc.get("title") or "") + " " + (doc.get("filename") or "")).upper()
                 if entity_upper in searchable:
                     matching_docs.append(doc)
-            
+
             if not matching_docs:
                 continue
-                
+
             # Check if any candidate already contains this entity
             covered = any(doc["id"] in candidate_set for doc in matching_docs)
-            
+
             if not covered:
                 # Add at least one document
                 for doc in matching_docs:
@@ -305,7 +304,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             logger.info(f"[PHASE-1] Entity coverage: added missing documents for entities {added}")
         return list(candidate_set)
 
-    def _resolve_short_ids(self, short_ids: List[str]) -> List[str]:
+    def _resolve_short_ids(self, short_ids: list[str]) -> list[str]:
         if not short_ids:
             return []
         # FIX: Admin tenant merges documents from primary and fallback tenants
@@ -314,7 +313,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
         if not docs:
             docs = self.metadata_db.get_all_documents(status="completed") or []
         all_docs.extend(docs)
-        
+
         if self.tenant_id == "admin" and self.fallback_metadata_db:
             try:
                 fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
@@ -323,7 +322,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
                 all_docs.extend(fallback_docs)
             except Exception:
                 pass
-        
+
         full_ids = []
         for short_id in short_ids:
             for doc in all_docs:
@@ -333,7 +332,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
                     break
         return full_ids
 
-    def _fine_plan(self, query: str, candidate_ids: List[str], chat_history: str = None, time_range: Dict = None) -> Dict[str, Any]:
+    def _fine_plan(self, query: str, candidate_ids: list[str], chat_history: str = None, time_range: dict = None) -> dict[str, Any]:
         today = datetime.now().strftime("%Y-%m-%d")
         history_section = f"\n## Conversation History\n{chat_history}\n" if chat_history else ""
         tr_label = time_range.get('label', '') if time_range else ''
@@ -381,7 +380,7 @@ Output JSON:
             logger.error(f"[PHASE-1] Fine planning failed: {e}")
             return self._fallback_plan(query)
 
-    def _build_candidate_details(self, candidate_ids: List[str]) -> str:
+    def _build_candidate_details(self, candidate_ids: list[str]) -> str:
         """Simplified replacement for corpus_overview.get_candidate_details"""
         docs = []
         for doc_id in candidate_ids:
@@ -397,7 +396,7 @@ Output JSON:
             lines.append(f"- {doc['id']}: [{doc_type}] {title}")
         return "\n".join(lines)
 
-    def _validate_plan(self, result: Dict, query: str) -> Dict:
+    def _validate_plan(self, result: dict, query: str) -> dict:
         plan = {
             "analysis": result.get("analysis", ""),
             "rewritten_query": result.get("rewritten_query", query),
@@ -449,8 +448,8 @@ Output JSON:
 
         return plan
 
-    def _log_plan(self, plan: Dict):
-        logger.info(f"[PHASE-1] ===== Query Plan =====")
+    def _log_plan(self, plan: dict):
+        logger.info("[PHASE-1] ===== Query Plan =====")
         logger.info(f"[PHASE-1] Strategy: {plan['strategy']}")
         logger.info(f"[PHASE-1] Analysis: {plan['analysis']}")
         logger.info(f"[PHASE-1] Reasoning: {plan['reasoning']}")
@@ -469,16 +468,16 @@ Output JSON:
         """
         if not chat_history or len(chat_history.strip()) < 10:
             return query
-        
+
         # Detect whether the query contains pronouns (language-agnostic: check for short queries with history)
         # OpenLAD: No hardcoded language-specific pronoun lists in core.
         # Pronoun resolution is handled by the industry pack's rewrite_query hook if needed.
         has_pronoun = len(query) < self.PRONOUN_QUERY_LENGTH and len(chat_history.strip()) > 30
-        
+
         # Even without obvious pronouns, if the query is very short and has history, attempt rewrite
         if not has_pronoun and len(query) >= self.SHORT_QUERY_LENGTH:
             return query
-        
+
         prompt = f"""You are a conversation understanding assistant. Please rewrite the user's latest question into a **complete, standalone query** that does not depend on context.
 
 Requirements:
@@ -501,7 +500,7 @@ Rewritten query:"""
             logger.warning(f"[PHASE-1] Conversation-aware rewrite failed: {e}")
         return query
 
-    def _fallback_plan(self, query: str, entities: List[str] = None) -> Dict:
+    def _fallback_plan(self, query: str, entities: list[str] = None) -> dict:
         """FIX: fallback_plan also attempts to identify entities in the query to populate doc_filter"""
         doc_filter = []
         if entities:
@@ -513,7 +512,7 @@ Rewritten query:"""
                 if not docs:
                     docs = self.metadata_db.get_all_documents(status="completed") or []
                 all_docs.extend(docs)
-                
+
                 if self.tenant_id == "admin" and self.fallback_metadata_db:
                     try:
                         fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
@@ -522,7 +521,7 @@ Rewritten query:"""
                         all_docs.extend(fallback_docs)
                     except Exception:
                         pass
-                
+
                 for entity in (entities or []):
                     entity_upper = entity.upper()
                     for doc in all_docs:
@@ -532,7 +531,7 @@ Rewritten query:"""
                             break
             except Exception:
                 pass
-        
+
         return {
             "analysis": "Analysis failed, degraded to single retrieval",
             "strategy": "single_retrieve",

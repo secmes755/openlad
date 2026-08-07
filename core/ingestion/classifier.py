@@ -2,9 +2,7 @@
 Universal document classifier
 Does not hardcode classification taxonomy; dynamically loaded from industry plugin system
 """
-import json
 import logging
-from typing import Dict, Optional
 
 from ..models import get_model_client
 from ..plugins import get_plugin_registry
@@ -14,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class DocumentClassifier:
     """Universal document classifier
-    
+
     Collects classification taxonomy from loaded industry plugins, auto-classifies with LLM.
     If no industry plugins, uses a minimal generic taxonomy.
     """
@@ -58,7 +56,7 @@ class DocumentClassifier:
         return "\n".join(lines)
 
     def classify(self, filename: str, title: str, content_sample: str,
-                 plugin=None) -> Dict[str, str]:
+                 plugin=None) -> dict[str, str]:
         """Three-level document classification
         Directly calls LLM for classification; no content-related hardcoded rules in code
         FIX: Supports passing industry plugin; uses industry plugin classification prompt when manually specified
@@ -193,7 +191,7 @@ class DocumentClassifier:
             "confidence": 0.5
         }
 
-    def _extract_product_model_from_filename(self, filename: str) -> Optional[str]:
+    def _extract_product_model_from_filename(self, filename: str) -> str | None:
         """Extract product model from filename (e.g. AB1234_Datasheet.pdf -> AB1234)"""
         import re
         # Remove extension

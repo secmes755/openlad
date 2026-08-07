@@ -5,13 +5,13 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List, Any
+from typing import Any
 
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db
 from ..models.client import get_model_client
-from .retriever import HierarchicalRetriever, SegmentMerger, SearchResult
-from .router import QueryPlan, IntentType
+from .retriever import HierarchicalRetriever, SearchResult, SegmentMerger
+from .router import IntentType, QueryPlan
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +28,17 @@ class RetrievalExecutor:
         if env_max:
             self.max_chars = int(env_max)
             logger.info(f"[PHASE-2] Environment variable overrides context quota: {self.max_chars}")
-        
+
         # FIX: admin tenant also loads default tenant's database
         self.fallback_metadata_db = None
         if tenant_id == "admin":
             try:
                 self.fallback_metadata_db = get_tenant_metadata_db("default")
-                logger.info(f"[PHASE-2] admin tenant loaded default tenant database as fallback")
+                logger.info("[PHASE-2] admin tenant loaded default tenant database as fallback")
             except Exception as e:
                 logger.warning(f"[PHASE-2] admin tenant failed to load default database: {e}")
 
-    def _get_query_expansion_keywords(self) -> List[str]:
+    def _get_query_expansion_keywords(self) -> list[str]:
         """Load query expansion keywords from industry packs. If industry_hint is not specified, iterate all industry packs to collect."""
         try:
             from ..plugins import get_plugin_registry
@@ -62,8 +62,8 @@ class RetrievalExecutor:
             pass
         return []
 
-    def execute(self, plan: Dict[str, Any], tenant_id: str = None,
-                industry_hint: str = None, original_query: str = None) -> Dict[str, Any]:
+    def execute(self, plan: dict[str, Any], tenant_id: str = None,
+                industry_hint: str = None, original_query: str = None) -> dict[str, Any]:
         if tenant_id and tenant_id != self.tenant_id:
             self.tenant_id = tenant_id
             self.retriever = HierarchicalRetriever(tenant_id)
@@ -73,20 +73,20 @@ class RetrievalExecutor:
         self.industry_hint = industry_hint
         strategy = plan.get("strategy", "single_retrieve")
         steps = plan.get("steps", [])
-        logger.info(f"[PHASE-2] ===== Retrieval Execution =====")
+        logger.info("[PHASE-2] ===== Retrieval Execution =====")
         logger.info(f"[PHASE-2] Strategy: {strategy}, Steps: {len(steps)}, Industry: {industry_hint or 'auto'}")
 
         if strategy == "decomposed_retrieve":
             return self._execute_decomposed(steps, original_query=original_query)
         return self._execute_standard(steps, strategy_label=strategy, original_query=original_query)
 
-    def _execute_standard(self, steps: List[Dict], strategy_label: str = "single_retrieve", original_query: str = None) -> Dict[str, Any]:
+    def _execute_standard(self, steps: list[dict], strategy_label: str = "single_retrieve", original_query: str = None) -> dict[str, Any]:
         step_quotas = self._calculate_step_quotas(steps)
-        all_results: List[SearchResult] = []
-        trace: List[Dict] = []
+        all_results: list[SearchResult] = []
+        trace: list[dict] = []
         total_step_chars = 0
-        step_contexts: List[str] = []
-        step_sources_all: List[Dict] = []
+        step_contexts: list[str] = []
+        step_sources_all: list[dict] = []
 
 
         for i, step in enumerate(steps, 1):
@@ -159,20 +159,20 @@ class RetrievalExecutor:
                 final_context = final_context[:context_budget]
                 logger.warning(f"[PHASE-2] Single-step context truncation: -> {context_budget}")
 
-        logger.info(f"[PHASE-2] ===== Retrieval Complete =====")
+        logger.info("[PHASE-2] ===== Retrieval Complete =====")
         logger.info(f"[PHASE-2] Total results: {len(all_results)}, Context: {len(final_context)} chars")
         return {"context": final_context, "sources": final_sources, "trace": trace, "total_results": len(all_results), "total_chars": len(final_context), "strategy": strategy_label}
 
-    def _execute_decomposed(self, steps: List[Dict], original_query: str = None) -> Dict[str, Any]:
+    def _execute_decomposed(self, steps: list[dict], original_query: str = None) -> dict[str, Any]:
         """
         Step-by-step retrieval + structured extraction. After each step's retrieval, use LLM to distill into JSON.
         The final Synthesizer only processes the structured summary, not raw page text.
         """
         step_quotas = self._calculate_step_quotas(steps)
-        all_results: List[SearchResult] = []
-        trace: List[Dict] = []
+        all_results: list[SearchResult] = []
+        trace: list[dict] = []
         structured_parts = []
-        model_client = get_model_client()
+        get_model_client()
 
         for i, step in enumerate(steps, 1):
             tool = step.get("tool", "single_retrieve")
@@ -208,7 +208,7 @@ class RetrievalExecutor:
                 if sub_filter:
                     logger.info(f"[PHASE-2] Step {i} sub-query {sub_i} matched trusted documents: {[d[:8] for d in sub_filter]}")
                 sub_results = self._execute_step("single_retrieve", sub_q, sub_filter, purpose, step_quota, original_query=original_query)
-                
+
                 # Supplementary retrieval: use the same sub_filter
                 # No longer hardcode financial keywords to trigger supplementary retrieval; let original sub-query naturally recall related content
 
@@ -278,7 +278,7 @@ class RetrievalExecutor:
                     existing["pages"] = list(set(existing.get("pages", []) + s.get("pages", [])))
         final_sources = list(seen_sources.values())
 
-        logger.info(f"[PHASE-2] ===== Decomposed Retrieval Complete =====")
+        logger.info("[PHASE-2] ===== Decomposed Retrieval Complete =====")
         logger.info(f"[PHASE-2] Total results: {len(all_results)}, Structured context: {len(final_context)} chars")
         return {"context": final_context, "sources": final_sources, "trace": trace,
                 "total_results": len(all_results), "total_chars": len(final_context),
@@ -302,13 +302,13 @@ class RetrievalExecutor:
             # Uniform sampling: start, middle, end
             parts = []
             parts.append(f"=== Document Start ===\n{context[:fragment_size]}")
-            
+
             # Uniform sampling of the middle portion
             mid_start = ctx_len // 3
             mid_end = 2 * ctx_len // 3
             parts.append(f"=== Document Middle ===\n{context[mid_start:mid_start+fragment_size]}")
             parts.append(f"=== Document Later ===\n{context[mid_end:mid_end+fragment_size]}")
-            
+
             # Tail
             parts.append(f"=== Document End ===\n{context[-fragment_size:]}")
             sample = "\n".join(parts)
@@ -364,7 +364,7 @@ Output structure (JSON):
         fallback_limit = cfg.get("extraction_fallback_limit", 3000)
         return context[:fallback_limit]
 
-    def _match_subquery_to_docs(self, sub_query: str, doc_filter: List[str]) -> List[str]:
+    def _match_subquery_to_docs(self, sub_query: str, doc_filter: list[str]) -> list[str]:
         """
         Match sub-query to specific documents.
         Simple implementation: extract year and model name from sub-query, match against document title/filename.
@@ -410,7 +410,7 @@ Output structure (JSON):
 
         return doc_filter
 
-    def _calculate_step_quotas(self, steps: List[Dict]) -> List[int]:
+    def _calculate_step_quotas(self, steps: list[dict]) -> list[int]:
         if not steps:
             return []
         doc_counts = []
@@ -484,10 +484,10 @@ Output structure (JSON):
             logger.info(f"[QUERY-CLEAN] '{query[:60]}...' -> '{cleaned[:60]}...'")
         return cleaned
 
-    def _execute_step(self, tool: str, query: str, doc_filter: List[str],
+    def _execute_step(self, tool: str, query: str, doc_filter: list[str],
                       purpose: str,
                       max_context_quota: int = None,
-                      original_query: str = None) -> List[SearchResult]:
+                      original_query: str = None) -> list[SearchResult]:
         if tool == "single_retrieve":
             return self._single_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
         elif tool == "decomposed_retrieve":
@@ -505,7 +505,7 @@ Output structure (JSON):
             return self._single_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
 
     @staticmethod
-    def _build_exact_match_excerpt(raw_text: str, tokens: List[str],
+    def _build_exact_match_excerpt(raw_text: str, tokens: list[str],
                                    window_chars: int, max_windows: int):
         """Build an excerpt of windows around exact keyword hits in a page.
 
@@ -565,8 +565,8 @@ Output structure (JSON):
         return ("[Exact keyword match: " + ", ".join(tokens[:5]) + "]\n"
                 + "\n...\n".join(parts) + "\n"), used_table
 
-    def _apply_rare_token_rescue(self, results: List[SearchResult], query: str,
-                                 doc_id_filter) -> List[SearchResult]:
+    def _apply_rare_token_rescue(self, results: list[SearchResult], query: str,
+                                 doc_id_filter) -> list[SearchResult]:
         """Guarantee pages containing rare query identifiers are present and prominent.
 
         Generic safety net for exact-lookup questions (pin names, register names,
@@ -725,8 +725,8 @@ Output structure (JSON):
                 f"docs={len(docs_touched)}")
         return results
 
-    def _single_retrieve(self, query: str, doc_filter: List[str],
-                         max_context_quota: int = None, original_query: str = None) -> List[SearchResult]:
+    def _single_retrieve(self, query: str, doc_filter: list[str],
+                         max_context_quota: int = None, original_query: str = None) -> list[SearchResult]:
         doc_id_filter = self._resolve_doc_filter(doc_filter)
         cfg = settings.CONTEXT_CONFIG
         max_per_doc = cfg.get("max_results_per_doc", 15)
@@ -800,15 +800,15 @@ Output structure (JSON):
         return self._apply_rare_token_rescue(
             results, search_query, set(doc_id_filter) if doc_id_filter else None)
 
-    def _chapter_retrieve(self, query: str, doc_id: str, max_context_quota: int = None) -> List[SearchResult]:
+    def _chapter_retrieve(self, query: str, doc_id: str, max_context_quota: int = None) -> list[SearchResult]:
         """
         LLM-based chapter selection + full delivery
-        
+
         Design philosophy:
         - No content-related hardcoded rules in the code
         - Let LLM make all judgments: which chapters to select, what information to find
         - Retrieval layer only responsible for: delivering the right content to LLM
-        
+
         Flow:
         1. Get document chapter structure
         2. Send query + chapter structure to LLM, let LLM select relevant chapters
@@ -816,17 +816,17 @@ Output structure (JSON):
         """
         if not self.metadata_db:
             return []
-        
+
         # 1. Get document info and chapter structure
         doc = self.metadata_db.get_document(doc_id)
         if not doc:
             return []
-        
+
         chapters = self.metadata_db.get_structure_index(doc_id)
         if not chapters:
             # No structure index, fallback to FTS
             return self._fallback_to_fts(query, doc_id)
-        
+
         # 2. Build chapter list (send all to LLM, let LLM filter)
         chapter_list = []
         for ch in chapters:  # All chapters, no quantity limit
@@ -843,10 +843,10 @@ Output structure (JSON):
                 "keywords": ch.get("keywords", "") or "",
                 "entities": ch.get("entities", "") or ""
             })
-        
+
         if not chapter_list:
             return self._fallback_to_fts(query, doc_id)
-        
+
         # FIX: Ensure structure-index semantic matches are not missed by LLM title-only selection.
         # A chapter whose summary, keywords or harvested entities explicitly mentions the query
         # topic (e.g. "NPU", "UART") should be included even if its title does not contain the
@@ -887,7 +887,7 @@ Output structure (JSON):
 
         # 3. Let LLM select relevant chapters
         model_client = get_model_client()
-        
+
         prompt = f"""You are a document retrieval assistant. The user wants to find specific information in a document.
 
 User query: "{query}"
@@ -903,10 +903,10 @@ The document contains the following chapters (title + page numbers + content pre
             ents = ch.get('entities', '') or ''
             if ents:
                 prompt += f"\n    Entities: {ents[:150]}"
-        
+
         cfg = settings.CONTEXT_CONFIG
         chapter_select_max = cfg.get("chapter_select_max", 20)
-        
+
         prompt += f"""
 
 From the above {len(chapter_list)} chapters, select **up to {chapter_select_max} chapters most likely to contain the answer**.
@@ -917,7 +917,7 @@ If there are no relevant chapters, return:
 {{"relevant_chapters": []}}
 
 Output only JSON, no explanation."""
-        
+
         try:
             cfg = settings.CONTEXT_CONFIG
             chapter_select_max_tokens = cfg.get("chapter_select_max_tokens", 1024)
@@ -926,13 +926,13 @@ Output only JSON, no explanation."""
         except Exception as e:
             logger.warning(f"[CHAPTER-RETRIEVE] LLM chapter selection failed: {e}")
             selected_indices = []
-        
+
         # Merge LLM selection with semantic pre-selection so overview/summary-matching chapters are preserved
         selected_indices = list(set(selected_indices) | preselected_indices)
         if not selected_indices:
-            logger.info(f"[CHAPTER-RETRIEVE] LLM selected no chapters, falling back to FTS")
+            logger.info("[CHAPTER-RETRIEVE] LLM selected no chapters, falling back to FTS")
             return self._fallback_to_fts(query, doc_id)
-        
+
         logger.info(f"[CHAPTER-RETRIEVE] Combined selection: {len(selected_indices)} chapters (LLM + semantic pre-match)")
 
         # Sub-chapter window expansion — datasheet "definitions first, data later" pattern
@@ -951,7 +951,7 @@ Output only JSON, no explanation."""
         # 4. Collect pages from selected chapters
         results = []
         selected_chapters = []
-        
+
         for idx in selected_indices:
             if idx < 0 or idx >= len(chapter_list):
                 continue
@@ -963,7 +963,7 @@ Output only JSON, no explanation."""
                     end_page = ch.get("end_page", start_page)
                     section_title = ch.get("section_title", "")
                     selected_chapters.append(section_title)
-                    
+
                     # Get all pages within the chapter range
                     pages = self.metadata_db.get_document_pages(doc_id)
                     chapter_pages = []
@@ -971,11 +971,11 @@ Output only JSON, no explanation."""
                         pn = page.get("page_num", 0)
                         if start_page <= pn <= end_page:
                             chapter_pages.append(page)
-                    
+
                     # Don't limit pages per chapter, let merger handle truncation
                     # LLM already selected this chapter, indicating it considers the entire chapter relevant
                     # Merger will intelligently truncate, preserving keyword paragraphs
-                    
+
                     for page in chapter_pages:
                         pn = page.get("page_num", 0)
                         results.append(SearchResult(
@@ -991,10 +991,10 @@ Output only JSON, no explanation."""
                             page_image_path=page.get("page_image_path")
                         ))
                     break
-        
+
         if not results:
             return self._fallback_to_fts(query, doc_id)
-        
+
         # Sort by relevance of chapter titles to query, ensuring key data pages are not truncated
         # E.g., when querying "temperature range", "Temperature and Thermal Characteristics" should come before "Overview"
         # FIX: Also consider the chapter's level. High-level sections (overview/introduction/features) are often the
@@ -1025,7 +1025,7 @@ Output only JSON, no explanation."""
                     seen_pages.add(r.page_num)
                     unique_results.append(r)
             results = unique_results
-        
+
         # FIX: Ensure the first page of each top-level chapter is included before truncation.
         # High-level overview pages may be short but contain conclusive answers.
         if query:
@@ -1061,15 +1061,15 @@ Output only JSON, no explanation."""
         logger.info(f"[CHAPTER-RETRIEVE] LLM selected chapters: {selected_chapters} -> {len(results)} pages")
         return results
 
-    def _fallback_to_fts(self, query: str, doc_id: str) -> List[SearchResult]:
+    def _fallback_to_fts(self, query: str, doc_id: str) -> list[SearchResult]:
         """Fallback to FTS search"""
         from .retriever import HierarchicalRetriever
         retriever = HierarchicalRetriever(self.tenant_id)
         fts_results = retriever._search_fts(query, limit=10, doc_id_filter={doc_id})
-        
+
         results = []
         doc = self.metadata_db.get_document(doc_id)
-        
+
         for fts_r in fts_results:
             page = self.metadata_db.get_page(fts_r["page_id"])
             if page:
@@ -1085,11 +1085,11 @@ Output only JSON, no explanation."""
                     text_source=page.get("text_source", "direct_extract"),
                     page_image_path=page.get("page_image_path")
                 ))
-        
+
         return results
 
-    def _fulltext_retrieve(self, doc_filter: List[str], query: str = None,
-                            max_context_quota: int = None, original_query: str = None) -> List[SearchResult]:
+    def _fulltext_retrieve(self, doc_filter: list[str], query: str = None,
+                            max_context_quota: int = None, original_query: str = None) -> list[SearchResult]:
         doc_ids = self._resolve_doc_filter(doc_filter)
         if not doc_ids:
             return self._single_retrieve(query, [], original_query=original_query) if query else []
@@ -1123,8 +1123,8 @@ Output only JSON, no explanation."""
                                            text_source=page.get("text_source", "direct_extract")))
         return results
 
-    def _filtered_retrieve(self, query: str, doc_filter: List[str],
-                            max_context_quota: int = None, original_query: str = None) -> List[SearchResult]:
+    def _filtered_retrieve(self, query: str, doc_filter: list[str],
+                            max_context_quota: int = None, original_query: str = None) -> list[SearchResult]:
         if not doc_filter:
             return self._single_retrieve(query, [], max_context_quota, original_query=original_query)
         results = []
@@ -1132,10 +1132,10 @@ Output only JSON, no explanation."""
             results.extend(self._single_retrieve(query, [doc_id], max_context_quota, original_query=original_query))
         return results
 
-    def _resolve_doc_filter(self, doc_filter: List[str], silent: bool = False) -> List[str]:
+    def _resolve_doc_filter(self, doc_filter: list[str], silent: bool = False) -> list[str]:
         if not doc_filter:
             return []
-        
+
         # FIX: admin tenant also searches default tenant's documents
         cfg = settings.CONTEXT_CONFIG
         doc_list_limit = cfg.get("doc_filter_list_limit", 10000)
@@ -1149,7 +1149,7 @@ Output only JSON, no explanation."""
                 all_docs.extend(fallback_docs)
             except Exception as e:
                 logger.warning(f"[DOC_FILTER] admin tenant failed to search fallback documents: {e}")
-        
+
         matched_ids = set()
         skipped = []
         for filter_term in doc_filter:

@@ -7,10 +7,10 @@ Can be replaced with deep learning models later (PP-DocLayoutV3/YOLOX-Layout)
 """
 import logging
 import re
-import numpy as np
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +22,13 @@ class LayoutElement:
     element_type: str = "text"  # text/title/section-header/caption/footnote/
                                # page-header/page-footer/picture/table/formula/list-item
     content: Any = ""
-    bbox: List[int] = field(default_factory=lambda: [0, 0, 0, 0])  # [x1, y1, x2, y2]
-    children: List[int] = field(default_factory=list)
+    bbox: list[int] = field(default_factory=lambda: [0, 0, 0, 0])  # [x1, y1, x2, y2]
+    children: list[int] = field(default_factory=list)
     caption_ref: str = ""
     refers_to: str = ""
     source: str = "direct_extract"  # direct_extract / ocr / vl_model
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "order": self.order,
             "type": self.element_type,
@@ -48,10 +48,10 @@ class LayoutResult:
     page_type: str = "text_body"  # cover/toc/text_body/table_page/form/image_page/appendix/blank/other
     columns: int = 1
     primary_direction: str = "top_to_bottom"
-    elements: List[LayoutElement] = field(default_factory=list)
-    metadata: Dict = field(default_factory=dict)
+    elements: list[LayoutElement] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "page_num": self.page_num,
             "page_type": self.page_type,
@@ -76,14 +76,14 @@ class LayoutAnalyzer:
         "page-header", "page-footer", "picture", "table", "formula", "list-item"
     ]
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: dict = None):
         self.config = config or {}
         self.detect_columns = self.config.get("detect_columns", True)
         self.restore_reading_order = self.config.get("restore_reading_order", True)
         self.element_types = self.config.get("element_types", self.ELEMENT_TYPES)
 
     def analyze(self, raw_text: str, page_num: int = 1,
-                ocr_results: List[Dict] = None,
+                ocr_results: list[dict] = None,
                 image_path: str = None) -> LayoutResult:
         """
         Analyze page layout
@@ -138,7 +138,7 @@ class LayoutAnalyzer:
 
         return result
 
-    def _split_text_blocks(self, text: str) -> List[Tuple[str, List[int]]]:
+    def _split_text_blocks(self, text: str) -> list[tuple[str, list[int]]]:
         """Split text into blocks (text, estimated bbox)"""
         blocks = []
         lines = text.split('\n')
@@ -152,7 +152,7 @@ class LayoutAnalyzer:
                 if current_block:
                     block_text = '\n'.join(current_block)
                     # Estimated bbox: [x, y, width, y+height]
-                    max_width = max(len(l) * 12 for l in current_block)  # Estimate 12px per character
+                    max_width = max(len(ln) * 12 for ln in current_block)  # Estimate 12px per character
                     bbox = [0, y_pos - len(current_block) * line_height, max_width, y_pos]
                     blocks.append((block_text, bbox))
                     current_block = []
@@ -164,14 +164,14 @@ class LayoutAnalyzer:
 
         if current_block:
             block_text = '\n'.join(current_block)
-            max_width = max(len(l) * 12 for l in current_block)
+            max_width = max(len(ln) * 12 for ln in current_block)
             bbox = [0, y_pos - len(current_block) * line_height, max_width, y_pos]
             blocks.append((block_text, bbox))
 
         return blocks
 
-    def _merge_ocr_blocks(self, text_blocks: List[Tuple[str, List[int]]],
-                         ocr_results: List[Dict]) -> List[Tuple[str, List[int], float]]:
+    def _merge_ocr_blocks(self, text_blocks: list[tuple[str, list[int]]],
+                         ocr_results: list[dict]) -> list[tuple[str, list[int], float]]:
         """Merge OCR bbox information"""
         blocks = []
 
@@ -192,11 +192,11 @@ class LayoutAnalyzer:
 
         return blocks
 
-    def _estimate_bbox(self, text_blocks: List[Tuple[str, List[int]]]) -> List[Tuple[str, List[int], float]]:
+    def _estimate_bbox(self, text_blocks: list[tuple[str, list[int]]]) -> list[tuple[str, list[int], float]]:
         """Use estimated bbox"""
         return [(text, bbox, 0.5) for text, bbox in text_blocks]
 
-    def _detect_columns(self, blocks: List[Tuple[str, List[int], float]]) -> int:
+    def _detect_columns(self, blocks: list[tuple[str, list[int], float]]) -> int:
         """Detect column count (based on x-coordinate clustering)"""
         if len(blocks) < 3:
             return 1
@@ -253,7 +253,7 @@ class LayoutAnalyzer:
 
         return 1
 
-    def _classify_elements(self, blocks: List[Tuple[str, List[int], float]]) -> List[LayoutElement]:
+    def _classify_elements(self, blocks: list[tuple[str, list[int], float]]) -> list[LayoutElement]:
         """Classify text blocks into element types"""
         elements = []
 
@@ -275,10 +275,10 @@ class LayoutAnalyzer:
 
         return elements
 
-    def _detect_element_type(self, text: str, bbox: List[int],
-                            idx: int, all_blocks: List) -> str:
+    def _detect_element_type(self, text: str, bbox: list[int],
+                            idx: int, all_blocks: list) -> str:
         """Detect element type for a single text block"""
-        text_lower = text.lower()
+        text.lower()
         text_len = len(text)
 
         # 1. Title
@@ -313,7 +313,7 @@ class LayoutAnalyzer:
         # 6. Table (check for table features)
         if '|' in text or '｜' in text or '\t' in text:
             lines = text.split('\n')
-            if len(lines) >= 2 and all('|' in l or '\t' in l for l in lines[:2]):
+            if len(lines) >= 2 and all('|' in ln or '\t' in ln for ln in lines[:2]):
                 return "table"
 
         # 7. Formula (check for math symbols)
@@ -347,8 +347,8 @@ class LayoutAnalyzer:
 
         return False
 
-    def _restore_reading_order(self, elements: List[LayoutElement],
-                               columns: int) -> List[LayoutElement]:
+    def _restore_reading_order(self, elements: list[LayoutElement],
+                               columns: int) -> list[LayoutElement]:
         """Restore reading order"""
         if len(elements) <= 1:
             return elements
@@ -374,7 +374,7 @@ class LayoutAnalyzer:
 
         return sorted_elements
 
-    def _link_captions(self, elements: List[LayoutElement]) -> List[LayoutElement]:
+    def _link_captions(self, elements: list[LayoutElement]) -> list[LayoutElement]:
         """Associate figures/tables with their captions"""
         # Find all picture/table/formula elements
         media_elements = [e for e in elements
@@ -401,7 +401,7 @@ class LayoutAnalyzer:
 
         return elements
 
-    def _detect_page_type(self, elements: List[LayoutElement]) -> str:
+    def _detect_page_type(self, elements: list[LayoutElement]) -> str:
         """Detect page type"""
         if not elements:
             return "blank"
@@ -454,7 +454,7 @@ class LayoutAnalyzer:
 
         return "text_body"
 
-    def detect_columns_from_positions(self, x_positions: List[float],
+    def detect_columns_from_positions(self, x_positions: list[float],
                                      page_width: float) -> int:
         """Detect column count from positions (for external use)"""
         if len(x_positions) < 3:

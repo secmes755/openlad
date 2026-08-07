@@ -4,7 +4,7 @@ Fully generalized, no industry-specific content
 """
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ except ImportError:
     HAS_PPT = False
 
 try:
-    from PIL import Image
     import pytesseract
+    from PIL import Image
     HAS_OCR = True
 except ImportError:
     HAS_OCR = False
@@ -58,14 +58,14 @@ try:
 except ImportError:
     HAS_PDFPLUMBER = False
 
-from ..config import settings, INGEST_MAX_WORKERS, GRID_RECONSTRUCTION_ENABLED
+from ..config import GRID_RECONSTRUCTION_ENABLED, INGEST_MAX_WORKERS, settings
 from ..models import get_model_client
 
 
 class ParsedPage:
     """Parsed page"""
     def __init__(self, page_num: int, raw_text: str = "",
-                 section_title: str = "", content_dict: Dict = None,
+                 section_title: str = "", content_dict: dict = None,
                  page_image: Any = None):
         self.page_num = page_num
         self.raw_text = raw_text
@@ -73,7 +73,7 @@ class ParsedPage:
         self.content_dict = content_dict or {}
         self.page_image = page_image
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "page_num": self.page_num,
             "raw_text": self.raw_text,
@@ -88,14 +88,14 @@ class ParsedDocument:
         self.filename = ""
         self.original_path = ""
         self.file_size = 0
-        self.pages: List[ParsedPage] = []
-        self.metadata: Dict[str, Any] = {}
+        self.pages: list[ParsedPage] = []
+        self.metadata: dict[str, Any] = {}
 
     @property
     def total_pages(self):
         return len(self.pages)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "filename": self.filename,
             "original_path": self.original_path,
@@ -540,7 +540,7 @@ class DocumentParser:
 
         return None
 
-    def _render_pdf_pages(self, pdf_path: str, dpi: int = 100) -> Dict[int, Any]:
+    def _render_pdf_pages(self, pdf_path: str, dpi: int = 100) -> dict[int, Any]:
         """Render PDF pages to PIL Images via pdf2image"""
         page_images = {}
         if HAS_PDF2IMAGE:
@@ -558,8 +558,8 @@ class DocumentParser:
     def _analyze_pdf_page_with_vlm(self, page_image, page_num: int, page_text: str = "") -> str:
         """Analyze PDF page with VLM"""
         try:
-            import tempfile
             import os
+            import tempfile
 
             client = get_model_client()
 
@@ -614,8 +614,8 @@ Please output in English."""
         searchable.
         """
         try:
-            import tempfile
             import os
+            import tempfile
 
             client = get_model_client()
             img_cfg = settings.CHART_CONFIG
@@ -840,7 +840,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
 
     def _extract_exif(self, path: Path) -> str:
         try:
-            from PIL.ExifTags import TAGS, GPSTAGS
+            from PIL.ExifTags import GPSTAGS, TAGS
             with Image.open(path) as img:
                 exif = img._getexif()
                 if not exif:
@@ -931,7 +931,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         doc.original_path = str(path.absolute())
         doc.file_size = path.stat().st_size
 
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             content = f.read()
 
         chunk_texts = self._simple_chunk_by_heading(content)
@@ -949,7 +949,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         doc.original_path = str(path.absolute())
         doc.file_size = path.stat().st_size
 
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             content = f.read()
 
         chunk_texts = self._chunk_by_structure(content, max_chunk_size=2000)
@@ -972,7 +972,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
 
         text = ""
         if HAS_BS4:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, encoding='utf-8') as f:
                 content = f.read()
             soup = BeautifulSoup(content, 'html.parser')
             text = soup.get_text()
@@ -1046,7 +1046,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
     # Text Chunking Utilities
     # ========================================================================
 
-    def _simple_chunk(self, text: str, chunk_size: int = 2000, overlap: int = 100) -> List[str]:
+    def _simple_chunk(self, text: str, chunk_size: int = 2000, overlap: int = 100) -> list[str]:
         if len(text) <= chunk_size:
             return [text]
         heading_chunks = self._chunk_by_structure(text, max_chunk_size=chunk_size)
@@ -1067,7 +1067,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 break
         return chunks
 
-    def _chunk_by_structure(self, text: str, max_chunk_size: int = 2000) -> List[str]:
+    def _chunk_by_structure(self, text: str, max_chunk_size: int = 2000) -> list[str]:
         import re
         lines = text.split("\n")
         chunks = []
@@ -1193,7 +1193,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         _flush_chunk()
         return chunks if chunks else [text]
 
-    def _simple_chunk_by_heading(self, text: str) -> List[str]:
+    def _simple_chunk_by_heading(self, text: str) -> list[str]:
         lines = text.split("\n")
         chunks = []
         current_chunk = []

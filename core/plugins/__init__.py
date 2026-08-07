@@ -5,9 +5,9 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable
+from typing import Any, Optional
+
 import yaml
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,8 @@ class IndustryManifest:
     version: str
     description: str
     author: str = ""
-    category_mapping: List[str] = field(default_factory=list)
-    entry_point: Optional[str] = None  # Python entry module (optional)
+    category_mapping: list[str] = field(default_factory=list)
+    entry_point: str | None = None  # Python entry module (optional)
     path: str = ""
     is_builtin: bool = False
 
@@ -55,26 +55,26 @@ class IndustryManifest:
 @dataclass
 class IngestionConfig:
     """Ingestion Phase Configuration"""
-    prompts: Dict[str, str] = field(default_factory=dict)
-    rules: Dict[str, Any] = field(default_factory=dict)
-    skill: Dict[str, Any] = field(default_factory=dict)
+    prompts: dict[str, str] = field(default_factory=dict)
+    rules: dict[str, Any] = field(default_factory=dict)
+    skill: dict[str, Any] = field(default_factory=dict)
     sop: str = ""
 
 
 @dataclass
 class RetrievalConfig:
     """Retrieval Phase Configuration"""
-    prompts: Dict[str, str] = field(default_factory=dict)
-    rules: Dict[str, Any] = field(default_factory=dict)
-    templates: Dict[str, str] = field(default_factory=dict)
-    answer_constraints: Dict[str, Any] = field(default_factory=dict)
+    prompts: dict[str, str] = field(default_factory=dict)
+    rules: dict[str, Any] = field(default_factory=dict)
+    templates: dict[str, str] = field(default_factory=dict)
+    answer_constraints: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class SharedConfig:
     """Shared Industry Knowledge"""
-    glossary: Dict[str, str] = field(default_factory=dict)
-    taxonomy: Dict[str, Any] = field(default_factory=dict)
+    glossary: dict[str, str] = field(default_factory=dict)
+    taxonomy: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -92,35 +92,35 @@ class IngestionPlugin(ABC):
     """
 
     @abstractmethod
-    def classify_document(self, content_sample: str, filename: str) -> Dict[str, Any]:
+    def classify_document(self, content_sample: str, filename: str) -> dict[str, Any]:
         """Document classification: returns {category_level1, category_level2, category_level3, confidence}"""
         pass
 
     @abstractmethod
-    def extract_entities(self, page_text: str, page_type: str) -> List[Dict[str, Any]]:
+    def extract_entities(self, page_text: str, page_type: str) -> list[dict[str, Any]]:
         """Entity extraction: returns [{type, value, position, confidence}]"""
         pass
 
     @abstractmethod
-    def get_ingestion_prompts(self) -> Dict[str, str]:
+    def get_ingestion_prompts(self) -> dict[str, str]:
         """Get prompt templates for ingestion"""
         pass
 
     @abstractmethod
-    def get_parsing_rules(self) -> Dict[str, Any]:
+    def get_parsing_rules(self) -> dict[str, Any]:
         """Get parsing rules (regex, structural patterns, etc.)"""
         pass
 
-    def enhance_summary(self, raw_summary: str, doc_metadata: Dict) -> str:
+    def enhance_summary(self, raw_summary: str, doc_metadata: dict) -> str:
         """Enhance document summary (optional, returns raw by default)"""
         return raw_summary
 
-    def get_skill_config(self) -> Optional[Dict[str, Any]]:
+    def get_skill_config(self) -> dict[str, Any] | None:
         """Get Skill processing strategy config (optional)"""
         return None
 
     # === OpenLAD Industry Package Hook Interface (optional) ===
-    def detect_document_subtype(self, parsed_doc: Any) -> Optional[str]:
+    def detect_document_subtype(self, parsed_doc: Any) -> str | None:
         """Detect document subtype (e.g., schematic / datasheet / layout).
         Returns None to skip and use the generic flow."""
         return None
@@ -128,7 +128,7 @@ class IngestionPlugin(ABC):
     def process_page(self, page: Any, raw_text: str,
                      layout_result: Any = None,
                      model_client: Any = None,
-                     page_image: Any = None) -> Optional[Dict[str, Any]]:
+                     page_image: Any = None) -> dict[str, Any] | None:
         """Industry package post-processing for a single page.
         Returns optional extra_data; core stores it in doc_pages.extra_data.
 
@@ -163,25 +163,25 @@ class RetrievalPlugin(ABC):
     """
 
     @abstractmethod
-    def rewrite_query(self, query: str, chat_history: List[Dict] = None) -> str:
+    def rewrite_query(self, query: str, chat_history: list[dict] = None) -> str:
         """Query rewriting: transform user query into a form more suitable for retrieval"""
         pass
 
     @abstractmethod
-    def get_retrieval_prompts(self) -> Dict[str, str]:
+    def get_retrieval_prompts(self) -> dict[str, str]:
         """Get prompt templates for retrieval (system_prompt, answer_rules, etc.)"""
         pass
 
     @abstractmethod
-    def get_answer_constraints(self) -> Dict[str, Any]:
+    def get_answer_constraints(self) -> dict[str, Any]:
         """Get answer constraints (format, depth, citation standards)"""
         pass
 
-    def disambiguate_terms(self, query: str) -> Dict[str, str]:
+    def disambiguate_terms(self, query: str) -> dict[str, str]:
         """Term disambiguation: returns {original_term: canonical_term}"""
         return {}
 
-    def get_synonyms(self, term: str) -> List[str]:
+    def get_synonyms(self, term: str) -> list[str]:
         """Get term synonyms"""
         return []
 
@@ -194,15 +194,15 @@ class RetrievalPlugin(ABC):
         return answer
 
     # === OpenLAD Industry Package Hook Interface (optional) ===
-    def supplement_results(self, query: str, results: List[Any],
-                           metadata_db: Any = None) -> List[Any]:
+    def supplement_results(self, query: str, results: list[Any],
+                           metadata_db: Any = None) -> list[Any]:
         """Supplement recall: when FTS/Vector recall is insufficient,
         the industry pack can supplement with specialized logic.
         Returns additional SearchResult list (core handles dedup and merging)."""
         return []
 
     def enhance_context(self, query: str, context: str,
-                        sources: List[Dict[str, Any]] = None) -> str:
+                        sources: list[dict[str, Any]] = None) -> str:
         """Enhance context: before synthesis, industry pack can make final adjustments to context."""
         return context
 
@@ -255,24 +255,24 @@ class YAMLIngestionPlugin(IngestionPlugin):
         self.config = config
         self.shared = shared
 
-    def classify_document(self, content_sample: str, filename: str) -> Dict[str, Any]:
+    def classify_document(self, content_sample: str, filename: str) -> dict[str, Any]:
         # Return empty by default, relies on generic classifier + industry prompts
         return {}
 
-    def extract_entities(self, page_text: str, page_type: str) -> List[Dict[str, Any]]:
+    def extract_entities(self, page_text: str, page_type: str) -> list[dict[str, Any]]:
         # Return empty by default, relies on generic entity extraction
         return []
 
-    def get_ingestion_prompts(self) -> Dict[str, str]:
+    def get_ingestion_prompts(self) -> dict[str, str]:
         return self.config.prompts
 
-    def get_parsing_rules(self) -> Dict[str, Any]:
+    def get_parsing_rules(self) -> dict[str, Any]:
         return self.config.rules
 
-    def enhance_summary(self, raw_summary: str, doc_metadata: Dict) -> str:
+    def enhance_summary(self, raw_summary: str, doc_metadata: dict) -> str:
         return raw_summary
 
-    def get_skill_config(self) -> Optional[Dict[str, Any]]:
+    def get_skill_config(self) -> dict[str, Any] | None:
         return self.config.skill if self.config.skill else None
 
 
@@ -283,24 +283,24 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         self.config = config
         self.shared = shared
 
-    def rewrite_query(self, query: str, chat_history: List[Dict] = None) -> str:
+    def rewrite_query(self, query: str, chat_history: list[dict] = None) -> str:
         # No rewriting by default
         return query
 
-    def get_retrieval_prompts(self) -> Dict[str, str]:
+    def get_retrieval_prompts(self) -> dict[str, str]:
         return self.config.prompts
 
-    def get_answer_constraints(self) -> Dict[str, Any]:
+    def get_answer_constraints(self) -> dict[str, Any]:
         return self.config.answer_constraints
 
-    def disambiguate_terms(self, query: str) -> Dict[str, str]:
+    def disambiguate_terms(self, query: str) -> dict[str, str]:
         result = {}
         for term, canonical in self.shared.glossary.items():
             if term in query:
                 result[term] = canonical
         return result
 
-    def get_synonyms(self, term: str) -> List[str]:
+    def get_synonyms(self, term: str) -> list[str]:
         # Look up synonyms from glossary (reverse mapping)
         return []
 
@@ -310,23 +310,23 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
     def post_process_answer(self, answer: str, context: str) -> str:
         return answer
 
-    def get_section_boost_rules(self) -> Dict[str, Any]:
+    def get_section_boost_rules(self) -> dict[str, Any]:
         """Get section boost rules (if configured by industry package)"""
         return self.config.rules.get("section_boost_rules", {})
 
-    def get_retrieval_rules(self) -> Dict[str, Any]:
+    def get_retrieval_rules(self) -> dict[str, Any]:
         """Get complete retrieval rules (including query_expansion, low_value_sections, spec_sections, etc.)"""
         return self.config.rules
 
-    def get_query_expansion_keywords(self) -> List[str]:
+    def get_query_expansion_keywords(self) -> list[str]:
         """Get query expansion keywords (for decomposed_retrieve sub-query enhancement)"""
         return self.config.rules.get("query_expansion", {}).get("keywords", [])
 
-    def get_low_value_sections(self) -> List[Dict[str, Any]]:
+    def get_low_value_sections(self) -> list[dict[str, Any]]:
         """Get low-value section penalty rules (filter irrelevant pages during retrieval phase)"""
         return self.config.rules.get("low_value_sections", [])
 
-    def get_spec_sections(self) -> List[Dict[str, Any]]:
+    def get_spec_sections(self) -> list[dict[str, Any]]:
         """Get spec-related section boost rules (boost key pages during retrieval phase)"""
         return self.config.rules.get("spec_sections", [])
 
@@ -447,10 +447,10 @@ class PluginRegistry:
     Supports hot reload (optional).
     """
 
-    def __init__(self, scan_dirs: List[str] = None):
+    def __init__(self, scan_dirs: list[str] = None):
         self.scan_dirs = scan_dirs or []
-        self._plugins: Dict[str, IndustryPlugin] = {}
-        self._category_map: Dict[str, str] = {}  # category -> plugin_id
+        self._plugins: dict[str, IndustryPlugin] = {}
+        self._category_map: dict[str, str] = {}  # category -> plugin_id
         self._load_all()
 
     def _load_all(self):
@@ -548,7 +548,7 @@ class PluginRegistry:
 
         return config
 
-    def _load_python_plugin(self, manifest: IndustryManifest, package_dir: Path) -> Optional[IndustryPlugin]:
+    def _load_python_plugin(self, manifest: IndustryManifest, package_dir: Path) -> IndustryPlugin | None:
         """Attempt to dynamically load Python plugin class"""
         try:
             import importlib.util
@@ -602,10 +602,10 @@ class PluginRegistry:
             self._category_map[cat] = plugin.manifest.id
         logger.info(f"[PLUGIN_REGISTRY] Registered industry package: {plugin.manifest.id} v{plugin.manifest.version} -> {plugin.manifest.category_mapping}")
 
-    def get_plugin(self, plugin_id: str) -> Optional[IndustryPlugin]:
+    def get_plugin(self, plugin_id: str) -> IndustryPlugin | None:
         return self._plugins.get(plugin_id)
 
-    def get_plugin_by_category(self, category: str) -> Optional[IndustryPlugin]:
+    def get_plugin_by_category(self, category: str) -> IndustryPlugin | None:
         if not category:
             return self.get_generic()
         if category in self._category_map:
@@ -617,7 +617,7 @@ class PluginRegistry:
                 return self._plugins.get(plugin_id)
         return self.get_generic()
 
-    def detect_plugin_for_document(self, parsed_doc: Any) -> Optional[IndustryPlugin]:
+    def detect_plugin_for_document(self, parsed_doc: Any) -> IndustryPlugin | None:
         """Auto-detect an industry plugin by inspecting the parsed document.
 
         Iterates registered plugins and calls their ingestion.detect_document_subtype()
@@ -643,7 +643,7 @@ class PluginRegistry:
                 )
         return None
 
-    def get_generic(self) -> Optional[IndustryPlugin]:
+    def get_generic(self) -> IndustryPlugin | None:
         """Get generic fallback plugin"""
         for pid, plugin in self._plugins.items():
             if pid == "generic" or "通用" in plugin.manifest.name:
@@ -651,7 +651,7 @@ class PluginRegistry:
         # If no generic, return first or None
         return next(iter(self._plugins.values()), None)
 
-    def list_plugins(self) -> Dict[str, Dict[str, Any]]:
+    def list_plugins(self) -> dict[str, dict[str, Any]]:
         return {
             pid: {
                 "name": p.manifest.name,
@@ -669,10 +669,10 @@ class PluginRegistry:
 
 
 # Global registry singleton
-_registry: Optional[PluginRegistry] = None
+_registry: PluginRegistry | None = None
 
 
-def get_plugin_registry(scan_dirs: List[str] = None) -> PluginRegistry:
+def get_plugin_registry(scan_dirs: list[str] = None) -> PluginRegistry:
     global _registry
     if _registry is None:
         from ..config import settings

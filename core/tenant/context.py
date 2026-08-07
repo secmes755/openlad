@@ -18,11 +18,11 @@ class TenantContext:
     Tenant information carried by each request, propagated through the entire processing chain.
     """
     tenant_id: str
-    user_id: Optional[str] = None
-    username: Optional[str] = None
-    user_role: Optional[str] = None
-    api_key: Optional[str] = None
-    industry_hint: Optional[str] = None  # Industry package specified by user
+    user_id: str | None = None
+    username: str | None = None
+    user_role: str | None = None
+    api_key: str | None = None
+    industry_hint: str | None = None  # Industry package specified by user
 
     def get_data_dir(self):
         from ..config import settings
@@ -50,7 +50,7 @@ def set_tenant_context(ctx: TenantContext):
     _tenant_context.set(ctx)
 
 
-def get_tenant_context() -> Optional[TenantContext]:
+def get_tenant_context() -> TenantContext | None:
     """Get tenant context for the current thread/coroutine"""
     return _tenant_context.get()
 

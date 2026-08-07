@@ -3,14 +3,14 @@ V4 Document Preprocessing Pipeline
 Integrates image correction, OCR, and text quality validation
 """
 import logging
-import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+
+import numpy as np
 from PIL import Image
 
+from ...config import settings
 from .image_corrector import ImageCorrector
 from .ocr_engine import OCREngine, TextQualityChecker
-from ...config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,11 @@ class PagePreprocessResult:
         self.text_source: str = "direct_extract"  # direct_extract / ocr / mixed
         self.ocr_confidence: float = 0.0
         self.page_image_path: str = ""  # Original/corrected image path
-        self.ocr_results: List[Dict] = []  # OCR results (with bbox)
-        self.quality_metrics: Dict = {}
-        self.correction_metrics: Dict = {}
+        self.ocr_results: list[dict] = []  # OCR results (with bbox)
+        self.quality_metrics: dict = {}
+        self.correction_metrics: dict = {}
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "page_num": self.page_num,
             "raw_text": self.raw_text,
@@ -133,7 +133,7 @@ class DocumentPreprocessor:
         temp_path = None  # Ensure scope safety, avoids NameError when enable_deskew=False
         if settings.OCR_CONFIG.get("enable_deskew", True):
             # Convert PIL Image to numpy array for OpenCV
-            img_array = np.array(page_image.convert('RGB'))
+            np.array(page_image.convert('RGB'))
 
             # Save temp file for corrector
             temp_path = self.images_dir / f"temp_p{page_num}.png"
@@ -189,8 +189,7 @@ class DocumentPreprocessor:
 
 
 # Exports
-from .image_corrector import ImageCorrector
-from .ocr_engine import OCREngine, OCRResult, TextQualityChecker
+from .ocr_engine import OCRResult
 
 __all__ = [
     "DocumentPreprocessor",

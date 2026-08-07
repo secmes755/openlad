@@ -17,7 +17,6 @@ Output example: "DDR3-DDR4, GPIO0-GPIO4, I2C0-I2C6, SPI0-SPI3, UART0-UART9"
 import logging
 import re
 from collections import defaultdict
-from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ _MAX_FAMILIES = 40          # cap inventory size per section
 _MAX_OUTPUT_CHARS = 1500
 
 
-def _compress_ranges(nums: List[int]) -> str:
+def _compress_ranges(nums: list[int]) -> str:
     """[0,1,2,4,5,9] -> '0-2, 4-5, 9'"""
     nums = sorted(set(nums))
     if not nums:
@@ -91,7 +90,7 @@ def harvest_acronyms(client, text: str, title: str = "") -> str:
     if not text or len(text) < 50:
         return ''
     try:
-        families: Dict[str, set] = defaultdict(set)
+        families: dict[str, set] = defaultdict(set)
         for m in _TOKEN_RE.finditer(text):
             tok = m.group(0)
             if len(tok) > 64 or not any(c.isdigit() for c in tok):

@@ -16,7 +16,6 @@ safe to run on every page during ingestion.
 import logging
 import re
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +34,8 @@ _MIN_GRID_COLS = 4
 _MIN_NON_EMPTY_CELLS = 8
 
 
-def _merge_positions(values: List[float], tol: float = _LINE_MERGE_TOL) -> List[float]:
-    out: List[float] = []
+def _merge_positions(values: list[float], tol: float = _LINE_MERGE_TOL) -> list[float]:
+    out: list[float] = []
     for v in sorted(values):
         if not out or v - out[-1] > tol:
             out.append(v)
@@ -45,14 +44,14 @@ def _merge_positions(values: List[float], tol: float = _LINE_MERGE_TOL) -> List[
     return out
 
 
-def _merge_label_chars(words: List[dict]) -> List[dict]:
+def _merge_label_chars(words: list[dict]) -> list[dict]:
     """Merge horizontally adjacent same-baseline words into multi-char labels.
 
     Text extraction often splits edge labels like 'AF' or '23' into single
     characters; join them back in reading order.
     """
     words = sorted(words, key=lambda w: (round((w['top'] + w['bottom']) / 2), w['x0']))
-    merged: List[dict] = []
+    merged: list[dict] = []
     for w in words:
         if merged:
             p = merged[-1]
@@ -67,10 +66,10 @@ def _merge_label_chars(words: List[dict]) -> List[dict]:
     return merged
 
 
-def _label_bands(bands: List[Tuple[float, float]],
-                 labels: List[Tuple[str, float]]) -> List[Tuple[str, float, float]]:
+def _label_bands(bands: list[tuple[float, float]],
+                 labels: list[tuple[str, float]]) -> list[tuple[str, float, float]]:
     """Assign edge labels to bands; merge adjacent bands sharing one label."""
-    labeled: List[Tuple[str, float, float]] = []
+    labeled: list[tuple[str, float, float]] = []
     for lo, hi in bands:
         lab = next((t for t, c in labels if lo - 2 <= c <= hi + 2), None)
         if lab is None:
@@ -83,19 +82,19 @@ def _label_bands(bands: List[Tuple[float, float]],
     return labeled
 
 
-def _cell_text(items: List[Tuple[float, float, str]]) -> str:
+def _cell_text(items: list[tuple[float, float, str]]) -> str:
     """Assemble cell text from positioned chars via tight line clustering."""
     items = sorted(items, key=lambda x: (x[0], x[1]))
-    lines: List[list] = []
+    lines: list[list] = []
     for top, x0, ch in items:
         if lines and top - lines[-1][0] <= _CELL_LINE_GAP:
             lines[-1][1].append((x0, ch))
         else:
             lines.append([top, [(x0, ch)]])
-    return ''.join(''.join(c for _, c in sorted(l[1])) for l in lines)
+    return ''.join(''.join(c for _, c in sorted(ln[1])) for ln in lines)
 
 
-def reconstruct_grid_table(plumber_page) -> Optional[str]:
+def reconstruct_grid_table(plumber_page) -> str | None:
     """Rebuild the labeled ruled grid on a pdfplumber page as a markdown table.
 
     Returns a markdown table with columns ``Coordinate | Label`` (only
@@ -104,11 +103,11 @@ def reconstruct_grid_table(plumber_page) -> Optional[str]:
     try:
         page_w = plumber_page.width
         h_raw, v_raw = [], []
-        for l in plumber_page.lines:
-            if abs(l['top'] - l['bottom']) < 0.5:
-                h_raw.append(l['top'])
-            elif abs(l['x0'] - l['x1']) < 0.5:
-                v_raw.append(l['x0'])
+        for ln in plumber_page.lines:
+            if abs(ln['top'] - ln['bottom']) < 0.5:
+                h_raw.append(ln['top'])
+            elif abs(ln['x0'] - ln['x1']) < 0.5:
+                v_raw.append(ln['x0'])
         for r in plumber_page.rects:
             h_raw.extend((r['top'], r['bottom']))
             v_raw.extend((r['x0'], r['x1']))
@@ -149,7 +148,7 @@ def reconstruct_grid_table(plumber_page) -> Optional[str]:
             return None
 
         # Assign every char inside the grid to its cell.
-        cells: Dict[Tuple[str, str], List[Tuple[float, float, str]]] = defaultdict(list)
+        cells: dict[tuple[str, str], list[tuple[float, float, str]]] = defaultdict(list)
         for ch in plumber_page.chars:
             cy = (ch['top'] + ch['bottom']) / 2
             cx = (ch['x0'] + ch['x1']) / 2

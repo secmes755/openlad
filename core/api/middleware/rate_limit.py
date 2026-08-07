@@ -2,10 +2,9 @@
 Rate limiting middleware
 Memory-based sliding window, rate limiting by tenant + path category
 """
+import json
 import logging
 import time
-import json
-from typing import Dict, List
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -35,7 +34,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
         # In-memory request records: {key: [timestamp, ...]}
-        self._records: Dict[str, List[float]] = {}
+        self._records: dict[str, list[float]] = {}
 
     def _get_limits(self):
         """Dynamically retrieve rate limit quotas"""

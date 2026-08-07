@@ -9,7 +9,6 @@ import os
 import shutil
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Union
 
 from ..config import settings
 
@@ -47,8 +46,8 @@ class ResourceCapacityManager:
     """
 
     def __init__(self):
-        self._snapshot: Optional[ResourceSnapshot] = None
-        self._plan: Optional[CapacityPlan] = None
+        self._snapshot: ResourceSnapshot | None = None
+        self._plan: CapacityPlan | None = None
         self._last_compute_time: float = 0.0
         self._compute_interval_sec = float('inf')  # Hardware doesn't change dynamically; compute once at startup
 
@@ -56,7 +55,7 @@ class ResourceCapacityManager:
     # Resource Detection (memory + disk, no GPU detection)
     # =========================================================================
 
-    def _detect_memory(self) -> Dict:
+    def _detect_memory(self) -> dict:
         """Detect system memory, returns {total_mb, available_mb}. Cross-platform via psutil."""
         try:
             import psutil
@@ -68,7 +67,7 @@ class ResourceCapacityManager:
         except ImportError:
             # Fallback to /proc/meminfo on Linux if psutil not installed
             try:
-                with open("/proc/meminfo", "r") as f:
+                with open("/proc/meminfo") as f:
                     meminfo = f.read()
                 total_kb = 0
                 available_kb = 0
@@ -85,7 +84,7 @@ class ResourceCapacityManager:
                 logger.warning(f"[CAPACITY] Memory detection failed: {e}")
             return {"total_mb": 0, "available_mb": 0}
 
-    def _detect_disk(self) -> Dict:
+    def _detect_disk(self) -> dict:
         """Detect disk space, returns {total_gb, free_gb}"""
         try:
             stat = shutil.disk_usage(str(settings.DATA_DIR))
@@ -198,7 +197,7 @@ class ResourceCapacityManager:
             self._last_compute_time = now
         return self._plan
 
-    def get_snapshot(self) -> Optional[ResourceSnapshot]:
+    def get_snapshot(self) -> ResourceSnapshot | None:
         """Get latest resource snapshot"""
         return self._snapshot
 
@@ -222,7 +221,7 @@ class ResourceCapacityManager:
             )
         return True, ""
 
-    def get_query_concurrency_config(self) -> Dict:
+    def get_query_concurrency_config(self) -> dict:
         """Get query concurrency strategy config (External mode: env-var based)
 
         Returns:
@@ -256,7 +255,7 @@ class ResourceCapacityManager:
             "reason": "External mode default serial — adjust via OPENLAD_QUERY_CONCURRENCY_MODE/OPENLAD_QUERY_MAX_CONCURRENT",
         }
 
-    def get_rate_limits(self) -> Dict:
+    def get_rate_limits(self) -> dict:
         """Get current rate limit quotas to apply"""
         plan = self.get_plan()
         return {
@@ -264,7 +263,7 @@ class ResourceCapacityManager:
             "upload_per_minute": plan.per_user_upload_per_minute,
         }
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Serialize to dict (for API response)"""
         plan = self.get_plan()
         snap = self._snapshot
@@ -297,7 +296,7 @@ class ResourceCapacityManager:
 
 
 # Singleton
-_capacity_manager: Optional[ResourceCapacityManager] = None
+_capacity_manager: ResourceCapacityManager | None = None
 
 
 def get_capacity_manager() -> ResourceCapacityManager:
