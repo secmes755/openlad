@@ -162,6 +162,43 @@ curl -X POST http://127.0.0.1:11296/api/v1/query \
 
 ---
 
+## 🔍 Deployment: Hardware Probe
+
+Run the built-in probe to detect your GPU VRAM / system memory and get a
+recommended LLM context window (calibrated for the bundled 9B model with a
+Q4-quantized KV cache):
+
+```bash
+python -m core.services.system_probe
+```
+
+Example output on the baseline platform (RTX 5060 Ti 16GB):
+
+```
+GPU     : NVIDIA GeForce RTX 5060 Ti (16311 MB total, 3252 MB free)
+Recommendation (GPU NVIDIA GeForce RTX 5060 Ti (16311 MB VRAM)):
+  LLM context        : 131072 tokens
+  KV cache type      : q4_0
+  Minimum LLM context: 8192 tokens
+```
+
+Recommendation table (9B Q5_K_M model):
+
+| GPU VRAM | Recommended LLM context | KV cache |
+|---|---|---|
+| ≥ 24 GiB | 262144 | q4_0 |
+| ≥ 15 GiB (16 GB cards) | 131072 | q4_0 |
+| ≥ 12 GiB | 65536 | q4_0 |
+| ≥ 8 GiB | 16384 | q4_0 |
+| CPU-only | 8192 – 65536 (by system RAM) | q8_0 |
+
+**Minimum usable LLM context: 8192 tokens.** Below that, retrieval quality
+degrades severely because full chapters cannot fit in the context. Set the
+recommended values in your start script, e.g. `LLM_CTX_SIZE=131072` and
+`--cache-type-k q4_0 --cache-type-v q4_0` on llama-server.
+
+---
+
 ## ⚙ Configuration Reference
 
 All settings are environment variables. Create a `.env` file or export directly.

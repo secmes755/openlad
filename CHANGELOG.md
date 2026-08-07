@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Login sessions: each login issues its own API key; logout revokes only the
   current session, so other devices logged in with the same username stay
   online. Account-level revocation is done by an admin rotating the key.
+- Hardware probe (`python -m core.services.system_probe`): detects GPU VRAM /
+  system memory and recommends an LLM context window calibrated for the
+  bundled 9B model with Q4-quantized KV cache. Documents the 8192-token
+  minimum usable context.
 
 ### Changed
 

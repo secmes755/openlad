@@ -157,6 +157,41 @@ curl -X POST http://127.0.0.1:11296/api/v1/query \
 
 ---
 
+## 🔍 部署：硬件探测与配置建议
+
+使用内置探测工具检测 GPU 显存 / 系统内存，并获得推荐的 LLM 上下文长度
+（针对内置 9B 模型 + Q4 量化 KV cache 校准）：
+
+```bash
+python -m core.services.system_probe
+```
+
+基线平台（RTX 5060 Ti 16GB）示例输出：
+
+```
+GPU     : NVIDIA GeForce RTX 5060 Ti (16311 MB total, 3252 MB free)
+Recommendation (GPU NVIDIA GeForce RTX 5060 Ti (16311 MB VRAM)):
+  LLM context        : 131072 tokens
+  KV cache type      : q4_0
+  Minimum LLM context: 8192 tokens
+```
+
+推荐表（9B Q5_K_M 模型）：
+
+| GPU 显存 | 推荐 LLM 上下文 | KV cache |
+|---|---|---|
+| ≥ 24 GiB | 262144 | q4_0 |
+| ≥ 15 GiB（16GB 显卡） | 131072 | q4_0 |
+| ≥ 12 GiB | 65536 | q4_0 |
+| ≥ 8 GiB | 16384 | q4_0 |
+| 仅 CPU | 8192 – 65536（按内存） | q8_0 |
+
+**LLM 上下文下限：8192 tokens**。低于此值检索质量会严重下降（整章内容
+无法放入上下文）。将推荐值配置到启动脚本，例如 `LLM_CTX_SIZE=131072`，
+并给 llama-server 加 `--cache-type-k q4_0 --cache-type-v q4_0`。
+
+---
+
 ## ⚙ 配置参考
 
 所有配置均为环境变量。创建 `.env` 文件或直接 export。
