@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ..config import settings
-from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
+from ..db.tenant_db import get_tenant_metadata_db
 from .agentic_retriever import AgenticRetriever
 from .decomposer import QueryDecomposer
 from .executor import RetrievalExecutor
