@@ -113,24 +113,29 @@ class SystemDB:
             # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
 
             # Schema migration: add api_key_expires_at column if missing (idempotent)
             cols = [r[1] for r in cursor.execute("PRAGMA table_info(users)").fetchall()]
             if "api_key_expires_at" not in cols:
                 cursor.execute("ALTER TABLE users ADD COLUMN api_key_expires_at TIMESTAMP")
                 logger.info("[SYSTEM_DB] Migrated users table: added api_key_expires_at column")
-            # Unique guard: one username per tenant (application checks first, this is the backstop).
-            # Tolerate pre-existing duplicate rows: log a clear error instead of crashing startup,
-            # since the application-level guard in AuthManager.create_user already prevents new duplicates.
+
+            # Schema migration (idempotent): username is GLOBALLY unique.
+            # Replaces the per-tenant (tenant_id, username) guard so login can
+            # never be ambiguous across tenants (same-name users are refused
+            # everywhere). Tolerate pre-existing duplicate rows: log a clear
+            # error instead of crashing startup, since the application-level
+            # guard in AuthManager.create_user already prevents new duplicates.
+            cursor.execute("DROP INDEX IF EXISTS idx_users_username")
+            cursor.execute("DROP INDEX IF EXISTS idx_users_tenant_username")
             try:
                 cursor.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username)"
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)"
                 )
             except sqlite3.IntegrityError:
                 logger.error(
-                    "[SYSTEM_DB] Cannot create unique index idx_users_tenant_username: "
-                    "duplicate (tenant_id, username) rows exist. Remove duplicate usernames, "
+                    "[SYSTEM_DB] Cannot create unique index idx_users_username: "
+                    "duplicate usernames exist. Remove duplicate usernames, "
                     "then restart to build the index. Application-level duplicate check is still active."
                 )
 
@@ -214,7 +219,7 @@ class SystemDB:
                 conn.commit()
                 return True
         except sqlite3.IntegrityError as e:
-            # Unique index (tenant_id, username) violation — duplicate username in tenant
+            # Unique index (username) violation — duplicate username (globally unique)
             logger.warning(f"[SYSTEM_DB] Duplicate user rejected: {user.username} in tenant {user.tenant_id}: {e}")
             return False
         except Exception as e:

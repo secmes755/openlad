@@ -63,14 +63,15 @@ class AuthManager:
                     api_key_ttl_days: Optional[int] = None) -> UserInfo:
         """Create user
 
-        Raises ValueError if a user with the same username already exists in this tenant
-        (application-level guard; DB unique index is the last line of defense).
+        Raises ValueError if the username already exists (usernames are globally
+        unique, so the same name cannot be used in another tenant either;
+        application-level guard; DB unique index is the last line of defense).
         api_key_ttl_days: API key lifetime in days (None=config default, <=0=never expires).
         """
-        existing = self.system_db.find_users_by_username(username, tenant_id)
+        existing = self.system_db.find_users_by_username(username)
         if existing:
             raise ValueError(
-                f"Username already exists in tenant '{tenant_id}': {username}"
+                f"Username already exists: {username}"
             )
         user_id = secrets.token_hex(16)
         api_key = self._generate_api_key()
@@ -87,14 +88,27 @@ class AuthManager:
             created_at=datetime.now(),
             api_key_expires_at=expires_at,
         )
-        self.system_db.create_user(user, password_hash)
+        if not self.system_db.create_user(user, password_hash):
+            # DB unique index refused the row (e.g. duplicate username) — treat
+            # as a duplicate rather than returning a fake success.
+            raise ValueError(f"Username already exists: {username}")
         logger.info(f"[AUTH] Created user: {username} in tenant {tenant_id}")
         return user
 
     def authenticate_by_password(self, username: str, password: str,
                                    tenant_id: str = None) -> Optional[UserInfo]:
-        """Username/password authentication, supports exact tenant matching"""
+        """Username/password authentication, supports exact tenant matching.
+
+        Username is globally unique, so a lookup yields at most one user; if
+        duplicate rows somehow exist, login is refused instead of returning an
+        arbitrarily chosen account.
+        """
         users = self.system_db.find_users_by_username(username, tenant_id)
+        if len(users) > 1:
+            logger.warning(
+                f"[AUTH] Ambiguous username '{username}' ({len(users)} matches); refusing login"
+            )
+            return None
         for user in users:
             # bcrypt: verify one by one (each hash is unique, cannot compare directly in SQL)
             if user.password_hash and self._verify_password(password, user.password_hash):
