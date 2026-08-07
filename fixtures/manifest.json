@@ -1,0 +1,16 @@
+{
+  "documents": [
+    {
+      "file": "Rockchip-RK3588-Datasheet-V1.9.pdf",
+      "queries": [
+        "What chip model is described in the Rockchip RK3588 Datasheet document?"
+      ]
+    },
+    {
+      "file": "SMIC-2025-Annual-Report.pdf",
+      "queries": [
+        "中芯国际2025年年度报告中，公司2025年度的营业收入是多少？"
+      ]
+    }
+  ]
+}
