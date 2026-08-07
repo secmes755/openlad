@@ -55,17 +55,6 @@ class HierarchicalRetriever:
         self.vector_db = get_tenant_vector_db(tenant_id) if tenant_id else None
         self.model_client = get_model_client()
 
-        # FIX: admin tenant also loads the default tenant database
-        self.fallback_metadata_db = None
-        self.fallback_vector_db = None
-        if tenant_id == "admin":
-            try:
-                self.fallback_metadata_db = get_tenant_metadata_db("default")
-                self.fallback_vector_db = get_tenant_vector_db("default")
-                logger.info("[RETRIEVER] admin tenant loaded default tenant database as fallback")
-            except Exception as e:
-                logger.warning(f"[RETRIEVER] admin tenant failed to load default database: {e}")
-
     def _load_industry_boost_rules_for_retrieval(self) -> dict[str, Any]:
         """Load retrieval-phase rules from all registered industry packages (low-value section penalty, spec section boost, etc.)"""
         try:
@@ -124,7 +113,6 @@ class HierarchicalRetriever:
         2. When FTS returns 0 results, also fall back to bigram LIKE search.
         3. Collect all matching chunks, aggregate scores by page, return full pages
            instead of individual chunks.
-        4. admin tenant also searches default tenant documents.
         """
         import re
         cjk_chars = re.findall(r'[\u4e00-\u9fff]', query)
@@ -145,23 +133,6 @@ class HierarchicalRetriever:
         for r in chunk_results:
             r["_tenant"] = self.tenant_id or "default"
         all_chunk_results.extend(chunk_results)
-
-        # FIX: admin tenant also searches default tenant documents
-        if self.tenant_id == "admin" and self.fallback_metadata_db:
-            try:
-                # Same fix: always try FTS first
-                fallback_chunks = self.fallback_metadata_db.search_fts_chunks(query, limit=limit * 10, page_filter=page_filter)
-                if not fallback_chunks:
-                    fallback_chunks = self.fallback_metadata_db.search_fts_chunks(query, limit=limit * 5, force_bigram_only=True, page_filter=page_filter)
-
-                # Tag fallback results
-                for r in fallback_chunks:
-                    r["_tenant"] = "default"
-                    r["_fallback"] = True
-                all_chunk_results.extend(fallback_chunks)
-                logger.info(f"[RETRIEVER] admin tenant fallback search on default: {len(fallback_chunks)} chunks")
-            except Exception as e:
-                logger.warning(f"[RETRIEVER] admin tenant fallback search failed: {e}")
 
         if doc_id_filter and "__ALL__" not in doc_id_filter:
             all_chunk_results = [r for r in all_chunk_results if r["doc_id"] in doc_id_filter]
@@ -215,13 +186,7 @@ class HierarchicalRetriever:
             if doc_id_filter and "__ALL__" not in doc_id_filter and doc_id not in doc_id_filter:
                 continue
 
-            # FIX: admin tenant tries primary tenant first for page fetch, then fallback
             page = self.metadata_db.get_page(page_id)
-            if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
-                try:
-                    page = self.fallback_metadata_db.get_page(page_id)
-                except Exception:
-                    pass
             if not page:
                 continue
 
@@ -478,17 +443,7 @@ class HierarchicalRetriever:
                 # Load the chapter's pages as independent SearchResult evidence
                 if chapter_score_map:
                     pages_for_doc = self.metadata_db.get_document_pages(doc_id)
-                    if not pages_for_doc and self.tenant_id == "admin" and self.fallback_metadata_db:
-                        try:
-                            pages_for_doc = self.fallback_metadata_db.get_document_pages(doc_id)
-                        except Exception:
-                            pass
                     doc = self.metadata_db.get_document(doc_id)
-                    if not doc and self.tenant_id == "admin" and self.fallback_metadata_db:
-                        try:
-                            doc = self.fallback_metadata_db.get_document(doc_id)
-                        except Exception:
-                            pass
                     for (d_id, pn), c_score in chapter_score_map.items():
                         if d_id != doc_id:
                             continue
@@ -561,15 +516,8 @@ class HierarchicalRetriever:
         fts_results = self._search_fts(query, limit=max_results, doc_id_filter=doc_id_filter,
                                        page_filter=page_filter)
         for result in fts_results:
-            # FIX: admin tenant tries primary tenant first for page fetch, then fallback
             page = self.metadata_db.get_page(result["page_id"])
             doc = self.metadata_db.get_document(result["doc_id"])
-            if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
-                try:
-                    page = self.fallback_metadata_db.get_page(result["page_id"])
-                    doc = self.fallback_metadata_db.get_document(result["doc_id"])
-                except Exception:
-                    pass
             if page and doc:
                 sr = self._create_search_result(result, page, doc)
                 # Structure-hit page bonus
@@ -631,22 +579,10 @@ class HierarchicalRetriever:
                     continue
                 if len(all_results) >= max_results:
                     break
-                # FIX: admin tenant tries primary tenant first, then fallback
                 pages = self.metadata_db.get_document_pages(doc_id)
-                if not pages and self.tenant_id == "admin" and self.fallback_metadata_db:
-                    try:
-                        pages = self.fallback_metadata_db.get_document_pages(doc_id)
-                    except Exception:
-                        pass
                 for p in pages:
                     if p.get("page_num") == page_num:
-                        # FIX: admin tenant tries primary tenant for document fetch, then fallback
                         doc = self.metadata_db.get_document(doc_id)
-                        if not doc and self.tenant_id == "admin" and self.fallback_metadata_db:
-                            try:
-                                doc = self.fallback_metadata_db.get_document(doc_id)
-                            except Exception:
-                                pass
                         all_results.append(SearchResult(
                             doc_id=doc_id, page_id=p.get("id"), page_num=page_num,
                             score=0.35,
@@ -666,23 +602,11 @@ class HierarchicalRetriever:
         if doc_id_filter and "__ALL__" not in doc_id_filter:
             existing_keys = {(r.doc_id, r.page_num) for r in all_results}
             for doc_id in doc_id_filter:
-                # FIX: admin tenant tries primary tenant first, then fallback
                 pages = self.metadata_db.get_document_pages(doc_id)
-                if not pages and self.tenant_id == "admin" and self.fallback_metadata_db:
-                    try:
-                        pages = self.fallback_metadata_db.get_document_pages(doc_id)
-                    except Exception:
-                        pass
                 for p in pages:
                     pn = p.get("page_num", 0)
                     if pn <= leading_pages_limit and (doc_id, pn) not in existing_keys:
-                        # FIX: admin tenant tries primary tenant for document fetch, then fallback
                         doc = self.metadata_db.get_document(doc_id)
-                        if not doc and self.tenant_id == "admin" and self.fallback_metadata_db:
-                            try:
-                                doc = self.fallback_metadata_db.get_document(doc_id)
-                            except Exception:
-                                pass
                         # V5.0: Use configurable low-value section indicators + industry package rules
                         section_title = (p.get("section_title", "") or "").lower()
                         raw_text = (p.get("raw_text", "") or "")[:200].lower()
@@ -724,15 +648,8 @@ class HierarchicalRetriever:
                 existing_page_ids = {r.page_id for r in all_results}
                 for result in vec_results:
                     if result["page_id"] not in existing_page_ids:
-                        # FIX: admin tenant tries primary tenant first, then fallback
                         page = self.metadata_db.get_page(result["page_id"])
                         doc = self.metadata_db.get_document(result["doc_id"])
-                        if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
-                            try:
-                                page = self.fallback_metadata_db.get_page(result["page_id"])
-                                doc = self.fallback_metadata_db.get_document(result["doc_id"])
-                            except Exception:
-                                pass
                         if page and doc:
                             sr = self._create_search_result(result, page, doc)
                             if (sr.doc_id, sr.page_num) in structure_boosted_pages:
@@ -854,15 +771,8 @@ class HierarchicalRetriever:
         for doc_id in docs_to_supplement:
             if doc_id_filter and "__ALL__" not in doc_id_filter and doc_id not in doc_id_filter:
                 continue
-            # FIX: admin tenant tries primary tenant first, then fallback
             pages = self.metadata_db.get_document_pages(doc_id)
             doc = self.metadata_db.get_document(doc_id)
-            if not pages and self.tenant_id == "admin" and self.fallback_metadata_db:
-                try:
-                    pages = self.fallback_metadata_db.get_document_pages(doc_id)
-                    doc = self.fallback_metadata_db.get_document(doc_id)
-                except Exception:
-                    pass
             if not doc:
                 continue
 
@@ -976,7 +886,6 @@ class HierarchicalRetriever:
         try:
             query_emb = self.model_client.embed(query)
             if query_emb:
-                # FIX: admin tenant also searches fallback vector database
                 all_vec_results = []
 
                 # Primary tenant vector search
@@ -986,28 +895,10 @@ class HierarchicalRetriever:
                 all_vec_results.extend(vec_results)
 
                 # Fallback tenant vector search
-                if self.tenant_id == "admin" and self.fallback_vector_db:
-                    try:
-                        fallback_vec_results = self.fallback_vector_db.search_l2_chunks(query_emb, limit=max_results, doc_id_filter=doc_id_filter)
-                        for r in fallback_vec_results:
-                            r["_tenant"] = "default"
-                            r["_fallback"] = True
-                        all_vec_results.extend(fallback_vec_results)
-                        logger.info(f"[RETRIEVER] admin tenant fallback vector search: {len(fallback_vec_results)} results")
-                    except Exception as e:
-                        logger.warning(f"[RETRIEVER] admin tenant fallback vector search failed: {e}")
-
                 results = []
                 for result in all_vec_results:
-                    # FIX: admin tenant tries primary tenant first, then fallback
                     page = self.metadata_db.get_page(result["page_id"])
                     doc = self.metadata_db.get_document(result["doc_id"])
-                    if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
-                        try:
-                            page = self.fallback_metadata_db.get_page(result["page_id"])
-                            doc = self.fallback_metadata_db.get_document(result["doc_id"])
-                        except Exception:
-                            pass
                     if page and doc:
                         results.append(self._create_search_result(result, page, doc))
                 return results
@@ -1020,22 +911,14 @@ class HierarchicalRetriever:
         all_results = []
         fts_results = self._search_fts(query, limit=max_results * 2, doc_id_filter=doc_id_filter)
         for result in fts_results:
-            # FIX: admin tenant tries primary tenant first, then fallback
             page = self.metadata_db.get_page(result["page_id"])
             doc = self.metadata_db.get_document(result["doc_id"])
-            if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
-                try:
-                    page = self.fallback_metadata_db.get_page(result["page_id"])
-                    doc = self.fallback_metadata_db.get_document(result["doc_id"])
-                except Exception:
-                    pass
             if page and doc:
                 all_results.append(self._create_search_result(result, page, doc))
         if len(all_results) < max_results:
             try:
                 query_emb = self.model_client.embed(query)
                 if query_emb:
-                    # FIX: admin tenant also searches fallback vector database
                     all_vec_results = []
 
                     vec_results = self.vector_db.search_l2_chunks(query_emb, limit=max_results, doc_id_filter=doc_id_filter, min_score=0.35)
@@ -1043,27 +926,10 @@ class HierarchicalRetriever:
                         r["_tenant"] = self.tenant_id or "default"
                     all_vec_results.extend(vec_results)
 
-                    if self.tenant_id == "admin" and self.fallback_vector_db:
-                        try:
-                            fallback_vec_results = self.fallback_vector_db.search_l2_chunks(query_emb, limit=max_results, doc_id_filter=doc_id_filter, min_score=0.35)
-                            for r in fallback_vec_results:
-                                r["_tenant"] = "default"
-                                r["_fallback"] = True
-                            all_vec_results.extend(fallback_vec_results)
-                        except Exception:
-                            pass
-
                     for result in all_vec_results:
                         if not any(r.page_id == result["page_id"] for r in all_results) and len(all_results) < max_results * 2:
-                            # FIX: admin tenant tries primary tenant first, then fallback
                             page = self.metadata_db.get_page(result["page_id"])
                             doc = self.metadata_db.get_document(result["doc_id"])
-                            if not page and self.tenant_id == "admin" and self.fallback_metadata_db:
-                                try:
-                                    page = self.fallback_metadata_db.get_page(result["page_id"])
-                                    doc = self.fallback_metadata_db.get_document(result["doc_id"])
-                                except Exception:
-                                    pass
                             if page and doc:
                                 vec_score = result.get("score", 0.0) * 0.8
                                 if vec_score < 0.25:
@@ -1157,15 +1023,6 @@ class SegmentMerger:
     def __init__(self, tenant_id: str = None):
         self.tenant_id = tenant_id
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
-
-        # FIX: admin tenant also loads the default tenant database
-        self.fallback_metadata_db = None
-        if tenant_id == "admin":
-            try:
-                self.fallback_metadata_db = get_tenant_metadata_db("default")
-                logger.info("[MERGER] admin tenant loaded default tenant database as fallback")
-            except Exception as e:
-                logger.warning(f"[MERGER] admin tenant failed to load default database: {e}")
 
     def _path_to_url(self, path: str) -> str:
         if not path:
@@ -1447,9 +1304,6 @@ class SegmentMerger:
             existing_pages = set(r.page_num for r in doc_results if r.page_num)
             if existing_pages and self.metadata_db:
                 expanded = self._expand_section_pages(doc_id, existing_pages, self.metadata_db)
-                # If fallback_db is available and primary db has no data, also try
-                if not expanded and self.tenant_id == "admin" and self.fallback_metadata_db:
-                    expanded = self._expand_section_pages(doc_id, existing_pages, self.fallback_metadata_db)
                 for page_num, info in expanded.items():
                     if not info.get('raw_text'):
                         continue
@@ -1548,13 +1402,7 @@ class SegmentMerger:
             # Sort by score; no longer force intro/info pages to the front.
             # Annual reports etc. have financial data on later pages; highest-score pages are the most relevant.
 
-            # FIX: admin tenant tries primary tenant for document fetch, then fallback
             doc = self.metadata_db.get_document(doc_id)
-            if not doc and self.tenant_id == "admin" and self.fallback_metadata_db:
-                try:
-                    doc = self.fallback_metadata_db.get_document(doc_id)
-                except Exception:
-                    pass
             doc_title = doc.get("title", doc_results[0].filename) if doc else doc_results[0].filename
             doc_header = f"\n\n===== Document: {doc_title} =====\n"
             if current_chars + len(doc_header) > max_context_chars:

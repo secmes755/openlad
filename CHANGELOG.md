@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `create_user` no longer reports success when the DB unique index rejects the row
 - Duplicate `map_reduce_chunk_size` key in config (dead 12000 value removed)
 - Ruff cleanup of `core/`: 1410 → 17 violations (remaining are intentional sys.path imports)
+- Removed the admin-tenant cross-tenant read fallback — tenants are strictly isolated;
+  the admin tenant can only query its own data (cross-tenant access requires that
+  tenant's own API key)
+- Removed the disabled query-cache half-implementation
+
+### Notes / Trade-offs
+
+- **Usernames are globally unique** (login never needs a tenant identifier, and
+  same-name users cannot exist across tenants). A side effect: creating a user
+  with a name that exists elsewhere returns 409, which reveals that the name is
+  taken (but not where/who). Acceptable for admin-managed user creation.
+- **Logout revokes the account's API key**: with one key per user, logging out on
+  one device invalidates sessions on all devices. The next login issues a fresh key.
 
 ## [0.1.0] - 2026-08-07
 

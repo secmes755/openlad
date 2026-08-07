@@ -120,6 +120,10 @@ Open your browser: **`http://localhost:11296/`**
 
 ### Case 1: Upload a Datasheet and Ask Questions
 
+> Note: the credentials below are placeholders for the request format only.
+> The real admin password is set via the `OPENLAD_ADMIN_PASSWORD` environment
+> variable at startup — there is no default password.
+
 ```bash
 # 1. Login as admin
 curl -X POST http://127.0.0.1:11296/api/v1/login \

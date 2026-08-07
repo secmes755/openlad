@@ -1,7 +1,6 @@
 """
 OpenLAD Query Engine - Three-Phase Retrieval + Agent Exploration
 """
-import hashlib
 import logging
 import time
 from typing import Any
@@ -24,20 +23,14 @@ class QueryEngine:
         self.router = IntentRouter()
         self.decomposer = QueryDecomposer()
         self._agents = {}
-        # Simple in-memory cache: {cache_key: (timestamp, result)}
-        self._cache = {}
-        self._cache_ttl_seconds = 0  # Cache disabled to avoid stale results during testing
-        self._cache_max_size = 200
 
     def _get_components(self, tenant_id: str):
         """Get or create tenant-level retrieval components.
 
-        DESIGN NOTE: The admin tenant is a super-administrator role with cross-tenant
-        read access. It loads the "default" tenant database as a fallback so that
-        admin users can query data across all tenants for management and debugging
-        purposes. This is intentional — regular tenant users are strictly isolated.
-        See core/tenant/auth.py for the role-based access control that enforces
-        this: admin role bypasses resource checks, but only for the admin user.
+        Tenants are strictly isolated: the admin tenant has no cross-tenant
+        read access (the former "default" database fallback was removed).
+        Cross-tenant data access is only possible with that tenant's own key.
+        See core/tenant/auth.py for the role-based access control.
         """
         if tenant_id not in self._agents:
             metadata_db = get_tenant_metadata_db(tenant_id)
@@ -47,18 +40,6 @@ class QueryEngine:
             retriever = HierarchicalRetriever(tenant_id=tenant_id)
             merger = SegmentMerger(tenant_id=tenant_id)
 
-            # DESIGN: admin tenant loads the default tenant database as fallback
-            # for cross-tenant management queries. Regular tenants are isolated.
-            fallback_metadata_db = None
-            fallback_vector_db = None
-            if tenant_id == "admin":
-                try:
-                    fallback_metadata_db = get_tenant_metadata_db("default")
-                    fallback_vector_db = get_tenant_vector_db("default")
-                    logger.info("[ENGINE] admin tenant loaded default tenant database as fallback")
-                except Exception as e:
-                    logger.warning(f"[ENGINE] admin tenant failed to load default database: {e}")
-
             self._agents[tenant_id] = {
                 "planner": planner,
                 "executor": executor,
@@ -66,36 +47,8 @@ class QueryEngine:
                 "retriever": retriever,
                 "merger": merger,
                 "metadata_db": metadata_db,
-                "fallback_metadata_db": fallback_metadata_db,
-                "fallback_vector_db": fallback_vector_db,
             }
         return self._agents[tenant_id]
-
-    def _make_cache_key(self, query_text: str, tenant_id: str, industry_hint: str = None, chat_history: str = None) -> str:
-        """Generate a cache key"""
-        # Include chat_history hash to prevent cache sharing across sessions
-        history_hash = hashlib.md5(chat_history.encode()).hexdigest()[:8] if chat_history else "no_hist"
-        raw = f"{tenant_id}:{industry_hint or 'auto'}:{history_hash}:{query_text}"
-        return hashlib.md5(raw.encode()).hexdigest()
-
-    def _get_cached(self, cache_key: str) -> dict | None:
-        """Retrieve cached result"""
-        if cache_key not in self._cache:
-            return None
-        timestamp, result = self._cache[cache_key]
-        if time.time() - timestamp > self._cache_ttl_seconds:
-            del self._cache[cache_key]
-            return None
-        logger.info(f"[ENGINE] cache hit: {cache_key[:8]}")
-        return result
-
-    def _set_cached(self, cache_key: str, result: dict):
-        """Write to cache"""
-        # LRU eviction
-        if len(self._cache) >= self._cache_max_size:
-            oldest = min(self._cache, key=lambda k: self._cache[k][0])
-            del self._cache[oldest]
-        self._cache[cache_key] = (time.time(), result)
 
     def _execute_agentic(self, query_text: str, tenant_id: str) -> dict[str, Any] | None:
         """Execute Agentic retrieval"""
@@ -395,14 +348,6 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
         chat_history_str = self._format_chat_history(chat_history) if chat_history else None
 
-        # Cache check
-        cache_key = self._make_cache_key(query_text, tenant_id, industry_hint, chat_history_str)
-        cached = self._get_cached(cache_key)
-        if cached is not None:
-            cached["cached"] = True
-            cached["elapsed_ms"] = 0
-            return cached
-
         components = self._get_components(tenant_id)
         planner = components["planner"]
         executor = components["executor"]
@@ -521,8 +466,6 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             }
         }
 
-        # Write to cache
-        self._set_cached(cache_key, result)
         return result
 
     def release(self):
