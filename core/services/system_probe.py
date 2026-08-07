@@ -27,16 +27,23 @@ logger = logging.getLogger(__name__)
 # numbers have no practical meaning here.
 MIN_LLM_CONTEXT = 16384
 
-# Recommended LLM context by GPU VRAM (MiB), assuming Q4-quantized KV cache.
-# (vram_mib, llm_ctx, kv_cache_type) — first row whose threshold is met wins.
-# 15360 MiB ≈ 15 GiB catches "16 GB" cards (e.g. RTX 5060 Ti = 16311 MiB).
-# Below 12 GiB the full system is NOT supported: the bundled 9B LLM (~7.4 GB
-# weights incl. mmproj) plus the 0.6B embedding model cannot both fit on GPU.
+# Recommended configuration by GPU VRAM (MiB): model, LLM context and
+# quantizations. First row whose threshold is met wins.
+# 15360 MiB ≈ 15 GiB catches "16 GB" cards (the recommended platform).
 GPU_CTX_TABLE = [
-    (24576, 262144, "q4_0"),   # >= 24 GiB: full context
-    (15360, 131072, "q4_0"),   # >= 15 GiB: baseline platform (RTX 5060 Ti 16GB)
-    (12288, 65536, "q4_0"),    # >= 12 GiB: tight — embedding KV must stay small
+    # (vram_mib, model, llm_ctx, kv_cache_type)
+    (24576, "9B", 262144, "q4_0"),   # >= 24 GiB: full capability
+    (15360, "9B", 131072, "q4_0"),   # >= 15 GiB: recommended platform
+    (12288, "9B", 65536, "q4_0"),    # >= 12 GiB: usable, context-limited
+    (8192, "4B", 32768, "q4_0"),     # >= 8 GiB: small model, capability-limited
 ]
+
+# Recommendation shown for the small-model tier.
+SMALL_MODEL_NOTE = (
+    "4B model: usable for small/medium documents, but capability and "
+    "long-context stability are limited. 16 GB VRAM with the 9B model is "
+    "strongly recommended for a complete, stable experience."
+)
 
 # Recommended LLM context by system memory (MiB) when no NVIDIA GPU is present
 # (CPU inference, much slower but functional).
@@ -46,11 +53,10 @@ CPU_CTX_TABLE = [
     (16384, 16384),
 ]
 
-# Message returned when the hardware cannot run the full system.
+# Message returned when the hardware cannot run the system at all.
 UNSUPPORTED_REASON = (
-    "GPU VRAM below 12 GiB: the bundled 9B LLM (~7.1 GB weights incl. mmproj) "
-    "plus the embedding model cannot both run on the GPU. Options: use a "
-    "smaller LLM, or offload part of the layers to CPU (slow), or run CPU-only."
+    "GPU VRAM below 8 GiB: insufficient for the smallest supported "
+    "configuration. 16 GB VRAM with the 9B model is strongly recommended."
 )
 
 
@@ -93,26 +99,30 @@ def recommend_context(gpu: dict | None = None, memory: dict | None = None) -> di
 
     if gpu:
         vram_mib = gpu["vram_total_mb"]
-        for min_mib, ctx, kv in GPU_CTX_TABLE:
+        for min_mib, model, ctx, kv in GPU_CTX_TABLE:
             if vram_mib >= min_mib:
-                return {"supported": True, "llm_ctx": ctx, "kv_cache_type": kv,
-                        "min_llm_ctx": MIN_LLM_CONTEXT,
-                        "source": f"GPU {gpu['name']} ({gpu['vram_total_mb']} MB VRAM)"}
-        return {"supported": False, "llm_ctx": None, "kv_cache_type": None,
-                "min_llm_ctx": MIN_LLM_CONTEXT,
-                "source": f"GPU {gpu['name']} ({gpu['vram_total_mb']} MB VRAM)",
+                note = SMALL_MODEL_NOTE if model == "4B" else ""
+                return {"supported": True, "model": model, "llm_ctx": ctx,
+                        "kv_cache_type": kv, "min_llm_ctx": MIN_LLM_CONTEXT,
+                        "source": f"GPU ({gpu['vram_total_mb']} MB VRAM)",
+                        "note": note}
+        return {"supported": False, "model": None, "llm_ctx": None,
+                "kv_cache_type": None, "min_llm_ctx": MIN_LLM_CONTEXT,
+                "source": f"GPU ({gpu['vram_total_mb']} MB VRAM)",
                 "reason": UNSUPPORTED_REASON}
     mem_mib = memory["total_mb"]
     for min_mib, ctx in CPU_CTX_TABLE:
         if mem_mib >= min_mib:
-            return {"supported": True, "llm_ctx": ctx, "kv_cache_type": "q8_0",
-                    "min_llm_ctx": MIN_LLM_CONTEXT,
-                    "source": f"CPU-only ({memory['total_mb']} MB system RAM)"}
-    return {"supported": False, "llm_ctx": None, "kv_cache_type": None,
-            "min_llm_ctx": MIN_LLM_CONTEXT,
+            return {"supported": True, "model": "9B/4B", "llm_ctx": ctx,
+                    "kv_cache_type": "q8_0", "min_llm_ctx": MIN_LLM_CONTEXT,
+                    "source": f"CPU-only ({memory['total_mb']} MB system RAM)",
+                    "note": "CPU inference is functional but slow; a GPU is "
+                            "strongly recommended."}
+    return {"supported": False, "model": None, "llm_ctx": None,
+            "kv_cache_type": None, "min_llm_ctx": MIN_LLM_CONTEXT,
             "source": f"CPU-only ({memory['total_mb']} MB system RAM)",
             "reason": "System RAM below 16 GiB: too little memory for CPU "
-                      "inference of the bundled 9B model."}
+                      "inference of the bundled models."}
 
 
 def validate_context(llm_ctx: int) -> dict:
@@ -157,10 +167,14 @@ def main():
         print(f"  Minimum usable LLM context: {rec['min_llm_ctx']} tokens")
         return
     print(f"Recommendation ({rec['source']}):")
+    print(f"  Model              : {rec.get('model', '')}")
     print(f"  LLM context        : {rec['llm_ctx']} tokens")
     print(f"  KV cache type      : {rec['kv_cache_type']}")
     print(f"  Minimum LLM context: {rec['min_llm_ctx']} tokens (below this the "
           "system cannot deliver usable retrieval)")
+    note = rec.get("note", "")
+    if note:
+        print(f"  Note               : {note}")
     print()
     print("Set these in your start script (e.g. LLM_CTX_SIZE=131072 and")
     print("add --cache-type-k q4_0 --cache-type-v q4_0 to llama-server).")

@@ -6,25 +6,38 @@ from core.services.system_probe import (
 )
 
 
-def test_gpu_16gb_recommends_128k():
-    gpu = {"name": "RTX 5060 Ti", "vram_total_mb": 16311, "vram_free_mb": 8000}
+def test_gpu_16gb_recommends_9b_128k():
+    gpu = {"name": "GPU", "vram_total_mb": 16311, "vram_free_mb": 8000}
     mem = {"total_mb": 31899, "available_mb": 10000}
     rec = recommend_context(gpu, mem)
+    assert rec["supported"] is True
+    assert rec["model"] == "9B"
     assert rec["llm_ctx"] == 131072
     assert rec["kv_cache_type"] == "q4_0"
+    assert rec["note"] == ""
 
 
 def test_gpu_24gb_recommends_max():
-    gpu = {"name": "RTX 4090", "vram_total_mb": 32768, "vram_free_mb": 30000}
+    gpu = {"name": "GPU", "vram_total_mb": 32768, "vram_free_mb": 30000}
     rec = recommend_context(gpu, {"total_mb": 65536, "available_mb": 40000})
     assert rec["llm_ctx"] == 262144
+    assert rec["model"] == "9B"
 
 
-def test_gpu_8gb_unsupported():
-    gpu = {"name": "RTX 4060", "vram_total_mb": 8192, "vram_free_mb": 4000}
+def test_gpu_8gb_small_model_with_warning():
+    gpu = {"name": "GPU", "vram_total_mb": 8192, "vram_free_mb": 4000}
+    rec = recommend_context(gpu, {"total_mb": 16384, "available_mb": 8000})
+    assert rec["supported"] is True
+    assert rec["model"] == "4B"
+    assert rec["llm_ctx"] == 32768
+    assert "strongly recommended" in rec["note"]
+
+
+def test_gpu_below_8gb_unsupported():
+    gpu = {"name": "GPU", "vram_total_mb": 6144, "vram_free_mb": 3000}
     rec = recommend_context(gpu, {"total_mb": 16384, "available_mb": 8000})
     assert rec["supported"] is False
-    assert "below 12 GiB" in rec["reason"]
+    assert "below 8 GiB" in rec["reason"]
 
 
 def test_cpu_mode_by_memory():
@@ -43,7 +56,7 @@ def test_cpu_below_minimum_unsupported():
 
 
 def test_minimum_context_floor():
-    gpu = {"name": "min", "vram_total_mb": 10240, "vram_free_mb": 4096}
+    gpu = {"name": "GPU", "vram_total_mb": 6144, "vram_free_mb": 4096}
     rec = recommend_context(gpu, {"total_mb": 16384, "available_mb": 8000})
     assert rec["supported"] is False
     assert rec["min_llm_ctx"] == MIN_LLM_CONTEXT

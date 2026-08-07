@@ -165,39 +165,32 @@ curl -X POST http://127.0.0.1:11296/api/v1/query \
 ## 🔍 Deployment: Hardware Probe
 
 Run the built-in probe to detect your GPU VRAM / system memory and get a
-recommended LLM context window (calibrated for the bundled 9B model with a
-Q4-quantized KV cache):
+recommended configuration:
 
 ```bash
 python -m core.services.system_probe
 ```
 
-Example output on the baseline platform (RTX 5060 Ti 16GB):
+### Quick configuration lookup
 
-```
-GPU     : NVIDIA GeForce RTX 5060 Ti (16311 MB total, 3252 MB free)
-Recommendation (GPU NVIDIA GeForce RTX 5060 Ti (16311 MB VRAM)):
-  LLM context        : 131072 tokens
-  KV cache type      : q4_0
-  Minimum LLM context: 8192 tokens
-```
+| GPU VRAM | Model | Weight quant | KV cache | LLM context | Expected capability |
+|---|---|---|---|---|---|
+| ≥ 24 GB | 9B | Q5_K_M | Q4 | 262144 | Full capability |
+| 16 GB **(recommended)** | 9B | Q5_K_M | Q4 | 131072 | Full capability |
+| 12 GB | 9B | Q5_K_M | Q4 | 65536 | Usable; large documents context-limited |
+| 8 GB | 4B | Q4_K_M | Q4 | 32768 | Limited (see note below) |
+| CPU-only | 9B / 4B | Q4_K_M | Q8 | 16384 – 65536 | Functional but slow; evaluation only |
 
-Recommendation table (9B Q5_K_M model):
-
-| GPU VRAM | Recommended LLM context | KV cache |
-|---|---|---|
-| ≥ 24 GiB | 262144 | q4_0 |
-| ≥ 15 GiB (16 GB cards) | 131072 | q4_0 |
-| ≥ 12 GiB | 65536 | q4_0 (tight) |
-| CPU-only (≥ 16 GiB RAM) | 16384 – 65536 | q8_0 |
-| < 12 GiB VRAM | **not supported** | — |
-
-**Minimum usable LLM context: 16384 tokens** — the probe reports a machine
-as unsupported below 12 GiB VRAM / 16 GiB RAM, because the bundled 9B LLM
-(~7.1 GB weights incl. mmproj) plus the embedding model cannot both run, and
-below 16K tokens even a single chapter cannot fit in the context. Set the
-recommended values in your start script, e.g. `LLM_CTX_SIZE=131072` and
+**Minimum usable LLM context: 16384 tokens** — below that, whole chapters
+cannot fit in the context and retrieval quality collapses. Set the
+recommended values in your start script, e.g. `LLM_CTX_SIZE=131072` with
 `--cache-type-k q4_0 --cache-type-v q4_0` on llama-server.
+
+> **Note on 8 GB VRAM**: theoretically usable with the 4B model, but the
+> small model's capability limits surface in practice — long-document
+> handling can be unstable and complex questions are understood less
+> reliably. **16 GB VRAM with the 9B model is strongly recommended** for a
+> complete and stable experience.
 
 ---
 

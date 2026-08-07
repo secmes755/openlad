@@ -159,38 +159,29 @@ curl -X POST http://127.0.0.1:11296/api/v1/query \
 
 ## 🔍 部署：硬件探测与配置建议
 
-使用内置探测工具检测 GPU 显存 / 系统内存，并获得推荐的 LLM 上下文长度
-（针对内置 9B 模型 + Q4 量化 KV cache 校准）：
+使用内置探测工具检测 GPU 显存 / 系统内存，并获得推荐配置：
 
 ```bash
 python -m core.services.system_probe
 ```
 
-基线平台（RTX 5060 Ti 16GB）示例输出：
+### 快速配置查表
 
-```
-GPU     : NVIDIA GeForce RTX 5060 Ti (16311 MB total, 3252 MB free)
-Recommendation (GPU NVIDIA GeForce RTX 5060 Ti (16311 MB VRAM)):
-  LLM context        : 131072 tokens
-  KV cache type      : q4_0
-  Minimum LLM context: 8192 tokens
-```
+| GPU 显存 | 模型 | 权重量化 | KV cache | LLM 上下文 | 预期能力 |
+|---|---|---|---|---|---|
+| ≥ 24 GB | 9B | Q5_K_M | Q4 | 262144 | 完整能力 |
+| 16 GB（**推荐**） | 9B | Q5_K_M | Q4 | 131072 | 完整能力 |
+| 12 GB | 9B | Q5_K_M | Q4 | 65536 | 可用；大文档上下文受限 |
+| 8 GB | 4B | Q4_K_M | Q4 | 32768 | 能力受限（见下方说明） |
+| 仅 CPU | 9B / 4B | Q4_K_M | Q8 | 16384 – 65536 | 可用但慢；仅适合试用 |
 
-推荐表（9B Q5_K_M 模型）：
-
-| GPU 显存 | 推荐 LLM 上下文 | KV cache |
-|---|---|---|
-| ≥ 24 GiB | 262144 | q4_0 |
-| ≥ 15 GiB（16GB 显卡） | 131072 | q4_0 |
-| ≥ 12 GiB | 65536 | q4_0（紧张） |
-| 仅 CPU（≥ 16 GiB 内存） | 16384 – 65536 | q8_0 |
-| < 12 GiB 显存 | **不支持** | — |
-
-**LLM 上下文下限：16384 tokens**——探测工具会将显存低于 12 GiB / 内存低于
-16 GiB 的机器判定为**不支持**：内置 9B LLM（含 mmproj 约 7.1GB 权重）加
-embedding 模型无法同时运行；且低于 16K 上下文时连单个章节都放不进去。
-将推荐值配置到启动脚本，例如 `LLM_CTX_SIZE=131072`，
+**LLM 上下文下限：16384 tokens**——低于此值整章内容无法放入上下文，
+检索质量会崩塌。将推荐值配置到启动脚本，例如 `LLM_CTX_SIZE=131072`，
 并给 llama-server 加 `--cache-type-k q4_0 --cache-type-v q4_0`。
+
+> **关于 8GB 显存的说明**：理论上可用 4B 模型运行，但小模型的能力限制
+> 会在实际使用中显现——长文档处理可能不稳定、复杂问题的理解可靠性
+> 下降。**强烈建议使用 16GB 显存 + 9B 模型**，以获得完整、稳定的体验。
 
 ---
 

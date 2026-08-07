@@ -13,10 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current session, so other devices logged in with the same username stay
   online. Account-level revocation is done by an admin rotating the key.
 - Hardware probe (`python -m core.services.system_probe`): detects GPU VRAM /
-  system memory and recommends an LLM context window calibrated for the
-  bundled 9B model with Q4-quantized KV cache. Machines below 12 GiB VRAM /
-  16 GiB RAM are reported as unsupported (the 9B LLM plus embedding cannot
-  both run); the minimum usable context is 16384 tokens.
+  system memory and recommends a model + context configuration. The quick
+  lookup covers 8 GB (4B model, limited capability) up to 24 GB+ (9B model,
+  full context); 16 GB with the 9B model is the recommended configuration.
+  Machines below 8 GiB VRAM / 16 GiB RAM are reported as unsupported; the
+  minimum usable context is 16384 tokens.
 
 ### Changed
 
