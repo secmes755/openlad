@@ -33,12 +33,15 @@ def test_duplicate_username_same_tenant_rejected(tmp_path):
     conn.close()
 
 
-def test_same_username_different_tenant_allowed(tmp_path):
+def test_same_username_across_tenants_rejected(tmp_path):
+    """Usernames are globally unique — the same name is refused in another tenant too."""
     db = SystemDB(db_path=tmp_path / "system.db")
     _mk(db, "t1")
     _mk(db, "t2")
     conn = sqlite3.connect(tmp_path / "system.db")
     _insert(conn, "u1", "t1", "alice", "ak-1")
-    _insert(conn, "u2", "t2", "alice", "ak-2")
     conn.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert(conn, "u2", "t2", "alice", "ak-2")
+        conn.commit()
     conn.close()
