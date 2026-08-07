@@ -3,7 +3,9 @@
 spec_facts via the rule extractor. Idempotent (clears before re-extracting).
 Usage: python scripts/extract_spec_facts.py [tenant_id]
 """
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.db.tenant_db import get_tenant_metadata_db
