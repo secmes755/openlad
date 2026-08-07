@@ -188,12 +188,14 @@ Recommendation table (9B Q5_K_M model):
 |---|---|---|
 | ≥ 24 GiB | 262144 | q4_0 |
 | ≥ 15 GiB (16 GB cards) | 131072 | q4_0 |
-| ≥ 12 GiB | 65536 | q4_0 |
-| ≥ 8 GiB | 16384 | q4_0 |
-| CPU-only | 8192 – 65536 (by system RAM) | q8_0 |
+| ≥ 12 GiB | 65536 | q4_0 (tight) |
+| CPU-only (≥ 16 GiB RAM) | 16384 – 65536 | q8_0 |
+| < 12 GiB VRAM | **not supported** | — |
 
-**Minimum usable LLM context: 8192 tokens.** Below that, retrieval quality
-degrades severely because full chapters cannot fit in the context. Set the
+**Minimum usable LLM context: 16384 tokens** — the probe reports a machine
+as unsupported below 12 GiB VRAM / 16 GiB RAM, because the bundled 9B LLM
+(~7.4 GB weights incl. mmproj) plus the embedding model cannot both run, and
+below 16K tokens even a single chapter cannot fit in the context. Set the
 recommended values in your start script, e.g. `LLM_CTX_SIZE=131072` and
 `--cache-type-k q4_0 --cache-type-v q4_0` on llama-server.
 

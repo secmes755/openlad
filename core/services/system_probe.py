@@ -21,28 +21,37 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-# Minimum LLM context window for usable retrieval quality (chapters are
-# delivered in full; below this the context gets truncated constantly).
-MIN_LLM_CONTEXT = 8192
+# Minimum LLM context window for *usable* retrieval. OpenLAD delivers whole
+# chapters into the context and keeps a synthesis budget (≈60% of the window);
+# below this minimum even a single chapter cannot fit, so 8192-style "it boots"
+# numbers have no practical meaning here.
+MIN_LLM_CONTEXT = 16384
 
 # Recommended LLM context by GPU VRAM (MiB), assuming Q4-quantized KV cache.
 # (vram_mib, llm_ctx, kv_cache_type) — first row whose threshold is met wins.
 # 15360 MiB ≈ 15 GiB catches "16 GB" cards (e.g. RTX 5060 Ti = 16311 MiB).
+# Below 12 GiB the full system is NOT supported: the bundled 9B LLM (~7.4 GB
+# weights incl. mmproj) plus the 0.6B embedding model cannot both fit on GPU.
 GPU_CTX_TABLE = [
     (24576, 262144, "q4_0"),   # >= 24 GiB: full context
     (15360, 131072, "q4_0"),   # >= 15 GiB: baseline platform (RTX 5060 Ti 16GB)
-    (12288, 65536, "q4_0"),    # >= 12 GiB: mid-range GPU
-    (8192, 16384, "q4_0"),     # >= 8 GiB: entry GPU, embedding may need CPU offload
-    (0, 8192, "q8_0"),         # minimal fallback
+    (12288, 65536, "q4_0"),    # >= 12 GiB: tight — embedding KV must stay small
 ]
 
-# Recommended LLM context by system memory (MiB) when no NVIDIA GPU is present.
+# Recommended LLM context by system memory (MiB) when no NVIDIA GPU is present
+# (CPU inference, much slower but functional).
 CPU_CTX_TABLE = [
     (65536, 65536),
     (32768, 32768),
     (16384, 16384),
-    (0, 8192),
 ]
+
+# Message returned when the hardware cannot run the full system.
+UNSUPPORTED_REASON = (
+    "GPU VRAM below 12 GiB: the bundled 9B LLM (~7.4 GB weights incl. mmproj) "
+    "plus the embedding model cannot both run on the GPU. Options: use a "
+    "smaller LLM, or offload part of the layers to CPU (slow), or run CPU-only."
+)
 
 
 def detect_gpu() -> dict | None:
@@ -86,18 +95,24 @@ def recommend_context(gpu: dict | None = None, memory: dict | None = None) -> di
         vram_mib = gpu["vram_total_mb"]
         for min_mib, ctx, kv in GPU_CTX_TABLE:
             if vram_mib >= min_mib:
-                return {"llm_ctx": ctx, "kv_cache_type": kv,
+                return {"supported": True, "llm_ctx": ctx, "kv_cache_type": kv,
                         "min_llm_ctx": MIN_LLM_CONTEXT,
                         "source": f"GPU {gpu['name']} ({gpu['vram_total_mb']} MB VRAM)"}
+        return {"supported": False, "llm_ctx": None, "kv_cache_type": None,
+                "min_llm_ctx": MIN_LLM_CONTEXT,
+                "source": f"GPU {gpu['name']} ({gpu['vram_total_mb']} MB VRAM)",
+                "reason": UNSUPPORTED_REASON}
     mem_mib = memory["total_mb"]
     for min_mib, ctx in CPU_CTX_TABLE:
         if mem_mib >= min_mib:
-            return {"llm_ctx": ctx, "kv_cache_type": "q8_0",
+            return {"supported": True, "llm_ctx": ctx, "kv_cache_type": "q8_0",
                     "min_llm_ctx": MIN_LLM_CONTEXT,
                     "source": f"CPU-only ({memory['total_mb']} MB system RAM)"}
-    # unreachable (table has a 0 floor), defensive
-    return {"llm_ctx": 8192, "kv_cache_type": "q8_0",
-            "min_llm_ctx": MIN_LLM_CONTEXT, "source": "minimal"}
+    return {"supported": False, "llm_ctx": None, "kv_cache_type": None,
+            "min_llm_ctx": MIN_LLM_CONTEXT,
+            "source": f"CPU-only ({memory['total_mb']} MB system RAM)",
+            "reason": "System RAM below 16 GiB: too little memory for CPU "
+                      "inference of the bundled 9B model."}
 
 
 def validate_context(llm_ctx: int) -> dict:
@@ -136,6 +151,11 @@ def main():
     mem = result["memory"]
     print(f"Memory  : {mem['total_mb']} MB total, {mem['available_mb']} MB available")
     rec = result["recommendation"]
+    if not rec.get("supported"):
+        print("Result  : NOT SUPPORTED on this hardware")
+        print(f"  Reason: {rec.get('reason', '')}")
+        print(f"  Minimum usable LLM context: {rec['min_llm_ctx']} tokens")
+        return
     print(f"Recommendation ({rec['source']}):")
     print(f"  LLM context        : {rec['llm_ctx']} tokens")
     print(f"  KV cache type      : {rec['kv_cache_type']}")
