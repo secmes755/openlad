@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model context window, truncating the list and hiding the exact chapter the
   query needed. All chapter titles are now sent, with full previews only for
   semantically pre-selected chapters.
+- Chapter merge no longer unions every pre-selected chapter into the final
+  set (dozens of chapters blew the synthesis context budget and could drop
+  the exact page with the answer); LLM picks take priority with a capped
+  semantic supplement.
+- Removed the last admin-tenant fallback references in the planner and
+  executor (document listing for the admin tenant no longer merges the
+  "default" tenant's documents).
 
 ## [0.2.0] - 2026-08-07
 

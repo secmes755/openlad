@@ -50,13 +50,6 @@ Available retrieval tools:
         self.taxonomy_text = ""
 
         # FIX: admin tenant also loads the default tenant's database
-        self.fallback_metadata_db = None
-        if tenant_id == "admin":
-            try:
-                self.fallback_metadata_db = get_tenant_metadata_db("default")
-                logger.info("[PLANNER] Admin tenant loaded default tenant database as fallback")
-            except Exception as e:
-                logger.warning(f"[PLANNER] Admin tenant failed to load default database: {e}")
         # taxonomy functionality temporarily simplified
         # self.taxonomy_builder = CorpusTaxonomyBuilder()
         # self._load_taxonomy()
@@ -127,21 +120,11 @@ Available retrieval tools:
         rule-based matching on existing category_level1 and industry_package_id values.
         """
         try:
-            # FIX: Admin tenant merges documents from primary and fallback tenants
             all_docs = []
             docs = self.metadata_db.get_all_documents(status="verified") or []
             if not docs:
                 docs = self.metadata_db.get_all_documents(status="completed") or []
             all_docs.extend(docs)
-
-            if self.tenant_id == "admin" and self.fallback_metadata_db:
-                try:
-                    fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
-                    if not fallback_docs:
-                        fallback_docs = self.fallback_metadata_db.get_all_documents(status="completed") or []
-                    all_docs.extend(fallback_docs)
-                except Exception as e:
-                    logger.warning(f"[PLANNER] Admin tenant failed to load fallback documents: {e}")
 
             # Count category distribution
             categories = {}
@@ -168,21 +151,11 @@ Available retrieval tools:
         today = datetime.now().strftime("%Y-%m-%d")
         history_section = f"\n## Conversation History\n{chat_history}\n" if chat_history else ""
         # Get document list directly from tenant database, independent of taxonomy
-        # FIX: Admin tenant merges documents from primary and fallback tenants
         all_docs = []
         docs = self.metadata_db.get_all_documents(status="verified") or []
         if not docs:
             docs = self.metadata_db.get_all_documents(status="completed") or []
         all_docs.extend(docs)
-
-        if self.tenant_id == "admin" and self.fallback_metadata_db:
-            try:
-                fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
-                if not fallback_docs:
-                    fallback_docs = self.fallback_metadata_db.get_all_documents(status="completed") or []
-                all_docs.extend(fallback_docs)
-            except Exception as e:
-                logger.warning(f"[PLANNER] Admin tenant failed to load fallback documents: {e}")
 
         if not all_docs:
             return [], {}
@@ -307,21 +280,11 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
     def _resolve_short_ids(self, short_ids: list[str]) -> list[str]:
         if not short_ids:
             return []
-        # FIX: Admin tenant merges documents from primary and fallback tenants
         all_docs = []
         docs = self.metadata_db.get_all_documents(status="verified") or []
         if not docs:
             docs = self.metadata_db.get_all_documents(status="completed") or []
         all_docs.extend(docs)
-
-        if self.tenant_id == "admin" and self.fallback_metadata_db:
-            try:
-                fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
-                if not fallback_docs:
-                    fallback_docs = self.fallback_metadata_db.get_all_documents(status="completed") or []
-                all_docs.extend(fallback_docs)
-            except Exception:
-                pass
 
         full_ids = []
         for short_id in short_ids:
@@ -506,21 +469,11 @@ Rewritten query:"""
         if entities:
             # Try to match entities to documents
             try:
-                # FIX: Admin tenant merges documents from primary and fallback tenants
                 all_docs = []
                 docs = self.metadata_db.get_all_documents(status="verified") or []
                 if not docs:
                     docs = self.metadata_db.get_all_documents(status="completed") or []
                 all_docs.extend(docs)
-
-                if self.tenant_id == "admin" and self.fallback_metadata_db:
-                    try:
-                        fallback_docs = self.fallback_metadata_db.get_all_documents(status="verified") or []
-                        if not fallback_docs:
-                            fallback_docs = self.fallback_metadata_db.get_all_documents(status="completed") or []
-                        all_docs.extend(fallback_docs)
-                    except Exception:
-                        pass
 
                 for entity in (entities or []):
                     entity_upper = entity.upper()

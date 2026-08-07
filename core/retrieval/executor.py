@@ -29,15 +29,6 @@ class RetrievalExecutor:
             self.max_chars = int(env_max)
             logger.info(f"[PHASE-2] Environment variable overrides context quota: {self.max_chars}")
 
-        # FIX: admin tenant also loads default tenant's database
-        self.fallback_metadata_db = None
-        if tenant_id == "admin":
-            try:
-                self.fallback_metadata_db = get_tenant_metadata_db("default")
-                logger.info("[PHASE-2] admin tenant loaded default tenant database as fallback")
-            except Exception as e:
-                logger.warning(f"[PHASE-2] admin tenant failed to load default database: {e}")
-
     def _get_query_expansion_keywords(self) -> list[str]:
         """Load query expansion keywords from industry packs. If industry_hint is not specified, iterate all industry packs to collect."""
         try:
@@ -932,8 +923,14 @@ Output only JSON, no explanation."""
             logger.warning(f"[CHAPTER-RETRIEVE] LLM chapter selection failed: {e}")
             selected_indices = []
 
-        # Merge LLM selection with semantic pre-selection so overview/summary-matching chapters are preserved
-        selected_indices = list(set(selected_indices) | preselected_indices)
+        # Merge LLM selection with semantic pre-selection. LLM picks take
+        # priority; only the strongest pre-selected chapters the LLM missed are
+        # added back (capped), so very large documents do not balloon the final
+        # chapter set and blow the synthesis context budget.
+        llm_selected = set(selected_indices)
+        missed = [idx for idx, _ in scored if idx not in llm_selected]
+        merge_cap = cfg.get("chapter_preselect_merge_cap", 5)
+        selected_indices = llm_selected | set(missed[:merge_cap])
         if not selected_indices:
             logger.info("[CHAPTER-RETRIEVE] LLM selected no chapters, falling back to FTS")
             return self._fallback_to_fts(query, doc_id)
@@ -1145,15 +1142,6 @@ Output only JSON, no explanation."""
         cfg = settings.CONTEXT_CONFIG
         doc_list_limit = cfg.get("doc_filter_list_limit", 10000)
         all_docs = self.metadata_db.list_documents(limit=doc_list_limit)
-        if self.tenant_id == "admin" and self.fallback_metadata_db:
-            try:
-                fallback_docs = self.fallback_metadata_db.list_documents(limit=doc_list_limit)
-                # Mark fallback documents
-                for doc in fallback_docs:
-                    doc["_fallback_tenant"] = "default"
-                all_docs.extend(fallback_docs)
-            except Exception as e:
-                logger.warning(f"[DOC_FILTER] admin tenant failed to search fallback documents: {e}")
 
         matched_ids = set()
         skipped = []
