@@ -877,10 +877,13 @@ Output structure (JSON):
 
         scored = [(ch["index"], _chapter_match_score(ch, query)) for ch in chapter_list]
         scored = [(idx, s) for idx, s in scored if s > 0]
-        # Cap pre-selection to avoid noise from generic entity tokens (e.g. DDR, USB)
-        # matching many chapters; keep the strongest matches only.
+        # Keep ALL semantically matching chapters (not just the top few), so a
+        # low-score but directly-on-topic chapter (e.g. query token matched only
+        # in its title) cannot be dropped. Cap only when noise explodes.
         scored.sort(key=lambda x: x[1], reverse=True)
-        preselected_indices = {idx for idx, _ in scored[:8]}
+        if len(scored) > 30:
+            scored = scored[:30]
+        preselected_indices = {idx for idx, _ in scored}
         if preselected_indices:
             logger.info(f"[CHAPTER-RETRIEVE] Pre-selected {len(preselected_indices)} chapters via structure-index semantic match: "
                         f"{[chapter_list[i]['title'] for i in sorted(preselected_indices)][:5]}")
@@ -894,15 +897,17 @@ User query: "{query}"
 
 Document: "{doc.get('title', '')}"
 
-The document contains the following chapters (title + page numbers + content preview):
+The document contains the following chapters (title + page numbers):
 """
+        # Send ALL chapter titles (cheap) plus full previews only for the
+        # semantically pre-selected chapters. Large documents (e.g. 800+
+        # chapters in an annual report) would otherwise blow past the model
+        # context window when every summary is included, truncating the list
+        # and hiding the exact chapter the query needs.
         for ch in chapter_list:
             prompt += f"\n[{ch['index']}] {ch['title']} (pages {ch['pages']})"
-            if ch['summary']:
+            if ch["index"] in preselected_indices and ch["summary"]:
                 prompt += f"\n    Preview: {ch['summary']}"
-            ents = ch.get('entities', '') or ''
-            if ents:
-                prompt += f"\n    Entities: {ents[:150]}"
 
         cfg = settings.CONTEXT_CONFIG
         chapter_select_max = cfg.get("chapter_select_max", 20)

@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `logout` no longer revokes the whole account — it revokes only the session
   key used by the current request.
 
+### Fixed
+
+- Chapter selection for very large documents (800+ chapters, e.g. annual
+  reports): sending every chapter with its full summary could exceed the
+  model context window, truncating the list and hiding the exact chapter the
+  query needed. All chapter titles are now sent, with full previews only for
+  semantically pre-selected chapters.
+
 ## [0.2.0] - 2026-08-07
 
 ### Added
