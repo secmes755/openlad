@@ -1,8 +1,5 @@
 """User session (login-issued API keys) checks — pure DB logic, no services."""
-import sqlite3
 from datetime import datetime, timedelta
-
-import pytest
 
 from core.db.system_db import SystemDB
 from core.tenant.models import UserInfo
