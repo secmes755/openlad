@@ -292,6 +292,17 @@ class SystemDB:
             logger.error(f"[SYSTEM_DB] Failed to delete user: {e}")
             return False
 
+    def delete_users_by_tenant(self, tenant_id: str) -> bool:
+        """Delete all users belonging to a tenant (cascade on tenant delete)."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("DELETE FROM users WHERE tenant_id = ?", (tenant_id,))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"[SYSTEM_DB] Failed to delete users for tenant {tenant_id}: {e}")
+            return False
+
     def update_user(self, user_id: str, **kwargs) -> bool:
         """Update user info (role, email, password_hash)"""
         allowed = {"role", "email", "password_hash"}

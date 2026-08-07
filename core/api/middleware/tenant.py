@@ -26,15 +26,20 @@ class TenantMiddleware(BaseHTTPMiddleware):
         # Skip routes that don't require tenant
         path = request.url.path
         method = request.method
-        # Health check, root path, login, static resources, admin page — fully skip
-        if path in ["/", "/admin", "/api/v1/health", "/api/v1/login"] or path.startswith("/static/"):
+        # Health check, root path, login — fully skip
+        if path in ["/", "/api/v1/health", "/api/v1/login"]:
             return await call_next(request)
-        # Allow all static asset file extensions and HTML pages without auth
-        if any(path.endswith(ext) for ext in (".js", ".css", ".png", ".jpg", ".svg", ".ico", ".woff2", ".html", ".json", ".txt", ".md")):
+        # Static assets are public, except the admin page which requires auth
+        if path.startswith("/static/"):
+            if not path.endswith("admin.html"):
+                return await call_next(request)
+        # Allow public static asset file extensions, but never the admin page
+        if path.endswith("admin.html"):
+            pass  # fall through to authentication below
+        elif any(path.endswith(ext) for ext in (".js", ".css", ".png", ".jpg", ".svg", ".ico", ".woff2", ".html", ".json", ".txt", ".md")):
             return await call_next(request)
-        # GET /api/v1/industries allows public access (industry listing)
-        if path == "/api/v1/industries" and method == "GET":
-            return await call_next(request)
+        # /api/v1/industries is no longer public — requires authentication
+        # (industry package listing is not sensitive data but stays behind auth)
 
         tenant_id = request.headers.get("X-Tenant-ID")
         auth_header = request.headers.get("Authorization", "")

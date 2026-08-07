@@ -88,6 +88,9 @@ class TenantManager:
                 shutil.rmtree(tenant_dir)
                 logger.info(f"[TENANT] Deleted tenant data directory: {tenant_id}")
 
+        # Cascade: remove the tenant's users so they cannot linger as orphans
+        # (and cannot be revived together with a reactivated tenant)
+        self.system_db.delete_users_by_tenant(tenant_id)
         self.system_db.update_tenant_status(tenant_id, "deleted")
         return True
 

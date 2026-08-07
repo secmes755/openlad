@@ -154,18 +154,6 @@ class AuthManager:
             return new_key
         return None
 
-    def check_permission(self, user: UserInfo, resource_type: str,
-                         resource_id: str, action: str) -> bool:
-        """Check user permission"""
-        if user.role == "admin":
-            return True
-        # Regular user: deny by default, whitelist rules added as needed at call sites
-        logger.warning(
-            f"Permission denied: user={user.username}({user.role}) "
-            f"resource={resource_type}/{resource_id} action={action}"
-        )
-        return False
-
 
 # Singleton
 _auth_manager: Optional[AuthManager] = None

@@ -53,8 +53,14 @@ async def me():
 
 @router.post("/logout")
 async def logout():
-    """Logout (frontend clears localStorage, backend records log)"""
+    """Logout: revoke the current API key (the key used for this request
+    becomes invalid immediately; the next login issues a fresh key)."""
     ctx = get_tenant_context()
-    if ctx:
-        logger.info(f"[AUTH] User logged out: {ctx.username} ({ctx.user_id})")
+    if ctx and ctx.user_id:
+        auth = get_auth_manager()
+        new_key = auth.regenerate_api_key(ctx.user_id)
+        if new_key:
+            logger.info(f"[AUTH] User logged out, API key revoked: {ctx.username} ({ctx.user_id})")
+        else:
+            logger.warning(f"[AUTH] Logout: failed to revoke API key for {ctx.username} ({ctx.user_id})")
     return {"success": True, "message": "Logged out"}
