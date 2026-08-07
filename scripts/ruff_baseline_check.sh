@@ -6,10 +6,13 @@
 # Usage:
 #   ./scripts/ruff_baseline_check.sh [path]      # default: core
 #
-# Regenerate the baseline snapshot after intentionally cleaning up violations:
-#   ruff check core --output-format=json > .ruff-baseline.json
+# Regenerate the baseline snapshot after intentionally cleaning up violations
+# (paths are stored repo-relative so the snapshot is machine-independent):
+#   ruff check core --output-format=json 2>/dev/null | \
+#     python3 -c "import json,os,sys; d=json.load(sys.stdin); [x.update(filename=os.path.relpath(x['filename'], os.getcwd())) for x in d]; json.dump(d, sys.stdout)" > .ruff-baseline.json
 set -euo pipefail
 cd "$(dirname "$0")/.."
+REPO_ROOT=$(pwd)
 
 TARGET="${1:-core}"
 BASELINE_FILE=".ruff-baseline.json"
@@ -25,14 +28,19 @@ TMP_JSON=$(mktemp)
 trap 'rm -f "$TMP_JSON"' EXIT
 echo "$CURRENT" > "$TMP_JSON"
 
-python3 - "$BASELINE_FILE" "$TMP_JSON" <<'PY'
-import collections, json, sys
+python3 - "$BASELINE_FILE" "$TMP_JSON" "$REPO_ROOT" <<'PY'
+import collections, json, os, sys
 
-baseline_path, current_path = sys.argv[1], sys.argv[2]
+baseline_path, current_path, root = sys.argv[1], sys.argv[2], sys.argv[3]
 current = json.load(open(current_path))
 
 def key(v):
-    return (v.get("filename", ""), v.get("code", ""))
+    # Normalize to repo-relative paths so the baseline matches regardless of
+    # where the repo is checked out (local machine vs GitHub Actions runner).
+    fname = v.get("filename", "")
+    if os.path.isabs(fname):
+        fname = os.path.relpath(fname, root)
+    return (fname, v.get("code", ""))
 
 base_counts = collections.Counter(key(v) for v in json.load(open(baseline_path)))
 cur_counts = collections.Counter(key(v) for v in current)

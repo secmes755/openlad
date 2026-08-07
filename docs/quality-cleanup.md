@@ -21,7 +21,8 @@ Progressive cleanup of code-quality debt. Baseline mechanics:
 
 Note: all batches were completed in one pass with `ruff --fix` (+ safe manual
 cleanup of E741/E722/F401/UP035); the remaining baseline is 17 E402 entries.
-Regenerate baseline:
+Regenerate baseline (repo-relative paths so the snapshot is machine-independent):
 ```bash
-ruff check core --output-format=json > .ruff-baseline.json
+ruff check core --output-format=json 2>/dev/null | \
+  python3 -c "import json,os,sys; d=json.load(sys.stdin); [x.update(filename=os.path.relpath(x['filename'], os.getcwd())) for x in d]; json.dump(d, sys.stdout)" > .ruff-baseline.json
 ```
