@@ -5,7 +5,27 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-07
+
+### Added
+
+- Global unique usernames — cross-tenant duplicate names are rejected (login ambiguity eliminated)
+- Synthetic-data checks for retrieval and ingestion logic (public unit suite now 35 cases)
+- Ruff baseline mechanism for `core/`: existing violations tolerated, new ones fail CI
+- Quality cleanup tracker (`docs/quality-cleanup.md`)
+
+### Fixed
+
+- Security hardening batch:
+  - `logout` now revokes the current API key (old key invalid immediately)
+  - admin page (`/admin` and `/static/admin.html`) requires authentication
+  - `/api/v1/industries` requires authentication
+  - tenant deletion cascades user cleanup
+  - usernames are globally unique (409 on duplicates)
+  - removed dead `check_permission` code
+- `create_user` no longer reports success when the DB unique index rejects the row
+- Duplicate `map_reduce_chunk_size` key in config (dead 12000 value removed)
+- Ruff cleanup of `core/`: 1410 → 17 violations (remaining are intentional sys.path imports)
 
 ## [0.1.0] - 2026-08-07
 
