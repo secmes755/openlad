@@ -924,12 +924,17 @@ Output only JSON, no explanation."""
             selected_indices = []
 
         # Merge LLM selection with semantic pre-selection. LLM picks take
-        # priority; only the strongest pre-selected chapters the LLM missed are
-        # added back (capped), so very large documents do not balloon the final
-        # chapter set and blow the synthesis context budget.
+        # priority; semantically pre-selected chapters the LLM missed are added
+        # back. Small/medium documents keep ALL of them so datasheet detail
+        # chapters (electrical specs, pin definitions) survive; only very large
+        # documents (800+ chapters, e.g. annual reports) cap the supplement to
+        # protect the synthesis context budget.
         llm_selected = set(selected_indices)
         missed = [idx for idx, _ in scored if idx not in llm_selected]
-        merge_cap = cfg.get("chapter_preselect_merge_cap", 5)
+        if len(chapter_list) <= cfg.get("chapter_preselect_full_merge_max", 100):
+            merge_cap = len(missed)
+        else:
+            merge_cap = cfg.get("chapter_preselect_merge_cap", 5)
         selected_indices = llm_selected | set(missed[:merge_cap])
         if not selected_indices:
             logger.info("[CHAPTER-RETRIEVE] LLM selected no chapters, falling back to FTS")
