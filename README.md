@@ -194,7 +194,7 @@ Recommendation table (9B Q5_K_M model):
 
 **Minimum usable LLM context: 16384 tokens** — the probe reports a machine
 as unsupported below 12 GiB VRAM / 16 GiB RAM, because the bundled 9B LLM
-(~7.4 GB weights incl. mmproj) plus the embedding model cannot both run, and
+(~7.1 GB weights incl. mmproj) plus the embedding model cannot both run, and
 below 16K tokens even a single chapter cannot fit in the context. Set the
 recommended values in your start script, e.g. `LLM_CTX_SIZE=131072` and
 `--cache-type-k q4_0 --cache-type-v q4_0` on llama-server.

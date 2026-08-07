@@ -187,7 +187,7 @@ Recommendation (GPU NVIDIA GeForce RTX 5060 Ti (16311 MB VRAM)):
 | < 12 GiB 显存 | **不支持** | — |
 
 **LLM 上下文下限：16384 tokens**——探测工具会将显存低于 12 GiB / 内存低于
-16 GiB 的机器判定为**不支持**：内置 9B LLM（含 mmproj 约 7.4GB 权重）加
+16 GiB 的机器判定为**不支持**：内置 9B LLM（含 mmproj 约 7.1GB 权重）加
 embedding 模型无法同时运行；且低于 16K 上下文时连单个章节都放不进去。
 将推荐值配置到启动脚本，例如 `LLM_CTX_SIZE=131072`，
 并给 llama-server 加 `--cache-type-k q4_0 --cache-type-v q4_0`。

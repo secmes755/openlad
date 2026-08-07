@@ -6,10 +6,10 @@ Purpose: a deployment wizard for users on different hardware — instead of
 guessing the context size, they get a sane starting configuration. The
 recommendations are calibrated against a local measurement (2026-08):
 
-  Qwen3.5-9B Q5_K_M weights ≈ 6.7 GB on GPU.
-  f16 KV cache measured ≈ 0.47 GB per 10K tokens of context
+  Qwen3.5-9B Q5_K_M weights ≈ 6.2 GB + mmproj-F16 ≈ 0.9 GB → ≈ 7.1 GB on GPU.
+  f16 KV cache measured ≈ 0.4 GB per 10K tokens of context
   (llama-server -c 65536 + mmproj ≈ 9.7 GB total on a 16 GB GPU).
-  Q4-quantized KV cache ≈ halves that: ~0.23 GB per 10K tokens.
+  Q4-quantized KV cache ≈ halves that: ~0.2 GB per 10K tokens.
 
 Usage:
   python -m core.services.system_probe
@@ -48,7 +48,7 @@ CPU_CTX_TABLE = [
 
 # Message returned when the hardware cannot run the full system.
 UNSUPPORTED_REASON = (
-    "GPU VRAM below 12 GiB: the bundled 9B LLM (~7.4 GB weights incl. mmproj) "
+    "GPU VRAM below 12 GiB: the bundled 9B LLM (~7.1 GB weights incl. mmproj) "
     "plus the embedding model cannot both run on the GPU. Options: use a "
     "smaller LLM, or offload part of the layers to CPU (slow), or run CPU-only."
 )
