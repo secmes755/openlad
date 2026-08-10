@@ -279,7 +279,10 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         import re as _re
         keywords: list[str] = []
         # English / model tokens from the query itself (e.g. RK3568, H.264, UART).
-        for tok in _re.findall(r'[A-Za-z][\w.\-]{1,20}', query_text):
+        # NOTE: continuation chars must be ASCII-only — \w in Unicode mode eats
+        # CJK, so an unspaced query like "RK3562的CPU架构" would otherwise fuse
+        # into one useless token instead of yielding RK3562 + CPU.
+        for tok in _re.findall(r'[A-Za-z][A-Za-z0-9.\-]{1,20}', query_text):
             keywords.append(tok)
         # Chinese term expansion (query-understanding synonym layer), plus
         # English synonym expansion (case-insensitive, e.g. GPU -> graphics).

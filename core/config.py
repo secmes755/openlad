@@ -281,6 +281,8 @@ CONTEXT_CONFIG = {
         "npu": ["npu", "neural", "compute power", "tops"],
         "cpu": ["cpu", "cortex", "processor"],
         "uart": ["uart", "serial"],
+        "pcie": ["pcie", "pci express", "pci-e", "pcie3", "pcie2"],
+        "版本": ["version", "protocol", "support"],
         "h.264": ["h.264", "h264"],
         "h.265": ["h.265", "h265", "hevc"],
     },

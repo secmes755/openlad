@@ -61,7 +61,7 @@ _SUPPORT_RE = re.compile(
     r'\bSupports?\s+(?:up to\s+)?'
     r'(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|single|dual|quad|\d+)\s+'
     r'([\w][\w\s/\-]{0,28}?)'
-    r'\s+(interfaces?|channels?|ports?|lanes|bits|cores?|displays?|cameras?|screens?)\b',
+    r'\s+(interfaces?|channels?|ports?|lanes|bits|cores?|displays?|cameras?|screens?|controllers?)\b',
     re.I,
 )
 
@@ -76,6 +76,29 @@ _RESOLUTION_RE = re.compile(
 
 # Pattern 4: NPU/compute power, e.g. "NPU: 1 TOPS" "up to 3 TOPS"
 _TOPS_RE = re.compile(r'\b(\d+(?:\.\d+)?)\s*(TOPS?)\b', re.I)
+
+# Pattern 5: versioned protocol support declarations, e.g.
+#   "Support PCIe3.1(8Gbps) protocol and backward compatible with the PCIe2.1
+#    and PCIe1.1 protocol"
+#   "Supports USB3.0 standard"  "Support HDMI2.1 interface"
+# Generic across protocol families (PCIe/USB/HDMI/SATA/DDR/MIPI/NVMe...):
+# the lead token must be letters + version digits. All same-family version
+# tokens in the sentence (incl. backward-compatible lists) are collected.
+_PROTOCOL_SUPPORT_RE = re.compile(
+    r'\bSupports?\s+(?:up to\s+)?'
+    r'([A-Za-z][A-Za-z\-]*\s?\d+(?:\.\d+)?)(\([^)]{1,20}\))?'
+    r'[\w\s()/%.]*?\b(protocol|standard|interface|revision|version)\b',
+    re.I,
+)
+# A version token of a given family, e.g. "PCIe3.1" / "PCIe 3.1" / "USB3.0".
+def _version_tokens(line: str, family: str) -> list[str]:
+    fam = re.escape(family).replace('\\ ', r'\s?')
+    out = []
+    for m in re.finditer(rf'\b({fam}\s?\d+(?:\.\d+)?)', line, re.I):
+        tok = re.sub(r'\s+', '', m.group(1))
+        if tok.lower() not in (t.lower() for t in out):
+            out.append(tok)
+    return out
 
 # Known spec headers that may appear alone on one line with the value on the
 # next line, e.g. "GPU\n Mali-G52 1-Core-2EE" (Features list layout).
@@ -189,6 +212,32 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         for m in _TOPS_RE.finditer(line):
             add("compute power", f"{m.group(1)} {m.group(2).upper()}", line, unit=m.group(2).upper())
 
+        # Pattern 5 (versioned protocol support). Value lists every same-family
+        # version token in the sentence (e.g. "PCIe3.1(8Gbps), PCIe2.1, PCIe1.1").
+        # Each component is verified verbatim against the source line; the lead
+        # token doubles as the self-verification probe for the composite value.
+        for m in _PROTOCOL_SUPPORT_RE.finditer(line):
+            family = _clean(m.group(1))
+            family_tok = re.sub(r'\s+', '', family)
+            # family stem = letters only (group(1) is letters+version, e.g.
+            # "PCIe3.1" -> stem "PCIe"); version tokens are collected by stem.
+            stem_m = re.match(r'[A-Za-z][A-Za-z\-]*', family_tok)
+            if not stem_m or len(stem_m.group(0)) < 2:
+                # 1-char stems ("I" from I2S/I2C) are meaningless attributes.
+                continue
+            stem = stem_m.group(0)
+            lead = family_tok + (m.group(2) or '')
+            versions = _version_tokens(line, stem)
+            if not versions:
+                continue
+            line_nospace = line.lower().replace(' ', '')
+            if not all(re.sub(r'\s+', '', v).lower() in line_nospace
+                       or v.lower() in line.lower() for v in versions):
+                continue
+            rest = [v for v in versions if v.lower() != family_tok.lower()]
+            value = ', '.join([lead] + rest)
+            add(f"{stem} protocol", value, line, verify_against=family_tok)
+
         # Pattern 1 (key-value). Skip if the line was already fully explained
         # by a more specific pattern to reduce duplicates.
         for m in _KV_RE.finditer(line):
@@ -198,7 +247,10 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
 
 
 # --- Doc entity inference ------------------------------------------------------
-_CHIP_MODEL_RE = re.compile(r'\b(RK\d{4}[A-Z]?|SSU\d{4}|T\d{3}|RV\d{4}|PX\d+|RK\d{3}[A-Z]?)\b')
+# NOTE: \b treats '_' as a word char, so "_RK3562" (UUID-prefixed filenames,
+# "Rockchip_RK3568_...") has no word boundary and silently misses. Use explicit
+# alphanumeric lookarounds instead.
+_CHIP_MODEL_RE = re.compile(r'(?<![A-Za-z0-9])(RK\d{4}[A-Z]?|SSU\d{4}|T\d{3}|RV\d{4}|PX\d+|RK\d{3}[A-Z]?)(?![A-Za-z0-9])')
 
 
 def infer_doc_entity(title: str, filename: str = "") -> str:
