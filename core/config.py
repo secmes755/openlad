@@ -257,34 +257,14 @@ CONTEXT_CONFIG = {
     # Chinese query-term -> English keyword expansion for spec-fact lookup.
     # This is a QUERY-UNDERSTANDING layer (synonym expansion), extensible via
     # config; it never hardcodes any answer.
+    # LAYERING RULE: core keeps ONLY domain-neutral terms (quantity/version
+    # measure words). Industry vocabulary (gpu/uart/h.264/算力/主频/…) lives in
+    # industry packs (retrieval/rules.yaml -> spec_query_terms) and is merged in
+    # by the engine at query time via RetrievalPlugin.get_spec_query_terms().
     "spec_query_terms": {
-        "球径": ["ball size", "ball diameter", "ball"],
-        "球间距": ["ball pitch", "pitch"],
-        "焊球": ["solder ball", "ball"],
-        "封装": ["package", "body"],
         "数量": ["count", "number"],
         "多少个": ["count", "number"],
-        "几路": ["count", "channels", "lanes"],
-        "分辨率": ["resolution"],
-        "编码": ["encoder", "h.264", "h.265", "hevc"],
-        "解码": ["decoder", "h.264", "h.265", "hevc"],
-        "算力": ["tops", "compute power"],
-        "功耗": ["power", "tdp"],
-        "制程": ["process", "nm"],
-        "内存": ["memory", "ddr", "lpddr"],
-        "主频": ["frequency", "ghz", "mhz", "clock"],
-        "核心数": ["cores", "core count", "quad", "dual", "octa"],
-        # English synonym expansion (query contains the English term already,
-        # but the fact attribute may use a different surface form, e.g. query
-        # "GPU" vs fact attribute "3D Graphics Engine"). Case-insensitive.
-        "gpu": ["gpu", "graphics", "graphics engine", "3d graphics"],
-        "npu": ["npu", "neural", "compute power", "tops"],
-        "cpu": ["cpu", "cortex", "processor"],
-        "uart": ["uart", "serial"],
-        "pcie": ["pcie", "pci express", "pci-e", "pcie3", "pcie2"],
         "版本": ["version", "protocol", "support"],
-        "h.264": ["h.264", "h264"],
-        "h.265": ["h.265", "h265", "hevc"],
     },
     # ── Page type detection keywords (for layout analyzer) ──
     # Generic document structure keywords used to detect cover/TOC pages

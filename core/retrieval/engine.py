@@ -260,14 +260,15 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         return "\n".join(lines)
 
     def _lookup_spec_facts(self, query_text: str, tenant_id: str,
-                           metadata_db, plan: dict) -> list[dict]:
+                           metadata_db, plan: dict,
+                           industry_hint: "str | None" = None) -> list[dict]:
         """Look up the assertion-level spec_facts index for this query.
 
         Builds the keyword set from English tokens in the query plus the
-        configurable Chinese->English expansion (spec_query_terms). Only facts
-        with >= spec_facts_min_hits keyword hits qualify. Returns [] when the
-        feature is off, the table is empty, or nothing matches — the caller
-        then proceeds with the normal page-level context unchanged.
+        synonym expansion (core generic terms + active industry pack terms).
+        Only facts with >= spec_facts_min_hits keyword hits qualify. Returns []
+        when the feature is off, the table is empty, or nothing matches — the
+        caller then proceeds with the normal page-level context unchanged.
         """
         from ..config import settings
         cfg = settings.CONTEXT_CONFIG
@@ -284,10 +285,28 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         # into one useless token instead of yielding RK3562 + CPU.
         for tok in _re.findall(r'[A-Za-z][A-Za-z0-9.\-]{1,20}', query_text):
             keywords.append(tok)
-        # Chinese term expansion (query-understanding synonym layer), plus
-        # English synonym expansion (case-insensitive, e.g. GPU -> graphics).
+        # Term expansion (query-understanding synonym layer): core generic terms
+        # merged with the active industry pack's terms (industry vocabulary
+        # lives in packs, not core). Case-insensitive.
+        spec_terms = dict(cfg.get("spec_query_terms") or {})
+        try:
+            from ..plugins import get_plugin_registry
+            registry = get_plugin_registry()
+            plugin = None
+            if industry_hint and industry_hint != "auto":
+                plugin = registry.get_plugin(industry_hint)
+            if plugin is None:
+                cat = plan.get("routed_category") or ""
+                if cat and hasattr(registry, "get_plugin_by_category"):
+                    plugin = registry.get_plugin_by_category(cat)
+            if plugin is not None:
+                pack_terms = plugin.retrieval.get_spec_query_terms() or {}
+                if pack_terms:
+                    spec_terms.update(pack_terms)
+        except Exception as e:
+            logger.warning(f"[ENGINE] pack spec_query_terms unavailable (non-fatal): {e}")
         query_lower = query_text.lower()
-        for zh, en_words in (cfg.get("spec_query_terms") or {}).items():
+        for zh, en_words in spec_terms.items():
             if zh in query_text or zh.lower() in query_lower:
                 keywords.extend(en_words)
         # Planner-harvested entities (e.g. RK3568) improve entity scoping.
@@ -389,7 +408,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             # authoritative evidence. This is the missing assertion abstraction
             # that page/chapter-level patches (vector-hybrid, VLM penalty,
             # chapter-scope widening) were compensating for.
-            spec_facts = self._lookup_spec_facts(query_text, tenant_id, metadata_db, plan)
+            spec_facts = self._lookup_spec_facts(query_text, tenant_id, metadata_db, plan,
+                                                 industry_hint=industry_hint)
             if spec_facts:
                 spec_block = self._format_spec_facts(spec_facts)
                 retrieval_result["context"] = spec_block + "\n\n" + retrieval_result.get("context", "")

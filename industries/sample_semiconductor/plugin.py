@@ -182,6 +182,16 @@ class SemiconductorRetrievalPlugin:
     def get_synonyms(self, term: str) -> List[str]:
         return []
 
+    def get_spec_query_terms(self) -> Dict[str, List[str]]:
+        """Industry spec-fact query terms (datasheet vocabulary), loaded from
+        retrieval/rules.yaml so core stays industry-agnostic."""
+        return _retrieval_rules.get("spec_query_terms", {}) or {}
+
+    def get_entity_patterns(self) -> List[str]:
+        """Chip-model regex patterns for document-entity inference, loaded from
+        retrieval/rules.yaml (explicit lookarounds, see rules.yaml comments)."""
+        return _retrieval_rules.get("entity_patterns", []) or []
+
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"
 

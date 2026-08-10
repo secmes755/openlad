@@ -428,9 +428,17 @@ class DocumentIndexBuilder:
         metadata_db.delete_document(doc_id)
 
         # Document-level entity for spec facts (from filename — the only
-        # reliable title source at this stage).
+        # reliable title source at this stage). Entity patterns come from the
+        # active industry pack (core stays industry-agnostic).
         from .spec_facts_extractor import infer_doc_entity
-        spec_entity = infer_doc_entity(parsed_doc.filename) if parsed_doc else ""
+        entity_patterns = None
+        if plugin is not None:
+            try:
+                entity_patterns = plugin.retrieval.get_entity_patterns() or None
+            except Exception as e:
+                logger.warning(f"[BUILDER] get_entity_patterns failed (non-fatal): {e}")
+        spec_entity = infer_doc_entity(
+            parsed_doc.filename, entity_patterns=entity_patterns) if parsed_doc else ""
 
         # Industry package document subtype detection
         doc_subtype = None

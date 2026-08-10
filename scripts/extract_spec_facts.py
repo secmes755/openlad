@@ -12,9 +12,29 @@ from core.db.tenant_db import get_tenant_metadata_db
 from core.ingestion.spec_facts_extractor import extract_spec_facts_from_text, infer_doc_entity
 
 
+def _load_entity_patterns() -> list[str]:
+    """Entity patterns come from industry packs (core is industry-agnostic).
+    Offline tool: collect patterns from all registered plugins."""
+    patterns: list[str] = []
+    try:
+        from core.plugins import get_plugin_registry
+        registry = get_plugin_registry()
+        for name in (registry.list_plugins() or []):
+            try:
+                plugin = registry.get_plugin(name)
+                if plugin is not None:
+                    patterns.extend(plugin.retrieval.get_entity_patterns() or [])
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"  (plugin registry unavailable, entity fallback active: {e})")
+    return patterns
+
+
 def main(tenant_id: str = "test"):
     db = get_tenant_metadata_db(tenant_id)
     db.clear_spec_facts()
+    entity_patterns = _load_entity_patterns()
 
     with db.get_connection() as conn:
         docs = [dict(r) for r in conn.execute(
@@ -23,7 +43,8 @@ def main(tenant_id: str = "test"):
     total_facts = 0
     for doc in docs:
         doc_id = doc["id"]
-        entity = infer_doc_entity(doc.get("title", ""), doc.get("filename", ""))
+        entity = infer_doc_entity(doc.get("title", ""), doc.get("filename", ""),
+                                  entity_patterns=entity_patterns)
         pages = db.get_document_pages(doc_id)
         doc_facts = 0
         for p in pages:

@@ -185,6 +185,18 @@ class RetrievalPlugin(ABC):
         """Get term synonyms"""
         return []
 
+    def get_spec_query_terms(self) -> dict[str, list[str]]:
+        """Industry-specific spec-fact query terms: {query_term: [synonyms]}.
+        Merged with core's generic table during spec-fact assertion lookup,
+        so industry vocabulary lives in the pack instead of core."""
+        return {}
+
+    def get_entity_patterns(self) -> list[str]:
+        """Regex patterns (one capture group each) to extract the document
+        entity (e.g. chip model) from title/filename at ingest time.
+        Core falls back to the plain title/filename when empty."""
+        return []
+
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         """Format citation (default [^page_num^])"""
         return f"[^{page_num}^]"
@@ -303,6 +315,14 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
     def get_synonyms(self, term: str) -> list[str]:
         # Look up synonyms from glossary (reverse mapping)
         return []
+
+    def get_spec_query_terms(self) -> dict[str, list[str]]:
+        # Industry spec-fact query terms from rules.yaml (default empty).
+        return self.config.rules.get("spec_query_terms", {}) or {}
+
+    def get_entity_patterns(self) -> list[str]:
+        # Document-entity regex patterns from rules.yaml (default empty).
+        return self.config.rules.get("entity_patterns", []) or []
 
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"

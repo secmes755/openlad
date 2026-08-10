@@ -247,16 +247,19 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
 
 
 # --- Doc entity inference ------------------------------------------------------
-# NOTE: \b treats '_' as a word char, so "_RK3562" (UUID-prefixed filenames,
-# "Rockchip_RK3568_...") has no word boundary and silently misses. Use explicit
-# alphanumeric lookarounds instead.
-_CHIP_MODEL_RE = re.compile(r'(?<![A-Za-z0-9])(RK\d{4}[A-Z]?|SSU\d{4}|T\d{3}|RV\d{4}|PX\d+|RK\d{3}[A-Z]?)(?![A-Za-z0-9])')
-
-
-def infer_doc_entity(title: str, filename: str = "") -> str:
-    """Infer the primary entity (chip model) from doc title/filename."""
-    for src in (title or "", filename or ""):
-        m = _CHIP_MODEL_RE.search(src)
+# Core is industry-agnostic: entity patterns (e.g. chip-model regexes) are
+# supplied by the active industry pack via RetrievalPlugin.get_entity_patterns()
+# (see industries/*/retrieval/rules.yaml -> entity_patterns). With no patterns
+# the entity falls back to a compact title/filename tag.
+def infer_doc_entity(title: str, filename: str = "",
+                     entity_patterns: list[str] | None = None) -> str:
+    """Infer the primary document entity from title/filename via pack patterns."""
+    for pat in (entity_patterns or []):
+        try:
+            rx = re.compile(pat)
+        except re.error:
+            continue
+        m = rx.search(title or "") or rx.search(filename or "")
         if m:
             return m.group(1)
     return _clean(title or filename)[:40] or "unknown"

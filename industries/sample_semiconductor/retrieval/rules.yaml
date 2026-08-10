@@ -302,3 +302,43 @@ section_boost_rules:
           - package
           - 热
           - thermal
+
+# =============================================================================
+# 规格断言查询词条（spec_query_terms）
+# 查询理解同义词层：命中查询词后扩展同义词，用于 spec_facts 断言索引的关键词
+# 匹配。只含行业词汇；跨行业通用词（数量/版本等）保留在 core config。
+# =============================================================================
+spec_query_terms:
+  球径: ["ball size", "ball diameter", "ball"]
+  球间距: ["ball pitch", "pitch"]
+  焊球: ["solder ball", "ball"]
+  封装: ["package", "body"]
+  几路: ["count", "channels", "lanes"]
+  分辨率: ["resolution"]
+  编码: ["encoder", "h.264", "h.265", "hevc"]
+  解码: ["decoder", "h.264", "h.265", "hevc"]
+  算力: ["tops", "compute power"]
+  功耗: ["power", "tdp"]
+  制程: ["process", "nm"]
+  内存: ["memory", "ddr", "lpddr"]
+  主频: ["frequency", "ghz", "mhz", "clock"]
+  核心数: ["cores", "core count", "quad", "dual", "octa"]
+  # English synonym expansion (query contains the English term already, but the
+  # fact attribute may use a different surface form, e.g. query "GPU" vs fact
+  # attribute "3D Graphics Engine"). Case-insensitive.
+  gpu: ["gpu", "graphics", "graphics engine", "3d graphics"]
+  npu: ["npu", "neural", "compute power", "tops"]
+  cpu: ["cpu", "cortex", "processor"]
+  uart: ["uart", "serial"]
+  pcie: ["pcie", "pci express", "pci-e", "pcie3", "pcie2"]
+  h.264: ["h.264", "h264"]
+  h.265: ["h.265", "h265", "hevc"]
+
+# =============================================================================
+# 文档实体模式（entity_patterns）
+# 从标题/文件名提取文档实体（如芯片型号）的正则列表，各含一个捕获组。
+# 使用显式环视而非 \b —— \b 将 '_' 视为单词字符，UUID 前缀文件名
+# （"8da40d71-..._RK3562.pdf"）中的 "_RK3562" 没有词边界会匹配失败。
+# =============================================================================
+entity_patterns:
+  - '(?<![A-Za-z0-9])(RK\d{4}[A-Z]?|SSU\d{4}|T\d{3}|RV\d{4}|PX\d+|RK\d{3}[A-Z]?)(?![A-Za-z0-9])'
