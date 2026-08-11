@@ -22,8 +22,11 @@ class AgenticRetriever:
     Agentic Retriever - Integrated into the OpenLAD core engine
     """
 
-    def __init__(self, tenant_id: str, config_path: str = None):
+    def __init__(self, tenant_id: str, config_path: str = None, spec_facts_plan: dict = None):
         self.tenant_id = tenant_id
+        # Planner output threaded from the engine so per-document spec-fact
+        # lookups resolve the same industry pack terms as other retrieval paths.
+        self.spec_facts_plan = spec_facts_plan or {}
         self.model_client = get_model_client()
         self.metadata_db = get_tenant_metadata_db(tenant_id)
 
@@ -510,6 +513,21 @@ Output as concise notes, preserving original citations."""
         # Add chunk_text from vector search results (contains complete chunk text)
         for i, chunk_text in enumerate(candidate_chunks[:5]):  # Limit to top 5 chunks
             content_parts.append(f"[Retrieved Chunk {i+1}]:\n{chunk_text[:query_limit]}")
+
+        # Spec-fact bypass: attach THIS document's own assertion-level facts so
+        # per-document answers get symmetric coverage across entities even when
+        # page-level retrieval misses the relevant section. Without this, the
+        # merge step's "not mentioned" iron rule amplifies a retrieval gap into
+        # an authoritative-looking "no data" for the under-retrieved entity.
+        try:
+            from .spec_facts import lookup_spec_facts, format_spec_facts
+            facts = lookup_spec_facts(query, self.metadata_db,
+                                      plan=self.spec_facts_plan,
+                                      doc_id_filter={doc_id})
+            if facts:
+                content_parts.append(format_spec_facts(facts))
+        except Exception as e:
+            logger.warning(f"[AGENTIC] spec-fact lookup failed (non-fatal): {e}")
 
         pages_text = "\n\n".join(content_parts)
 

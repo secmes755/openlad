@@ -1,0 +1,153 @@
+"""Assertion-level spec-fact lookup, shared by ALL retrieval paths.
+
+The spec_facts index is populated at ingest time (spec_facts_extractor) with
+verbatim-verified (entity, attribute, value) assertions. Every retrieval path
+— traditional, agentic, decomposed — must consult it: page-level retrieval is
+asymmetric across entities ("same attribute, two products"), which is exactly
+what this assertion layer exists to fix.
+
+Industry vocabulary (spec_query_terms) is provided by industry packs via the
+plugin interface; core keeps only domain-neutral terms.
+"""
+
+import logging
+import re
+
+from ..config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _merged_spec_terms(plan: dict | None, industry_hint: str | None) -> dict:
+    """Core generic terms merged with the active industry pack's terms."""
+    terms = dict(settings.CONTEXT_CONFIG.get("spec_query_terms") or {})
+    try:
+        from ..plugins import get_plugin_registry
+        registry = get_plugin_registry()
+        plugin = None
+        if industry_hint and industry_hint != "auto":
+            plugin = registry.get_plugin(industry_hint)
+        if plugin is None:
+            cat = (plan or {}).get("routed_category") or ""
+            if cat and hasattr(registry, "get_plugin_by_category"):
+                plugin = registry.get_plugin_by_category(cat)
+        if plugin is not None:
+            pack_terms = plugin.retrieval.get_spec_query_terms() or {}
+            if pack_terms:
+                terms.update(pack_terms)
+    except Exception as e:
+        logger.warning(f"[SPEC_FACTS] pack spec_query_terms unavailable (non-fatal): {e}")
+    return terms
+
+
+def build_spec_keywords(query_text: str, plan: dict | None = None,
+                        industry_hint: str | None = None) -> list[str]:
+    """Keyword set for spec-fact matching.
+
+    Sources: English/model tokens from the raw query AND the planner's
+    rewritten query (follow-ups like "哪个更强？" carry no entity tokens;
+    the history-aware rewrite does), term synonym expansion (core + pack),
+    and planner-harvested entities for scoping.
+    """
+    keywords: list[str] = []
+    keyword_text = query_text or ""
+    rw = (plan or {}).get("rewritten_query")
+    if isinstance(rw, list):
+        rw = "; ".join(str(q) for q in rw)
+    if isinstance(rw, str) and rw:
+        keyword_text += " " + rw
+
+    # NOTE: continuation chars must be ASCII-only — \w in Unicode mode eats
+    # CJK, so an unspaced query like "RK3562的CPU架构" would otherwise fuse
+    # into one useless token instead of yielding RK3562 + CPU.
+    for tok in re.findall(r'[A-Za-z][A-Za-z0-9.\-]{1,20}', keyword_text):
+        keywords.append(tok)
+
+    text_lower = keyword_text.lower()
+    for zh, en_words in _merged_spec_terms(plan, industry_hint).items():
+        if zh in keyword_text or zh.lower() in text_lower:
+            keywords.extend(en_words)
+
+    # Planner-harvested entities improve entity scoping.
+    for ent in ((plan or {}).get("entities") or []):
+        if isinstance(ent, str) and ent:
+            keywords.append(ent)
+
+    # Deduplicate, keep order.
+    seen, uniq = set(), []
+    for kw in keywords:
+        k = kw.lower()
+        if k and k not in seen:
+            seen.add(k)
+            uniq.append(kw)
+    return uniq
+
+
+def lookup_spec_facts(query_text: str, metadata_db, plan: dict | None = None,
+                      industry_hint: str | None = None,
+                      doc_id_filter: set | None = None) -> list[dict]:
+    """Look up the assertion-level spec_facts index for this query.
+
+    Only facts with >= spec_facts_min_hits keyword hits qualify. Returns []
+    when the feature is off, the table is empty, or nothing matches — the
+    caller then proceeds with the normal page-level context unchanged.
+    """
+    cfg = settings.CONTEXT_CONFIG
+    if not cfg.get("spec_facts_enabled", False):
+        return []
+    if not hasattr(metadata_db, "search_spec_facts"):
+        return []
+
+    uniq = build_spec_keywords(query_text, plan, industry_hint)
+    if not uniq:
+        return []
+
+    doc_filter = doc_id_filter
+    if doc_filter is None:
+        try:
+            df = (plan or {}).get("doc_id_filter") or (plan or {}).get("doc_filter")
+            if df:
+                doc_filter = set(df)
+        except Exception:
+            doc_filter = None
+
+    try:
+        hits = metadata_db.search_spec_facts(
+            uniq, doc_id_filter=doc_filter,
+            limit=cfg.get("spec_facts_max_inject", 6) * 3)
+    except Exception as e:
+        logger.warning(f"[SPEC_FACTS] lookup failed (non-fatal): {e}")
+        return []
+
+    min_hits = cfg.get("spec_facts_min_hits", 2)
+    qualified = []
+    for h in hits:
+        hay = f"{h.get('entity','')} {h.get('attribute','')} {h.get('value','')} {h.get('source_text','')}".lower()
+        n = sum(1 for kw in uniq if kw.lower() in hay)
+        if n >= min_hits:
+            h["_hits"] = n
+            qualified.append(h)
+
+    # Entity-in-query restriction: when the query (or its rewrite) literally
+    # names specific entities, keep only their facts. Synonym matching alone
+    # can pull in UNRELATED entities sharing the attribute family (e.g. a
+    # "DDR4 support" query about chip A also matches chip B's DDR4 row),
+    # which pollutes the injected block with irrelevant entities.
+    keyword_text = f"{query_text or ''} {((plan or {}).get('rewritten_query') if isinstance((plan or {}).get('rewritten_query'), str) else ' '.join(str(q) for q in ((plan or {}).get('rewritten_query') or [])))}"
+    q_lower = keyword_text.lower()
+    named = {h["entity"] for h in qualified if h.get("entity") and h["entity"].lower() in q_lower}
+    if named:
+        qualified = [h for h in qualified if h.get("entity") in named]
+
+    qualified.sort(key=lambda x: -x["_hits"])
+    return qualified[: cfg.get("spec_facts_max_inject", 6)]
+
+
+def format_spec_facts(facts: list[dict]) -> str:
+    """Render spec facts as an authoritative evidence block for the context."""
+    lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
+    for f in facts:
+        lines.append(
+            f"- {f.get('entity','')} | {f.get('attribute','')}: {f.get('value','')}"
+            f"  (page {f.get('page_num','?')}; 原文: \"{f.get('source_text','')[:120]}\")")
+    return "\n".join(lines)

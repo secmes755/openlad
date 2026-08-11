@@ -50,10 +50,13 @@ class QueryEngine:
             }
         return self._agents[tenant_id]
 
-    def _execute_agentic(self, query_text: str, tenant_id: str) -> dict[str, Any] | None:
-        """Execute Agentic retrieval"""
+    def _execute_agentic(self, query_text: str, tenant_id: str,
+                         spec_facts_plan: dict = None) -> dict[str, Any] | None:
+        """Execute Agentic retrieval. spec_facts_plan carries the planner output
+        (routed_category / entities / rewritten_query) so the per-document
+        spec-fact lookups resolve the same industry pack terms as other paths."""
         try:
-            agent = AgenticRetriever(tenant_id)
+            agent = AgenticRetriever(tenant_id, spec_facts_plan=spec_facts_plan)
             result = agent.retrieve(query_text)
             agent.release()
             return result
@@ -104,12 +107,22 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         planner = components["planner"]
         executor = components["executor"]
         synthesizer = components["synthesizer"]
-        components["metadata_db"]
+        metadata_db = components["metadata_db"]
         router_plan = self.router.route(query_text)
+
+        # Plan the main query once up front: the planner's routed_category /
+        # entities / rewritten_query drive the spec-fact assertion layer for
+        # BOTH deep_research sub-paths (agentic and decomposed fallback).
+        try:
+            main_plan = planner.plan(query_text, chat_history)
+        except Exception as e:
+            logger.warning(f"[ENGINE] deep_research main planning failed (non-fatal): {e}")
+            main_plan = {}
 
         # FIX: Try Agentic retrieval first (better for comparison queries)
         logger.info("[ENGINE] deep_research: trying Agentic retrieval first")
-        agentic_result = self._execute_agentic(query_text, tenant_id)
+        agentic_result = self._execute_agentic(query_text, tenant_id,
+                                               spec_facts_plan=main_plan)
 
         # Before accepting agentic result, verify it covers all entities in the query.
         # The agentic retriever may find only one document even when the user asks
@@ -221,6 +234,21 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             synthesis_result = {"answer": empty_answer, "sources": [], "structured": False}
             return retrieval_result, synthesis_result, router_plan
 
+        # Spec-fact bypass for the deep_research path: the assertion layer must
+        # cover comparison/enumeration queries too, not only the traditional
+        # path — page-level retrieval is asymmetric across entities ("same
+        # attribute, two products"), which is exactly what this index fixes.
+        facts_plan = dict(main_plan or {})
+        facts_plan["rewritten_query"] = sub_queries
+        facts_plan["routed_category"] = plan_routed_category or facts_plan.get("routed_category", "")
+        spec_facts = self._lookup_spec_facts(query_text, tenant_id, metadata_db, facts_plan,
+                                             industry_hint=industry_hint)
+        if spec_facts:
+            spec_block = self._format_spec_facts(spec_facts)
+            retrieval_result["context"] = spec_block + "\n\n" + retrieval_result.get("context", "")
+            retrieval_result["spec_facts"] = spec_facts
+            logger.info(f"[ENGINE] deep_research spec-fact bypass: injected {len(spec_facts)} authoritative facts")
+
         # Compute routed_category: prefer planner result over user-enforced industry
         routed_category = plan_routed_category
         if industry_hint and industry_hint != "auto":
@@ -262,103 +290,17 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
     def _lookup_spec_facts(self, query_text: str, tenant_id: str,
                            metadata_db, plan: dict,
                            industry_hint: "str | None" = None) -> list[dict]:
-        """Look up the assertion-level spec_facts index for this query.
-
-        Builds the keyword set from English tokens in the query plus the
-        synonym expansion (core generic terms + active industry pack terms).
-        Only facts with >= spec_facts_min_hits keyword hits qualify. Returns []
-        when the feature is off, the table is empty, or nothing matches — the
-        caller then proceeds with the normal page-level context unchanged.
-        """
-        from ..config import settings
-        cfg = settings.CONTEXT_CONFIG
-        if not cfg.get("spec_facts_enabled", False):
-            return []
-        if not hasattr(metadata_db, "search_spec_facts"):
-            return []
-
-        import re as _re
-        keywords: list[str] = []
-        # English / model tokens from the query itself (e.g. RK3568, H.264, UART).
-        # NOTE: continuation chars must be ASCII-only — \w in Unicode mode eats
-        # CJK, so an unspaced query like "RK3562的CPU架构" would otherwise fuse
-        # into one useless token instead of yielding RK3562 + CPU.
-        for tok in _re.findall(r'[A-Za-z][A-Za-z0-9.\-]{1,20}', query_text):
-            keywords.append(tok)
-        # Term expansion (query-understanding synonym layer): core generic terms
-        # merged with the active industry pack's terms (industry vocabulary
-        # lives in packs, not core). Case-insensitive.
-        spec_terms = dict(cfg.get("spec_query_terms") or {})
-        try:
-            from ..plugins import get_plugin_registry
-            registry = get_plugin_registry()
-            plugin = None
-            if industry_hint and industry_hint != "auto":
-                plugin = registry.get_plugin(industry_hint)
-            if plugin is None:
-                cat = plan.get("routed_category") or ""
-                if cat and hasattr(registry, "get_plugin_by_category"):
-                    plugin = registry.get_plugin_by_category(cat)
-            if plugin is not None:
-                pack_terms = plugin.retrieval.get_spec_query_terms() or {}
-                if pack_terms:
-                    spec_terms.update(pack_terms)
-        except Exception as e:
-            logger.warning(f"[ENGINE] pack spec_query_terms unavailable (non-fatal): {e}")
-        query_lower = query_text.lower()
-        for zh, en_words in spec_terms.items():
-            if zh in query_text or zh.lower() in query_lower:
-                keywords.extend(en_words)
-        # Planner-harvested entities (e.g. RK3568) improve entity scoping.
-        for ent in (plan.get("entities") or []):
-            if isinstance(ent, str) and ent:
-                keywords.append(ent)
-        # Deduplicate, keep order.
-        seen, uniq = set(), []
-        for kw in keywords:
-            k = kw.lower()
-            if k and k not in seen:
-                seen.add(k)
-                uniq.append(kw)
-        if not uniq:
-            return []
-
-        doc_filter = None
-        try:
-            df = plan.get("doc_id_filter") or plan.get("doc_filter")
-            if df:
-                doc_filter = set(df)
-        except Exception:
-            doc_filter = None
-
-        try:
-            hits = metadata_db.search_spec_facts(
-                uniq, doc_id_filter=doc_filter,
-                limit=cfg.get("spec_facts_max_inject", 6) * 3)
-        except Exception as e:
-            logger.warning(f"[ENGINE] spec-fact lookup failed (non-fatal): {e}")
-            return []
-
-        min_hits = cfg.get("spec_facts_min_hits", 2)
-        qualified = []
-        for h in hits:
-            hay = f"{h.get('entity','')} {h.get('attribute','')} {h.get('value','')} {h.get('source_text','')}".lower()
-            n = sum(1 for kw in uniq if kw.lower() in hay)
-            if n >= min_hits:
-                h["_hits"] = n
-                qualified.append(h)
-        qualified.sort(key=lambda x: -x["_hits"])
-        return qualified[: cfg.get("spec_facts_max_inject", 6)]
+        """Delegate to the shared spec-fact assertion layer (core.retrieval.spec_facts)
+        so every retrieval path consults the same index with the same rules."""
+        from .spec_facts import lookup_spec_facts
+        return lookup_spec_facts(query_text, metadata_db, plan=plan,
+                                 industry_hint=industry_hint)
 
     @staticmethod
     def _format_spec_facts(facts: list[dict]) -> str:
         """Render spec facts as an authoritative evidence block for the context."""
-        lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
-        for f in facts:
-            lines.append(
-                f"- {f.get('entity','')} | {f.get('attribute','')}: {f.get('value','')}"
-                f"  (page {f.get('page_num','?')}; 原文: \"{f.get('source_text','')[:120]}\")")
-        return "\n".join(lines)
+        from .spec_facts import format_spec_facts
+        return format_spec_facts(facts)
 
     def query(self, query_text: str, tenant_id: str,
               industry_hint: str = None,
@@ -425,6 +367,25 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             # crash with "expected string or bytes-like object, got 'list'".
             if isinstance(rewritten_query, list):
                 rewritten_query = "; ".join(str(q) for q in rewritten_query) if rewritten_query else query_text
+            # Rewrite-collapse guard: the planner LLM may rewrite a comparison
+            # query into a single-entity sub-query ("对比A和B的X" -> "A X 配置参数"),
+            # which frames the synthesis around one side only. If the rewrite
+            # drops any entity present in the ORIGINAL query, synthesize from
+            # the original query instead. Entities are harvested from the
+            # planner AND from the query text itself (generic model-number
+            # pattern, same as the fallback classifier) because the planner's
+            # entity list is itself sometimes incomplete.
+            import re as _re
+            plan_entities = {str(e) for e in (plan.get("entities") or [])}
+            query_entities = set(_re.findall(
+                r'(?<![A-Za-z0-9])[A-Z]{1,}[a-z]*\d+[A-Z0-9]*(?![A-Za-z0-9])', query_text))
+            known_entities = plan_entities | query_entities
+            if rewritten_query and known_entities:
+                missing = [e for e in known_entities
+                           if e.lower() not in rewritten_query.lower()]
+                if missing and all(e.lower() in query_text.lower() for e in missing):
+                    logger.info(f"[ENGINE] rewritten query drops entities {missing}; using original query for synthesis framing")
+                    rewritten_query = query_text
             routed_category = plan.get("routed_category", "")
 
             if industry_hint and industry_hint != "auto":
