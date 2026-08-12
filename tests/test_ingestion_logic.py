@@ -76,3 +76,49 @@ def test_extract_spec_facts_skips_vlm_hallucinations():
     facts = extract_spec_facts_from_text(raw, 1, "RK3588", "d1")
     assert any(f["value"] == "0.35mm" for f in facts)
     assert all(f["value"] != "560" for f in facts)
+
+
+# ---- TOPS strictness (regression: "2.2 Top Marking" / "1 Top frame mode") ----
+def test_extract_spec_facts_tops_plural_only():
+    # Real compute declarations carry the plural unit.
+    facts = extract_spec_facts_from_text(
+        "Neural network acceleration engine with processing performance up to 1 TOPS.",
+        6, "RK3568", "d1")
+    assert any(f["attribute"] == "compute power" and f["value"] == "1 TOPS"
+               for f in facts)
+
+
+def test_extract_spec_facts_tops_rejects_top_marking_heading():
+    # Datasheet section heading "2.2 Top Marking" (silkscreen) must NOT be
+    # extracted as compute power — "Top" is not the TOPS unit.
+    facts = extract_spec_facts_from_text(
+        "2.2 Top Marking\nBrand: Rockchip\nPart Number: RK3568",
+        19, "RK3568", "d1")
+    assert all(f["attribute"] != "compute power" for f in facts)
+
+
+def test_extract_spec_facts_tops_rejects_top_frame_mode():
+    # Video scan mode "Output 1 Top frame mode" must not be read as 1 TOP.
+    facts = extract_spec_facts_from_text(
+        "I5O1T: Input 5 Fields Output 1 Top frame mode", 10, "RK3568", "d1")
+    assert all(f["attribute"] != "compute power" for f in facts)
+
+
+# ---- frequency/clock extraction (industry-agnostic attribute capture) ----
+def test_extract_spec_facts_frequency_free_text():
+    facts = extract_spec_facts_from_text(
+        "Max frequency for CPU Frequency NA NA 2 GHz", 24, "RK3562", "d1")
+    assert any(f["value"] == "2 GHz" for f in facts)
+
+
+def test_extract_spec_facts_frequency_na_tbd_never_matches():
+    # TBD/NA cells carry no digits before the unit -> no fact.
+    facts = extract_spec_facts_from_text(
+        "Max CPU frequency NA NA TBD GHz", 55, "RK3568", "d1")
+    assert all("GHz" not in (f.get("value") or "") for f in facts)
+
+
+def test_extract_spec_facts_frequency_colon_form():
+    facts = extract_spec_facts_from_text(
+        "Max NPU frequency: 1.0 GHz", 6, "RK3572", "d1")
+    assert any(f["value"] == "1.0 GHz" for f in facts)

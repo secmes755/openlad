@@ -75,7 +75,27 @@ _RESOLUTION_RE = re.compile(
 )
 
 # Pattern 4: NPU/compute power, e.g. "NPU: 1 TOPS" "up to 3 TOPS"
-_TOPS_RE = re.compile(r'\b(\d+(?:\.\d+)?)\s*(TOPS?)\b', re.I)
+# Strict plural unit "TOPS" only: datasheet section headings like
+# "2.2 Top Marking" (silkscreen marking) and video modes like
+# "Output 1 Top frame mode" must NOT be read as compute power — "Top"/"TOP"
+# is not the TOPS unit. Real compute declarations always carry the plural
+# ("1 TOPS", "3 TOPS", "8 TOPS").
+_TOPS_RE = re.compile(r'\b(\d+(?:\.\d+)?)\s*TOPS\b', re.I)
+
+# Pattern 6: frequency/clock declarations, e.g.
+#   "Max CPU frequency NA NA 2 GHz"   (table text rows)
+#   "Max NPU frequency 1.0 GHz"
+#   "OSC input clock frequency NA 24 NA MHz"
+# Industry-agnostic mechanism: the attribute name is captured from the text
+# (NOT enumerated — core keeps no chip vocabulary), "frequency|clock" is a
+# domain-neutral measure word (like quantity/version), and GHz/MHz are
+# neutral units. TBD/NA cells carry no digits, so they never match.
+_FREQ_RE = re.compile(
+    r'\b((?:Max\s+)?[A-Za-z][A-Za-z0-9 \-/]{0,24}?)\s+'
+    r'(?:frequency|clock)\s*(?:rate)?\s*[:|]?\s*'
+    r'(?:[^0-9\n]{0,12}?)\s*(\d+(?:\.\d+)?)\s*(GHz|MHz)\b',
+    re.I,
+)
 
 # Pattern 5: versioned protocol support declarations, e.g.
 #   "Support PCIe3.1(8Gbps) protocol and backward compatible with the PCIe2.1
@@ -208,9 +228,20 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
                 add(f"{feature} {unit_word} count", str(num), line,
                     verify_against=m.group(1))
 
-        # Pattern 4 (TOPS).
+        # Pattern 4 (TOPS). Unit is the strict plural "TOPS" (see regex
+        # comment); group(1) is the number.
         for m in _TOPS_RE.finditer(line):
-            add("compute power", f"{m.group(1)} {m.group(2).upper()}", line, unit=m.group(2).upper())
+            add("compute power", f"{m.group(1)} TOPS", line, unit="TOPS")
+
+        # Pattern 6 (frequency/clock). Attribute name comes from the text
+        # (e.g. "Max CPU", "OSC input clock"), so no chip vocabulary lives
+        # in core. NA/TBD cells never match because no digits precede the
+        # unit.
+        for m in _FREQ_RE.finditer(line):
+            attr = _clean(m.group(1))
+            unit = m.group(3)  # keep surface case ("GHz"/"MHz")
+            freq = f"{m.group(2)} {unit}"
+            add(f"{attr} frequency", freq, line, unit=unit)
 
         # Pattern 5 (versioned protocol support). Value lists every same-family
         # version token in the sentence (e.g. "PCIe3.1(8Gbps), PCIe2.1, PCIe1.1").
