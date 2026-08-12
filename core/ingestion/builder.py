@@ -628,7 +628,15 @@ class DocumentIndexBuilder:
             if settings.CONTEXT_CONFIG.get("spec_facts_enabled", True):
                 try:
                     from .spec_facts_extractor import extract_spec_facts_from_text
-                    for fact in extract_spec_facts_from_text(r["page_text"], r["page_num"], spec_entity, doc_id):
+                    extraction = None
+                    if plugin is not None:
+                        try:
+                            extraction = plugin.retrieval.get_spec_extraction_config() or None
+                        except Exception as e:
+                            logger.warning(f"[BUILDER] get_spec_extraction_config failed (non-fatal): {e}")
+                    for fact in extract_spec_facts_from_text(
+                            r["page_text"], r["page_num"], spec_entity, doc_id,
+                            extraction=extraction):
                         metadata_db.insert_spec_fact(
                             doc_id=fact["doc_id"], entity=fact["entity"],
                             attribute=fact["attribute"], value=fact["value"],

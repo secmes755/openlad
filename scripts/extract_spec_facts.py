@@ -31,10 +31,44 @@ def _load_entity_patterns() -> list[str]:
     return patterns
 
 
+def _load_extraction_config() -> dict:
+    """Merge extractor vocabulary from all registered industry packs.
+    Word lists are unioned; the first non-empty compute_attribute wins."""
+    merged: dict = {}
+    try:
+        from core.plugins import get_plugin_registry
+        registry = get_plugin_registry()
+        for name in (registry.list_plugins() or []):
+            try:
+                plugin = registry.get_plugin(name)
+                if plugin is None:
+                    continue
+                cfg = plugin.retrieval.get_spec_extraction_config() or {}
+                for key in ("spec_headers", "compute_units", "frequency_terms"):
+                    merged.setdefault(key, [])
+                    merged[key].extend(cfg.get(key) or [])
+                if not merged.get("compute_attribute") and cfg.get("compute_attribute"):
+                    merged["compute_attribute"] = cfg["compute_attribute"]
+            except Exception:
+                continue
+        for key in ("spec_headers", "compute_units", "frequency_terms"):
+            if key in merged:
+                seen, uniq = set(), []
+                for w in merged[key]:
+                    if str(w).strip().lower() not in seen:
+                        seen.add(str(w).strip().lower())
+                        uniq.append(w)
+                merged[key] = uniq
+    except Exception as e:
+        print(f"  (plugin registry unavailable, extraction vocab empty: {e})")
+    return merged
+
+
 def main(tenant_id: str = "test"):
     db = get_tenant_metadata_db(tenant_id)
     db.clear_spec_facts()
     entity_patterns = _load_entity_patterns()
+    extraction = _load_extraction_config()
 
     with db.get_connection() as conn:
         docs = [dict(r) for r in conn.execute(
@@ -49,7 +83,8 @@ def main(tenant_id: str = "test"):
         doc_facts = 0
         for p in pages:
             raw = p.get("raw_text") or ""
-            facts = extract_spec_facts_from_text(raw, p.get("page_num"), entity, doc_id)
+            facts = extract_spec_facts_from_text(raw, p.get("page_num"), entity, doc_id,
+                                                 extraction=extraction)
             for f in facts:
                 db.insert_spec_fact(
                     doc_id=f["doc_id"], entity=f["entity"], attribute=f["attribute"],

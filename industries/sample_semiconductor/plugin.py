@@ -206,6 +206,12 @@ class SemiconductorRetrievalPlugin:
         retrieval/rules.yaml (explicit lookarounds, see rules.yaml comments)."""
         return _retrieval_rules.get("entity_patterns", []) or []
 
+    def get_spec_extraction_config(self) -> Dict[str, Any]:
+        """Extractor vocabulary (spec_headers / compute_units /
+        compute_attribute / frequency_terms) loaded from retrieval/rules.yaml.
+        Core keeps only the matching mechanisms."""
+        return _retrieval_rules.get("spec_extraction", {}) or {}
+
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"
 

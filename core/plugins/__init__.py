@@ -197,6 +197,14 @@ class RetrievalPlugin(ABC):
         Core falls back to the plain title/filename when empty."""
         return []
 
+    def get_spec_extraction_config(self) -> dict[str, Any]:
+        """Industry vocabulary for the rule-based spec-fact extractor:
+          {spec_headers: [..], compute_units: [..], compute_attribute: str,
+           frequency_terms: [..]}
+        Core keeps only the extraction MECHANISMS; all word lists live in
+        the pack. Missing/empty lists disable the corresponding pattern."""
+        return {}
+
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         """Format citation (default [^page_num^])"""
         return f"[^{page_num}^]"
@@ -323,6 +331,11 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
     def get_entity_patterns(self) -> list[str]:
         # Document-entity regex patterns from rules.yaml (default empty).
         return self.config.rules.get("entity_patterns", []) or []
+
+    def get_spec_extraction_config(self) -> dict[str, Any]:
+        # Extractor vocabulary from rules.yaml `spec_extraction` (default
+        # empty -> core runs structural patterns only).
+        return self.config.rules.get("spec_extraction", {}) or {}
 
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"

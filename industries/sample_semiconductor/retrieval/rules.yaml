@@ -344,6 +344,52 @@ entity_patterns:
   - '(?<![A-Za-z0-9])(RK\d{4}[A-Z]?|SSU\d{4}|T\d{3}|RV\d{4}|PX\d+|RK\d{3}[A-Z]?)(?![A-Za-z0-9])'
 
 # =============================================================================
+# 规格事实提取器词表（spec_extraction）
+# 供 core 的 rule-based spec-fact 提取器使用。core 只保留匹配机制，
+# 所有词表（两行式规格头、算力单位、频率计量词）都在这里：
+#   - spec_headers: 独立成行的规格头（"GPU\n Mali-G52..." 两行布局）
+#   - compute_units: 算力单位（严格复数形态，如 TOPS；"2.2 Top Marking"
+#     这类章节标题/丝印词不会匹配）
+#   - compute_attribute: 算力事实的属性名（与 spec_query_terms 的
+#     "算力: [tops, compute power]" 保持一致，保证查询关键词能命中）
+#   - frequency_terms: 频率/时钟计量词（构造 "Max CPU frequency ... 2 GHz"
+#     模式；TBD/NA 无数字不会匹配）
+# 词表为空时对应模式禁用（无行业包 = 仅结构模式）。
+# =============================================================================
+spec_extraction:
+  spec_headers:
+    - gpu
+    - cpu
+    - npu
+    - mcu
+    - mpu
+    - isp
+    - vpu
+    - dpu
+    - dsp
+    - vop
+    - rga
+    - jpeg
+    - vdpu
+    - vepu
+    - package
+    - process
+    - memory
+    - ddr
+    - display
+    - camera
+    - video encoder
+    - video decoder
+    - encoder
+    - decoder
+  compute_units:
+    - TOPS
+  compute_attribute: compute power
+  frequency_terms:
+    - frequency
+    - clock
+
+# =============================================================================
 # 置信度打分词表（specificity_vocabulary）
 # 回答置信度启发式评估（_assess_confidence）中的行业特异度信号。
 # units: 数值+单位模式（如 "1.6GHz"、"32-bit"）；terms: 领域专有名词。

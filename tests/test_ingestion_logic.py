@@ -54,6 +54,15 @@ def test_infer_doc_entity_falls_back_to_cleaned_title():
 
 
 # ---- rule extraction ----
+# Industry-pack vocabulary for the extractor (core keeps only mechanisms).
+SEMICON_EXTRACTION = {
+    "spec_headers": ["gpu", "cpu", "npu", "package", "process", "memory"],
+    "compute_units": ["TOPS"],
+    "compute_attribute": "compute power",
+    "frequency_terms": ["frequency", "clock"],
+}
+
+
 def test_extract_spec_facts_support_sentence():
     facts = extract_spec_facts_from_text(
         "The chip supports ten UART interfaces.", 1, "RK3588", "d1")
@@ -83,7 +92,7 @@ def test_extract_spec_facts_tops_plural_only():
     # Real compute declarations carry the plural unit.
     facts = extract_spec_facts_from_text(
         "Neural network acceleration engine with processing performance up to 1 TOPS.",
-        6, "RK3568", "d1")
+        6, "RK3568", "d1", extraction=SEMICON_EXTRACTION)
     assert any(f["attribute"] == "compute power" and f["value"] == "1 TOPS"
                for f in facts)
 
@@ -93,32 +102,58 @@ def test_extract_spec_facts_tops_rejects_top_marking_heading():
     # extracted as compute power — "Top" is not the TOPS unit.
     facts = extract_spec_facts_from_text(
         "2.2 Top Marking\nBrand: Rockchip\nPart Number: RK3568",
-        19, "RK3568", "d1")
+        19, "RK3568", "d1", extraction=SEMICON_EXTRACTION)
     assert all(f["attribute"] != "compute power" for f in facts)
 
 
 def test_extract_spec_facts_tops_rejects_top_frame_mode():
     # Video scan mode "Output 1 Top frame mode" must not be read as 1 TOP.
     facts = extract_spec_facts_from_text(
-        "I5O1T: Input 5 Fields Output 1 Top frame mode", 10, "RK3568", "d1")
+        "I5O1T: Input 5 Fields Output 1 Top frame mode", 10, "RK3568", "d1",
+        extraction=SEMICON_EXTRACTION)
     assert all(f["attribute"] != "compute power" for f in facts)
 
 
 # ---- frequency/clock extraction (industry-agnostic attribute capture) ----
 def test_extract_spec_facts_frequency_free_text():
     facts = extract_spec_facts_from_text(
-        "Max frequency for CPU Frequency NA NA 2 GHz", 24, "RK3562", "d1")
+        "Max frequency for CPU Frequency NA NA 2 GHz", 24, "RK3562", "d1",
+        extraction=SEMICON_EXTRACTION)
     assert any(f["value"] == "2 GHz" for f in facts)
 
 
 def test_extract_spec_facts_frequency_na_tbd_never_matches():
     # TBD/NA cells carry no digits before the unit -> no fact.
     facts = extract_spec_facts_from_text(
-        "Max CPU frequency NA NA TBD GHz", 55, "RK3568", "d1")
+        "Max CPU frequency NA NA TBD GHz", 55, "RK3568", "d1",
+        extraction=SEMICON_EXTRACTION)
     assert all("GHz" not in (f.get("value") or "") for f in facts)
 
 
 def test_extract_spec_facts_frequency_colon_form():
     facts = extract_spec_facts_from_text(
-        "Max NPU frequency: 1.0 GHz", 6, "RK3572", "d1")
+        "Max NPU frequency: 1.0 GHz", 6, "RK3572", "d1",
+        extraction=SEMICON_EXTRACTION)
     assert any(f["value"] == "1.0 GHz" for f in facts)
+
+
+# ---- vocabulary-boundary degradation: no pack = structural patterns only ----
+def test_extract_spec_facts_no_vocab_disables_compute_and_freq():
+    # Without an industry pack vocabulary, compute-power and frequency
+    # patterns are disabled (core keeps mechanisms, not word lists).
+    text = ("Neural network engine up to 1 TOPS\n"
+            "Max CPU frequency NA NA 2 GHz")
+    facts = extract_spec_facts_from_text(text, 1, "RK3568", "d1")
+    assert all(f["attribute"] != "compute power" for f in facts)
+    assert all("GHz" not in (f.get("value") or "") for f in facts)
+
+
+def test_extract_spec_facts_two_line_header_from_pack():
+    # Two-line "GPU\n Mali-G52 1-Core-2EE" layout only extracts when the
+    # header word is provided by the pack.
+    text = "GPU\n Mali-G52 1-Core-2EE"
+    facts = extract_spec_facts_from_text(text, 1, "RK3568", "d1",
+                                         extraction=SEMICON_EXTRACTION)
+    assert any(f["attribute"] == "GPU" and "Mali-G52" in f["value"] for f in facts)
+    plain = extract_spec_facts_from_text(text, 1, "RK3568", "d1")
+    assert all(f["attribute"] != "GPU" for f in plain)
