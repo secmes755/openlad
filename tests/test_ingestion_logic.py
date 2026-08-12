@@ -39,8 +39,12 @@ def test_clean_normalizes_whitespace_and_strips_punctuation():
 
 # ---- entity inference ----
 def test_infer_doc_entity_from_title_and_filename():
-    assert infer_doc_entity("Rockchip RK3588 Datasheet V1.9") == "RK3588"
-    assert infer_doc_entity("", "RK3588 Datasheet.pdf") == "RK3588"
+    # Core is industry-agnostic: model patterns arrive via the industry pack's
+    # entity_patterns hook (RetrievalPlugin.get_entity_patterns); the test
+    # supplies them explicitly, as the ingestion builder does at runtime.
+    patterns = [r"(RK\d{4}[A-Z]?)"]
+    assert infer_doc_entity("Rockchip RK3588 Datasheet V1.9", entity_patterns=patterns) == "RK3588"
+    assert infer_doc_entity("", "RK3588 Datasheet.pdf", entity_patterns=patterns) == "RK3588"
 
 
 def test_infer_doc_entity_falls_back_to_cleaned_title():

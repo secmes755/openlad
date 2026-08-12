@@ -520,7 +520,7 @@ Output as concise notes, preserving original citations."""
         # merge step's "not mentioned" iron rule amplifies a retrieval gap into
         # an authoritative-looking "no data" for the under-retrieved entity.
         try:
-            from .spec_facts import lookup_spec_facts, format_spec_facts
+            from .spec_facts import format_spec_facts, lookup_spec_facts
             facts = lookup_spec_facts(query, self.metadata_db,
                                       plan=self.spec_facts_plan,
                                       doc_id_filter={doc_id})
