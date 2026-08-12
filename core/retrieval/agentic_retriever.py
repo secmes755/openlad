@@ -189,7 +189,7 @@ Output as JSON:
 {{"keywords": ["chapter title 1", "chapter title 2"]}}
 """
 
-        data = self.model_client.generate_json(prompt, max_tokens=1024, temperature=0.3)
+        data = self.model_client.generate_json(prompt, max_tokens=1024, temperature=0)
 
         keywords = data.get("keywords", []) if data else []
         # Cap at configured max
@@ -423,7 +423,7 @@ Output as JSON:
 {{"has_answer": true/false, "evidence": "Relevant information found (if any)", "reason": "Reason for the assessment"}}
 """
 
-        data = self.model_client.generate_json(prompt, max_tokens=1024, temperature=0.3)
+        data = self.model_client.generate_json(prompt, max_tokens=1024, temperature=0)
 
         if data and data.get("has_answer") is not None:
             return data
@@ -455,7 +455,7 @@ Please extract:
 
 Output as concise notes, preserving original citations."""
 
-        return self.model_client.generate(prompt, max_tokens=2000, temperature=0.3)
+        return self.model_client.generate(prompt, max_tokens=2000, temperature=0)
 
     def _query_single_document(self, query: str, doc_id: str, doc_title: str) -> dict:
         """
@@ -545,7 +545,7 @@ If the document truly does not contain relevant information, please reply only w
 You are consulting the documentation for {doc_title}. Please only extract information from this document; the query may involve multiple entities, but you only need to cover the portions covered by this document.
 请用中文回答。"""
 
-        answer = self.model_client.generate(prompt, max_tokens=2000, temperature=0.3)
+        answer = self.model_client.generate(prompt, max_tokens=2000, temperature=0)
 
         # Determine: as long as the answer doesn't explicitly say "not found" and has sufficient length, consider it as having an answer
         min_len = settings.AGENTIC_CONFIG.get('answer_min_length', 100)
@@ -619,7 +619,7 @@ Output as JSON:
 }}
 """
 
-        analysis = self.model_client.generate_json(analysis_prompt, max_tokens=2048, temperature=0.3)
+        analysis = self.model_client.generate_json(analysis_prompt, max_tokens=2048, temperature=0)
 
         if not analysis:
             analysis = {"target_docs": []}
@@ -721,7 +721,7 @@ Answering rules:
 
 请用中文回答。"""
 
-        answer = self.model_client.generate(summary_prompt, max_tokens=settings.AGENTIC_CONFIG.get('summary_max_tokens', 4000), temperature=0.3)
+        answer = self.model_client.generate(summary_prompt, max_tokens=settings.AGENTIC_CONFIG.get('summary_max_tokens', 4000), temperature=0)
 
         context = individual_answers
 

@@ -114,7 +114,7 @@ class AnswerSynthesizer:
                 raw_answer = self.model_client.generate(
                     prompt,
                     system_prompt=lang_instruction,
-                    temperature=0.3,
+                    temperature=0,
                     max_tokens=synthesis_max_tokens
                 )
                 raw_answer = raw_answer.strip()
@@ -444,7 +444,7 @@ Output only JSON."""
         # FIX: Single-chip queries are not suitable for comparison tables, fallback to normal answer generation
         if len(entities) < 2:
             logger.info(f"[SYNTHESIZER] Single-chip query ({entities}), skipping table generation, using normal answer")
-            raw_answer = self.model_client.generate(base_prompt, temperature=0.3, max_tokens=direct_max_tokens)
+            raw_answer = self.model_client.generate(base_prompt, temperature=0, max_tokens=direct_max_tokens)
             return self._post_process_answer(raw_answer.strip())
 
         entity_names = ", ".join(entities)
@@ -478,7 +478,7 @@ Output JSON:
             logger.warning(f"[SYNTHESIZER] JSON table generation failed: {e}")
 
         # Fallback: let LLM generate normal answer directly
-        raw_answer = self.model_client.generate(base_prompt, temperature=0.3, max_tokens=direct_max_tokens)
+        raw_answer = self.model_client.generate(base_prompt, temperature=0, max_tokens=direct_max_tokens)
         return self._post_process_answer(raw_answer.strip())
 
     def _render_json_table(self, data: dict) -> str:
