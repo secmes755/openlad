@@ -726,6 +726,16 @@ class TenantMetadataDB:
         scored.sort(key=lambda x: (-x[0], x[1].get("page_num") or 0))
         return [r for _, r in scored[:limit]]
 
+    def get_spec_fact_entities(self) -> list[str]:
+        """Distinct entity vocabulary of the assertion index (verified facts)."""
+        try:
+            with self.get_connection() as conn:
+                return [r[0] for r in conn.execute(
+                    "SELECT DISTINCT entity FROM spec_facts WHERE verified = 1 AND entity != ''"
+                ).fetchall()]
+        except Exception:
+            return []
+
     def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> list[int]:
         """Return page numbers whose raw_text contains the keyword verbatim.
 

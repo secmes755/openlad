@@ -254,6 +254,8 @@ CONTEXT_CONFIG = {
     "spec_facts_enabled": True,
     "spec_facts_max_inject": 6,           # max facts prepended to context
     "spec_facts_min_hits": 2,             # min keyword hits for a fact to qualify
+    "spec_facts_entity_restriction": True,  # scope injected facts to query-named entities
+    "rewrite_collapse_guard": True,         # planner rewrite dropping a query entity -> frame synthesis with the original query
     # Chinese query-term -> English keyword expansion for spec-fact lookup.
     # This is a QUERY-UNDERSTANDING layer (synonym expansion), extensible via
     # config; it never hardcodes any answer.

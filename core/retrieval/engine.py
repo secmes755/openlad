@@ -126,11 +126,10 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
         # Before accepting agentic result, verify it covers all entities in the query.
         # The agentic retriever may find only one document even when the user asks
-        # about two or more — e.g., "compare SSU9383CM and SSD2386" but only
-        # SSD2386 was retrieved.
-        import re as _re
-        chip_models = _re.findall(r'(?<![A-Za-z0-9])[A-Z]{1,}\d{2,}[A-Z]*(?![A-Za-z0-9])', query_text)
-        unique_models = list(dict.fromkeys(chip_models))
+        # about two or more — e.g., comparing two product models but only one was
+        # retrieved.
+        from .spec_facts import extract_model_tokens
+        unique_models = extract_model_tokens(query_text)
         entities = unique_models if len(unique_models) >= 1 else None
 
         if agentic_result and agentic_result.get("total_results", 0) > 0:
@@ -164,10 +163,9 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         # Agentic failed or incomplete — fall back to traditional decomposition
         logger.info("[ENGINE] Agentic retrieval failed or incomplete, falling back to traditional decomposition")
 
-        # FIX: Extract entities from query (e.g., chip model numbers), pass to decomposer for true entity decomposition
-        import re as _re
-        chip_models = _re.findall(r'(?<![A-Za-z0-9])[A-Z]{1,}\d{2,}[A-Z]*(?![A-Za-z0-9])', query_text)
-        unique_models = list(dict.fromkeys(chip_models))  # deduplicate while preserving order
+        # FIX: Extract entities from query (model-number tokens), pass to
+        # decomposer for true entity decomposition
+        unique_models = extract_model_tokens(query_text)
         entities = unique_models if len(unique_models) >= 1 else None  # FIX: >=1 instead of >=2
 
         # Attempt to decompose query
@@ -372,20 +370,20 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             # which frames the synthesis around one side only. If the rewrite
             # drops any entity present in the ORIGINAL query, synthesize from
             # the original query instead. Entities are harvested from the
-            # planner AND from the query text itself (generic model-number
-            # pattern, same as the fallback classifier) because the planner's
-            # entity list is itself sometimes incomplete.
-            import re as _re
-            plan_entities = {str(e) for e in (plan.get("entities") or [])}
-            query_entities = set(_re.findall(
-                r'(?<![A-Za-z0-9])[A-Z]{1,}[a-z]*\d+[A-Z0-9]*(?![A-Za-z0-9])', query_text))
-            known_entities = plan_entities | query_entities
-            if rewritten_query and known_entities:
-                missing = [e for e in known_entities
-                           if e.lower() not in rewritten_query.lower()]
-                if missing and all(e.lower() in query_text.lower() for e in missing):
-                    logger.info(f"[ENGINE] rewritten query drops entities {missing}; using original query for synthesis framing")
-                    rewritten_query = query_text
+            # planner AND from the query text itself (shared model-token
+            # pattern) because the planner's entity list is itself sometimes
+            # incomplete. Switchable via rewrite_collapse_guard.
+            if settings.CONTEXT_CONFIG.get("rewrite_collapse_guard", True):
+                from .spec_facts import entity_mentioned, extract_model_tokens
+                plan_entities = {str(e) for e in (plan.get("entities") or [])}
+                query_entities = set(extract_model_tokens(query_text))
+                known_entities = plan_entities | query_entities
+                if rewritten_query and known_entities:
+                    missing = [e for e in known_entities
+                               if not entity_mentioned(e, rewritten_query)]
+                    if missing and all(entity_mentioned(e, query_text) for e in missing):
+                        logger.info(f"[ENGINE] rewritten query drops entities {missing}; using original query for synthesis framing")
+                        rewritten_query = query_text
             routed_category = plan.get("routed_category", "")
 
             if industry_hint and industry_hint != "auto":

@@ -18,6 +18,30 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+# Model-token pattern shared by every retrieval-path entity check (engine
+# coverage check, decomposer entity hints, rewrite-collapse guard, and the
+# entity scoping below). Boundary lookarounds instead of \b so UUID-prefixed
+# or underscore-joined filenames still match; requires 2+ digits so plain
+# words ("GPU", "UART") are never mistaken for model tokens.
+_MODEL_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9])[A-Z]{1,}\d{2,}[A-Z]*(?![A-Za-z0-9])')
+
+
+def extract_model_tokens(text: str) -> list[str]:
+    """Model-like tokens (letters + 2+ digits, e.g. RK3568, T536) from text,
+    deduplicated in order of appearance. Industry-agnostic shape only."""
+    if not text:
+        return []
+    return list(dict.fromkeys(_MODEL_TOKEN_RE.findall(text)))
+
+
+def entity_mentioned(entity: str, text: str) -> bool:
+    """Boundary-aware containment: 'T5' must not match 'T536'."""
+    if not entity or not text:
+        return False
+    return re.search(r'(?<![A-Za-z0-9])' + re.escape(entity) + r'(?![A-Za-z0-9])',
+                     text, re.I) is not None
+
+
 def _merged_spec_terms(plan: dict | None, industry_hint: str | None) -> dict:
     """Core generic terms merged with the active industry pack's terms."""
     terms = dict(settings.CONTEXT_CONFIG.get("spec_query_terms") or {})
@@ -128,16 +152,32 @@ def lookup_spec_facts(query_text: str, metadata_db, plan: dict | None = None,
             h["_hits"] = n
             qualified.append(h)
 
-    # Entity-in-query restriction: when the query (or its rewrite) literally
-    # names specific entities, keep only their facts. Synonym matching alone
-    # can pull in UNRELATED entities sharing the attribute family (e.g. a
-    # "DDR4 support" query about chip A also matches chip B's DDR4 row),
-    # which pollutes the injected block with irrelevant entities.
-    keyword_text = f"{query_text or ''} {((plan or {}).get('rewritten_query') if isinstance((plan or {}).get('rewritten_query'), str) else ' '.join(str(q) for q in ((plan or {}).get('rewritten_query') or [])))}"
-    q_lower = keyword_text.lower()
-    named = {h["entity"] for h in qualified if h.get("entity") and h["entity"].lower() in q_lower}
-    if named:
-        qualified = [h for h in qualified if h.get("entity") in named]
+    # Entity scoping: when the query (or its rewrite) literally names entities
+    # from the assertion index's own vocabulary, keep only their facts.
+    # Synonym matching alone can pull in UNRELATED entities sharing the
+    # attribute family (e.g. a "DDR4 support" query about chip A also matches
+    # chip B's DDR4 row), which pollutes the injected block. The vocabulary is
+    # the index's entity set (not the qualified hits) so a query about an
+    # entity with no matching facts injects NOTHING instead of leaking other
+    # entities' facts; protocol tokens (e.g. "PCIE30") never count as entities
+    # because they are not in the entity vocabulary.
+    if cfg.get("spec_facts_entity_restriction", True) and qualified:
+        keyword_text = f"{query_text or ''} {((plan or {}).get('rewritten_query') if isinstance((plan or {}).get('rewritten_query'), str) else ' '.join(str(q) for q in ((plan or {}).get('rewritten_query') or [])))}"
+        tokens = extract_model_tokens(keyword_text)
+        if tokens:
+            vocab = None
+            if hasattr(metadata_db, "get_spec_fact_entities"):
+                try:
+                    vocab = {e.strip().lower() for e in metadata_db.get_spec_fact_entities() if e}
+                except Exception:
+                    vocab = None
+            if vocab is None:
+                vocab = {(h.get("entity") or "").strip().lower() for h in qualified}
+            named = {t for t in tokens if t.lower() in vocab}
+            if named:
+                named_l = {n.lower() for n in named}
+                qualified = [h for h in qualified
+                             if (h.get("entity") or "").strip().lower() in named_l]
 
     qualified.sort(key=lambda x: -x["_hits"])
     return qualified[: cfg.get("spec_facts_max_inject", 6)]
