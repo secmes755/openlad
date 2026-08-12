@@ -27,7 +27,7 @@ _MODEL_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9])[A-Z]{1,}\d{2,}[A-Z]*(?![A-Za-z0-
 
 
 def extract_model_tokens(text: str) -> list[str]:
-    """Model-like tokens (letters + 2+ digits, e.g. RK3568, T536) from text,
+    """Model-like tokens (letters + 2+ digits, e.g. AB1234, T123) from text,
     deduplicated in order of appearance. Industry-agnostic shape only."""
     if not text:
         return []
@@ -35,14 +35,15 @@ def extract_model_tokens(text: str) -> list[str]:
 
 
 def entity_mentioned(entity: str, text: str) -> bool:
-    """Boundary-aware containment: 'T5' must not match 'T536'."""
+    """Boundary-aware containment: 'T1' must not match 'T123'."""
     if not entity or not text:
         return False
     return re.search(r'(?<![A-Za-z0-9])' + re.escape(entity) + r'(?![A-Za-z0-9])',
                      text, re.I) is not None
 
 
-def _merged_spec_terms(plan: dict | None, industry_hint: str | None) -> dict:
+def _merged_spec_terms(plan: dict | None, industry_hint: str | None,
+                       query_text: str = "") -> dict:
     """Core generic terms merged with the active industry pack's terms."""
     terms = dict(settings.CONTEXT_CONFIG.get("spec_query_terms") or {})
     try:
@@ -55,6 +56,11 @@ def _merged_spec_terms(plan: dict | None, industry_hint: str | None) -> dict:
             cat = (plan or {}).get("routed_category") or ""
             if cat and hasattr(registry, "get_plugin_by_category"):
                 plugin = registry.get_plugin_by_category(cat)
+        if plugin is None and query_text and hasattr(registry, "detect_plugin_for_text"):
+            # Content-grounded fallback: the pack applies only when its own
+            # entity patterns match the query (category routing is modal and
+            # cannot scope packs per query).
+            plugin = registry.detect_plugin_for_text(query_text)
         if plugin is not None:
             pack_terms = plugin.retrieval.get_spec_query_terms() or {}
             if pack_terms:
@@ -88,7 +94,7 @@ def build_spec_keywords(query_text: str, plan: dict | None = None,
         keywords.append(tok)
 
     text_lower = keyword_text.lower()
-    for zh, en_words in _merged_spec_terms(plan, industry_hint).items():
+    for zh, en_words in _merged_spec_terms(plan, industry_hint, keyword_text).items():
         if zh in keyword_text or zh.lower() in text_lower:
             keywords.extend(en_words)
 

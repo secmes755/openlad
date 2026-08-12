@@ -664,12 +664,45 @@ class PluginRegistry:
         return None
 
     def get_generic(self) -> IndustryPlugin | None:
-        """Get generic fallback plugin"""
+        """Get generic fallback plugin.
+
+        Returns None when no genuine generic plugin is registered. Falling
+        back to an arbitrary domain-specific pack would silently inject
+        industry vocabulary/rules into unrelated queries.
+        """
         for pid, plugin in self._plugins.items():
             if pid == "generic" or "通用" in plugin.manifest.name:
                 return plugin
-        # If no generic, return first or None
-        return next(iter(self._plugins.values()), None)
+        return None
+
+    def detect_plugin_for_text(self, text: str) -> IndustryPlugin | None:
+        """Detect which industry pack claims a piece of text (query or
+        retrieved context) via the pack-declared entity patterns.
+
+        Category routing is modal (dominant document category of the tenant),
+        so it cannot scope industry behavior per query. Content detection is
+        grounded: a pack applies only when its own entity patterns match the
+        actual query/evidence text. Packs that declare no entity patterns
+        never claim text and stay out of unrelated domains.
+        """
+        if not text:
+            return None
+        import re
+        for plugin in self._plugins.values():
+            try:
+                retrieval = getattr(plugin, "retrieval", None)
+                patterns = None
+                if retrieval is not None and hasattr(retrieval, "get_entity_patterns"):
+                    patterns = retrieval.get_entity_patterns()
+                for pat in patterns or []:
+                    if re.search(pat, text, re.IGNORECASE):
+                        return plugin
+            except Exception as e:
+                logger.warning(
+                    f"[PLUGIN_REGISTRY] detect_plugin_for_text failed for "
+                    f"'{plugin.manifest.id}': {e}"
+                )
+        return None
 
     def list_plugins(self) -> dict[str, dict[str, Any]]:
         return {

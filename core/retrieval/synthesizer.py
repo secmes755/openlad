@@ -62,6 +62,17 @@ class AnswerSynthesizer:
         industry_pack = None
         if hasattr(self.plugin_registry, "get_plugin_by_category"):
             industry_pack = self.plugin_registry.get_plugin_by_category(routed_category)
+        if industry_pack is None and hasattr(self.plugin_registry, "detect_plugin_for_text"):
+            # Category routing is modal (tenant-wide dominant category), so
+            # fall back to content-grounded detection: a pack applies only
+            # when its own entity patterns match the query. Detection uses
+            # the query texts only — retrieved context is contaminated by
+            # merged doc_filters pulling unrelated documents in. Follow-up
+            # queries reach the synthesizer already rewritten with the
+            # conversation entity, so query-side detection covers them.
+            industry_pack = self.plugin_registry.detect_plugin_for_text(
+                f"{original_query or ''}\n{query or ''}"
+            )
 
         logger.info(f"[SYNTHESIZER] original_query='{original_query}', query='{query}'")
 
@@ -119,7 +130,7 @@ class AnswerSynthesizer:
                 answer = self._self_check(query, answer, context)
                 self_check_passed = (answer == answer_before_check)  # unchanged = passed
 
-            confidence = self._assess_confidence(answer, context, self_check_passed)
+            confidence = self._assess_confidence(answer, context, self_check_passed, industry_pack=industry_pack)
             return {"answer": answer, "sources": sources, "structured": False, "confidence": confidence}
         except Exception as e:
             logger.error(f"Answer synthesis failed: {e}")
@@ -156,11 +167,11 @@ Answer rules:
 - **Core rule: It is strictly forbidden to answer based on your own knowledge, memory, or external information. You must answer strictly based on the 【Retrieved Detailed Content】 only**
 - **Read all paragraphs carefully, not just those where the title matches. The answer may be hidden in any paragraph, table, or annotation in the main text.**
 - For specific data queries: answer only based on the retrieved detailed content. Every specific value, model number, or parameter in the answer must have a clear source found in the retrieved document content
-- **Critical judgment: If the retrieved document content genuinely does not contain the specific information the user is querying (e.g., the user asks about "manufacturing process" but the document mentions nothing about any process, node, nanometer, nm, or related content), this is not a problem with your capability but an issue of incomplete knowledge base data. In this case, objectively state: "Based on the documents in the current knowledge base, no relevant information was found." Do not attempt to reason, guess, or fabricate**
-- Reasonable semantic inference based on document content is allowed (such as synonym substitution, concept inclusion), but technical inference based on hardware integration experience, interface existence assumptions, etc. is strictly forbidden
-- **Evidence hierarchy: explicit declarations take precedence over naming conventions.** Do not infer protocol versions, feature support, or performance levels from pin names, signal labels, register addresses, or file names containing numbers (e.g., \"PCIE30\", \"USB3_TX\", \"DDR5_CTRL\") unless the document explicitly declares that connection. Numbers in identifiers are often internal numbering, not version indicators.
+- **Critical judgment: If the retrieved document content genuinely does not contain the specific information the user is querying (e.g., the user asks about a specific attribute but the document mentions nothing about that attribute or any related concept), this is not a problem with your capability but an issue of incomplete knowledge base data. In this case, objectively state: "Based on the documents in the current knowledge base, no relevant information was found." Do not attempt to reason, guess, or fabricate**
+- Reasonable semantic inference based on document content is allowed (such as synonym substitution, concept inclusion), but inference based on assumptions beyond the document content is strictly forbidden
+- **Evidence hierarchy: explicit declarations take precedence over naming conventions.** Do not infer versions, feature support, or performance levels from numbers appearing in identifiers, labels, or file names unless the document explicitly declares that connection. Numbers in identifiers are often internal numbering, not version indicators.
 - If the data in the document is a range value (e.g., "32-128"), you must present the range as-is; do not arbitrarily pick a fixed value
-- **All tables (including memory maps, register lists, pin assignments, electrical parameter tables, comparison tables, peripheral lists, etc.) MUST use standard Markdown table format (| Col1 | Col2 |). ASCII Art table format (+---+ borders) is strictly forbidden.**
+- **All tables (including data tables, comparison tables, parameter lists, allocation tables, etc.) MUST use standard Markdown table format (| Col1 | Col2 |). ASCII Art table format (+---+ borders) is strictly forbidden.**
 - **When the user asks to draw diagrams, topologies, architecture diagrams, relationship diagrams, or to represent with diagrams: prefer Markdown tables or indented text lists to show hierarchy, connections, mappings, and allocation relationships. If code blocks are needed, simple flowcharts can be drawn with plain text (|, -, >), but tables must still use Markdown format.**
 - **When the user asks for comparison, contrast, differences, distinctions, or explicitly requests table output: MUST use a Markdown table for side-by-side comparison, one dimension per row, one product per column. Describing two products' information in separate paragraphs without a comparison table is strictly forbidden.**
 - **Only answer what the user explicitly asked. Do not list additional non-qualifying items as contrast or supplementary notes.**
@@ -168,8 +179,8 @@ Answer rules:
 
 Please answer the user's question directly, prioritizing conclusive data.
 **Important: Output the final answer directly. It is strictly forbidden to output any non-final content such as thinking process, self-correction, drafts, internal notes, etc. The answer must be clean and directly presentable to the user.**
-**Important: The answer must be fully expanded, not overly brief. When the user asks about a feature/module/interface, do not just answer "yes/no" or list names briefly; you must also detail all key performance parameters, supported standards/protocols, performance metrics (speed, resolution, bandwidth, power consumption, etc.), and key features.**
-For example: if the user asks "is there an encoder?", the answer should include encoder type, supported formats, maximum resolution, bitrate capability, key features (motion vector precision, filters, ROI, etc.) and other specific parameters.
+**Important: The answer must be fully expanded, not overly brief. When the user asks about a feature/module/interface, do not just answer "yes/no" or list names briefly; you must also detail all key performance parameters, supported standards/protocols, performance metrics (speed, capacity, throughput, etc.), and key features found in the document.**
+For example: if the user asks whether a capability exists, the answer should include the concrete parameters and supported modes declared in the document, not just a bare confirmation.
 **Important: If the retrieved document content genuinely does not contain the specific information the user is querying, objectively state "Based on the documents in the current knowledge base, no relevant information was found." This is an issue of incomplete knowledge base data, not your capability. Fabrication, guessing, or mixing in your own knowledge is strictly forbidden.**
 **Note: Cross-document synthesis (such as multi-product comparison tables) does NOT constitute fabrication — placing data recorded in different documents into a single table is expected behavior, as long as the data comes from the actual content of each document.**
 """
@@ -192,8 +203,17 @@ For example: if the user asks "is there an encoder?", the answer should include 
         retrieval = getattr(industry_pack, 'retrieval', None)
         if not retrieval:
             return ""
-        prompts = getattr(retrieval, 'prompts', {}) if hasattr(retrieval, 'prompts') else {}
-        constraints = getattr(retrieval, 'answer_constraints', {}) if hasattr(retrieval, 'answer_constraints') else {}
+        # Packs may expose the data either as plain attributes or via getter
+        # methods (the sample semiconductor pack uses get_retrieval_prompts /
+        # get_answer_constraints) — support both.
+        prompts = getattr(retrieval, 'prompts', None)
+        if prompts is None:
+            get_prompts = getattr(retrieval, 'get_retrieval_prompts', None)
+            prompts = get_prompts() if callable(get_prompts) else {}
+        constraints = getattr(retrieval, 'answer_constraints', None)
+        if constraints is None:
+            get_constraints = getattr(retrieval, 'get_answer_constraints', None)
+            constraints = get_constraints() if callable(get_constraints) else {}
 
         system_prompt = prompts.get("system_prompt", "") if isinstance(prompts, dict) else ""
         answer_rules = prompts.get("answer_rules", []) if isinstance(prompts, dict) else []
@@ -507,12 +527,17 @@ Output JSON:
             return True
         return False
 
-    def _assess_confidence(self, answer: str, context: str, self_check_passed: bool = False) -> str:
+    def _assess_confidence(self, answer: str, context: str, self_check_passed: bool = False, industry_pack=None) -> str:
         """Assess answer confidence: high / medium / low / none.
 
         Uses content-based heuristics (zero extra LLM latency) to provide a
         quality signal to the API consumer.  The score reflects how well the
         answer is supported by retrieved context rather than model guesswork.
+
+        The domain specificity signal (units/proper-noun vocabulary) is
+        supplied by the industry pack via get_specificity_vocabulary(); core
+        keeps only the mechanism and structural signals (list items, table
+        rows, self-check), so with no pack the vocabulary signals are empty.
         """
         if not answer or len(answer.strip()) < 10:
             return "none"
@@ -529,10 +554,26 @@ Output JSON:
         has_not_found = any(m in ans_lower for m in not_found_markers)
 
         # ── Specificity indicators ──
-        # Count specific data points: numbers with units, model names, frequencies, voltages, etc.
+        # Domain vocabulary (regex fragments) comes from the industry pack.
+        units, terms = [], []
+        try:
+            retrieval = getattr(industry_pack, 'retrieval', None) if industry_pack else None
+            get_vocab = getattr(retrieval, 'get_specificity_vocabulary', None) if retrieval else None
+            if callable(get_vocab):
+                vocab = get_vocab()
+                if isinstance(vocab, dict):
+                    units = [u for u in (vocab.get("units") or []) if u]
+                    terms = [t for t in (vocab.get("terms") or []) if t]
+        except Exception as e:  # non-fatal: fall back to structural signals
+            logger.warning(f"[SYNTHESIZER] specificity vocabulary hook failed: {e}")
+            units, terms = [], []
+
+        # Count specific data points: numbers with units, domain terms
         specificity = 0
-        specificity += len(re.findall(r'\d+[\.\d]*\s*(?:MHz|GHz|KB|MB|GB|bps|V|W|nm|µm|mm|bit|core|pin|channel|port)', ans_lower))
-        specificity += len(re.findall(r'\b(?:ARM|Cortex|MIPI|USB|PCIe|DDR|LPDDR|SPI|I2C|UART|GPIO|HDMI|LVDS|eDP|SDIO|eMMC|NAND|NOR|SRAM|DRAM|AES|SHA|RSA|DES|SM\d)\b', ans_lower))
+        if units:
+            specificity += len(re.findall(r'\d+[\.\d]*\s*(?:' + '|'.join(units) + ')', ans_lower))
+        if terms:
+            specificity += len(re.findall(r'\b(?:' + '|'.join(terms) + ')\b', ans_lower))
         # Markdown list items indicate structured, detailed answer
         specificity += ans_lower.count('\n- ') + ans_lower.count('\n* ')
         # Table rows

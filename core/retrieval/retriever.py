@@ -207,7 +207,7 @@ class HierarchicalRetriever:
                 if kw_lower in text_lower:
                     keyword_bonus += 0.3
 
-            # FIX: Exact phrase match bonus (e.g., "Cortex-A53" full match)
+            # FIX: Exact phrase match bonus (full keyword match, not just prefix)
             exact_phrase_bonus = 0
             for kw in query_keywords:
                 kw_lower = kw.lower()

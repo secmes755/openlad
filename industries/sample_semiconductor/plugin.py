@@ -187,6 +187,20 @@ class SemiconductorRetrievalPlugin:
         retrieval/rules.yaml so core stays industry-agnostic."""
         return _retrieval_rules.get("spec_query_terms", {}) or {}
 
+    def get_specificity_vocabulary(self) -> Dict[str, List[str]]:
+        """Vocabulary for the confidence heuristic's specificity signal.
+
+        Returns {"units": [...], "terms": [...]} where entries are regex
+        fragments matched case-insensitively against the answer text.
+        Loaded from retrieval/rules.yaml; core keeps only the scoring
+        mechanism and defaults to empty lists when no pack provides one.
+        """
+        vocab = _retrieval_rules.get("specificity_vocabulary", {}) or {}
+        return {
+            "units": list(vocab.get("units") or []),
+            "terms": list(vocab.get("terms") or []),
+        }
+
     def get_entity_patterns(self) -> List[str]:
         """Chip-model regex patterns for document-entity inference, loaded from
         retrieval/rules.yaml (explicit lookarounds, see rules.yaml comments)."""
