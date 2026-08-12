@@ -252,7 +252,7 @@ CONTEXT_CONFIG = {
     # retrieval weaknesses (the abstraction layer the vector-hybrid / VLM-
     # penalty / chapter-scope patches were compensating for).
     "spec_facts_enabled": True,
-    "spec_facts_max_inject": 6,           # max facts prepended to context
+    "spec_facts_max_inject": 12,          # max facts prepended to context
     "spec_facts_min_hits": 2,             # min keyword hits for a fact to qualify
     "spec_facts_entity_restriction": True,  # scope injected facts to query-named entities
     "rewrite_collapse_guard": True,         # planner rewrite dropping a query entity -> frame synthesis with the original query

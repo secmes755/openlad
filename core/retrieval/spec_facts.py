@@ -190,10 +190,27 @@ def lookup_spec_facts(query_text: str, metadata_db, plan: dict | None = None,
 
 
 def format_spec_facts(facts: list[dict]) -> str:
-    """Render spec facts as an authoritative evidence block for the context."""
+    """Render spec facts as an authoritative evidence block for the context.
+
+    Facts are grouped by entity so the model cannot misattribute a value
+    (e.g. RK3562's GPU frequency) to another entity: each group carries a
+    clear [ENTITY] header and every fact keeps its verbatim source line.
+    """
+    if not facts:
+        return ""
     lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
+    order: list[str] = []
+    by_entity: dict[str, list[dict]] = {}
     for f in facts:
-        lines.append(
-            f"- {f.get('entity','')} | {f.get('attribute','')}: {f.get('value','')}"
-            f"  (page {f.get('page_num','?')}; 原文: \"{f.get('source_text','')[:120]}\")")
+        ent = (f.get("entity") or "?").strip()
+        if ent not in by_entity:
+            by_entity[ent] = []
+            order.append(ent)
+        by_entity[ent].append(f)
+    for ent in order:
+        lines.append(f"- [{ent}]")
+        for f in by_entity[ent]:
+            lines.append(
+                f"  - {f.get('attribute','')}: {f.get('value','')}"
+                f"  (page {f.get('page_num','?')}; 原文: \"{f.get('source_text','')[:120]}\")")
     return "\n".join(lines)
