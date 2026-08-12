@@ -373,10 +373,11 @@ OpenLAD 基于 **MIT 许可证** 开源。
 
 ### 为什么选择 MIT？
 
-OpenLAD 最初因依赖 PyMuPDF（AGPLv3）而采用 AGPLv3 许可证。在 v1.0 中，
-PyMuPDF 被 pypdf（BSD）、pdfplumber（MIT）和 pdf2image（MIT）的组合
-替代 — 全部为宽松许可 — 使 OpenLAD 能够采用 MIT 许可证。迁移完全透明：
-AGPLv3 版本保留在 git tag `v0.9-agpl-pymupdf`。
+OpenLAD 最初因依赖 PyMuPDF（AGPLv3）而在开源前的私有开发阶段采用 AGPLv3
+许可证。在 v1.0 中，PyMuPDF 被 pypdf（BSD）、pdfplumber（MIT）和
+pdf2image（MIT）的组合替代 — 全部为宽松许可 — 使 OpenLAD 能够采用 MIT
+许可证。公开仓库自首个公开发布（v1.0.0）起即为 MIT 许可；AGPL 阶段在
+公开历史之前，不包含在 git 仓库中。
 
 ---
 

@@ -389,11 +389,12 @@ See [LICENSE](LICENSE) for the full text.
 
 ### Why MIT?
 
-OpenLAD was originally licensed under AGPLv3 due to its dependency on PyMuPDF
-(AGPLv3). In v1.0, PyMuPDF was replaced with a combination of pypdf (BSD),
-pdfplumber (MIT), and pdf2image (MIT) — all permissively licensed — allowing
-OpenLAD to adopt the MIT license. The migration is fully transparent: the
-AGPLv3 version is preserved at git tag `v0.9-agpl-pymupdf`.
+OpenLAD was originally developed privately under AGPLv3 due to its dependency
+on PyMuPDF (AGPLv3). In v1.0, PyMuPDF was replaced with a combination of
+pypdf (BSD), pdfplumber (MIT), and pdf2image (MIT) — all permissively
+licensed — allowing OpenLAD to adopt the MIT license. The public repository
+has been MIT-licensed since its first public release (v1.0.0); the AGPL
+period predates the public history and is not part of the git repository.
 
 ---
 

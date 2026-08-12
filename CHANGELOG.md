@@ -5,7 +5,7 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-08-07
+## [0.3.0] - 2026-08-12
 
 ### Added
 
@@ -37,11 +37,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale comment) instead of shipping it as dead code.
 - CI ruff baseline is now machine-independent (repo-relative paths) and the
   ruff version is pinned.
+- Spec-fact assertion layer is wired into every retrieval path (traditional
+  + agentic/decomposed): comparison queries can no longer answer with
+  page-level asymmetries or authoritative-sounding denials, and rewrite
+  collapse is guarded.
+- Spec-fact injection is scoped by the assertion index's own entity
+  vocabulary — unrelated entities' facts no longer leak in when the
+  query-named entity has no facts of its own.
+- Spec-fact extractor fixes: lookaround-based chip-model regex (clean
+  entities even from UUID-prefixed filenames), versioned protocol support
+  declarations (e.g. "Support PCIe3.1(8Gbps) ... backward compatible"), and
+  "controllers?" as a countable unit.
+- Small documents keep all pre-selected chapters instead of trimming to a
+  fixed budget.
 
 ### Changed
 
 - `logout` no longer revokes the whole account — it revokes only the session
   key used by the current request.
+- Industry vocabulary and answer rules moved out of `core/` into industry
+  packs (`rules.yaml` / `prompts.yaml` via `RetrievalPlugin` hooks): core
+  keeps only domain-neutral mechanisms, and pack resolution is scoped per
+  query with content-grounded pack detection.
 - Answer-path LLM temperature pinned to 0 (final synthesis + agentic
   retrieval steps; ingestion temperatures untouched) for stable factual
   answers. Verified by a repeat-3 A/B on the single-fact suite: stable
