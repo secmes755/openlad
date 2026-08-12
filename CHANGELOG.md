@@ -5,7 +5,7 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-07
 
 ### Added
 
@@ -19,13 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Machines below 8 GiB VRAM / 16 GiB RAM are reported as unsupported; the
   minimum usable context is 16384 tokens.
 
-### Changed
-
-- `logout` no longer revokes the whole account — it revokes only the session
-  key used by the current request.
-
 ### Fixed
 
+- Removed the last admin-tenant fallback references in the planner and
+  executor (document listing for the admin tenant no longer merges the
+  "default" tenant's documents).
 - Chapter selection for very large documents (800+ chapters, e.g. annual
   reports): sending every chapter with its full summary could exceed the
   model context window, truncating the list and hiding the exact chapter the
@@ -35,9 +33,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set (dozens of chapters blew the synthesis context budget and could drop
   the exact page with the answer); LLM picks take priority with a capped
   semantic supplement.
-- Removed the last admin-tenant fallback references in the planner and
-  executor (document listing for the admin tenant no longer merges the
-  "default" tenant's documents).
+- Removed the query-cache half-implementation (disabled LRU/TTL cache with a
+  stale comment) instead of shipping it as dead code.
+- CI ruff baseline is now machine-independent (repo-relative paths) and the
+  ruff version is pinned.
+
+### Changed
+
+- `logout` no longer revokes the whole account — it revokes only the session
+  key used by the current request.
+- Answer-path LLM temperature pinned to 0 (final synthesis + agentic
+  retrieval steps; ingestion temperatures untouched) for stable factual
+  answers. Verified by a repeat-3 A/B on the single-fact suite: stable
+  failures dropped from 1 to 0 and two flaky cases turned fully green.
+- README deployment section documents the hardware lookup table and notes
+  that 8 GB VRAM is theoretically usable but 16 GB with the 9B model is
+  strongly recommended.
 
 ## [0.2.0] - 2026-08-07
 
