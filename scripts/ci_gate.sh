@@ -29,7 +29,7 @@ VENV="$GATE_DIR/venv"
 UV="${UV:-uv}"
 
 # CI unit-job dependency set -- keep in sync with .github/workflows/ci.yml
-CI_DEPS=(fastapi pydantic python-dotenv python-multipart PyYAML bcrypt psutil requests pytest ruff==0.16.1)
+CI_DEPS=(fastapi pydantic python-dotenv python-multipart PyYAML bcrypt psutil requests httpx pytest ruff==0.16.1)
 
 refresh=0
 self_test=0

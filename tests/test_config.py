@@ -4,10 +4,17 @@ import importlib
 import core.config as config
 
 
-def test_default_data_dir():
-    assert config.DATA_DIR.name == "data"
-    assert config.SYSTEM_DB_PATH == config.DATA_DIR / "system.db"
-    assert config.TENANTS_DIR == config.DATA_DIR / "tenants"
+def test_default_data_dir(monkeypatch):
+    # The shared test env isolates the data dir (tests/conftest.py); the
+    # "default" assertion must run with the variable explicitly cleared.
+    monkeypatch.delenv("OPENLAD_DATA_DIR", raising=False)
+    importlib.reload(config)
+    try:
+        assert config.DATA_DIR.name == "data"
+        assert config.SYSTEM_DB_PATH == config.DATA_DIR / "system.db"
+        assert config.TENANTS_DIR == config.DATA_DIR / "tenants"
+    finally:
+        importlib.reload(config)
 
 
 def test_data_dir_from_env(monkeypatch):
