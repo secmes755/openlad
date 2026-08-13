@@ -5,6 +5,36 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Auto-derived document titles with a priority chain: explicit title on the
+  upload API > structured LLM extraction (subject/year/doc_type) from the L1
+  summary with anti-hallucination validation (each field must appear in the
+  source text) > filename-derived fallback.
+- Spec-fact injection widened: facts grouped by entity and injected on every
+  retrieval path, with the extractor vocabulary living in industry packs.
+- Local CI gate (`scripts/ci_gate.sh` wired to a pre-push hook): reproduces
+  the CI minimal-dependency environment (lint with pinned ruff + unit tests)
+  before any push reaches main, so the branch never turns red.
+
+### Fixed
+
+- Admin page shell is public again: `/static/admin.html` no longer requires
+  Authorization (browser top-level navigation never sends it), while every
+  API call the page makes stays authenticated.
+- TOPS unit strictness in the spec extractor; frequency extraction is neutral
+  and no longer conflated with other units.
+- Title derivation decoupled from the builder into a stdlib-only module
+  (`core/ingestion/title_deriver.py`) so unit checks import cleanly under the
+  CI minimal-dependency environment.
+
+### Changed
+
+- Extractor vocabulary (spec headers / compute units / frequency terms) moved
+  from core to industry packs; core stays generic.
+
 ## [0.3.0] - 2026-08-12
 
 ### Added
