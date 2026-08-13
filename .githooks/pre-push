@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the local CI gate before allowing a push, so main never
+# turns red on GitHub Actions.
+#
+# Install (one command, repo-local):
+#   git config core.hooksPath .githooks
+#
+# Roll back (one command):
+#   git config --unset core.hooksPath
+#
+# Skip once (emergency only):
+#   OPENLAD_SKIP_CI_GATE=1 git push
+set -euo pipefail
+
+if [ "${OPENLAD_SKIP_CI_GATE:-0}" = "1" ]; then
+  echo "== pre-push: OPENLAD_SKIP_CI_GATE=1, skipping CI gate =="
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+echo "== pre-push: running local CI gate (lint + minimal-dependency unit) =="
+"$REPO_ROOT/scripts/ci_gate.sh"
