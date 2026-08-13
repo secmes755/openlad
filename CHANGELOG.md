@@ -5,6 +5,21 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Docker deployment: single-container API image (`Dockerfile` +
+  `docker-compose.yml`). Model services stay external (llama-server / vLLM /
+  Ollama on the host, or any cloud OpenAI-compatible endpoint); the container
+  is CPU-only and persists data via a volume.
+
+### Removed
+
+- PaddleOCR dependency and engine path removed; scanned-document OCR now uses
+  the multimodal VLM path (with optional Tesseract). Smaller footprint, one
+  less heavy runtime dependency.
+
 ## [0.3.1] - 2026-08-13
 
 ### Added

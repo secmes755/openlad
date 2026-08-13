@@ -1,0 +1,27 @@
+# OpenLAD docker build context exclusions.
+.git
+.gitignore
+.githooks/
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.ruff-baseline.json
+.env
+.env.*
+!.env.example
+notes/
+logs/
+data/
+tests/
+fixtures/
+reports/
+docs/
+Dockerfile
+docker-compose.yml
+.dockerignore
+.github/
+*.log

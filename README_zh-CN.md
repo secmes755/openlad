@@ -21,7 +21,7 @@
 
 <table>
 <tr><td><b>🔒 完全离线</b></td><td>所有处理 — LLM 推理、Embedding、OCR、文档解析 — 均在本地完成。支持物理隔离网络。</td></tr>
-<tr><td><b>📄 多格式入库</b></td><td>PDF、Word、Excel、PowerPoint、图片、Markdown、HTML、TXT。扫描件通过 PaddleOCR 识别。</td></tr>
+<tr><td><b>📄 多格式入库</b></td><td>PDF、Word、Excel、PowerPoint、图片、Markdown、HTML、TXT。扫描件通过 OCR 识别（多模态 VLM / Tesseract）。</td></tr>
 <tr><td><b>🧠 混合检索</b></td><td>全文检索（FTS5）+ 向量检索（sqlite-vec）+ LLM 驱动规划。三阶段流水线：规划 → 检索 → 合成。</td></tr>
 <tr><td><b>🏭 行业插件</b></td><td>可扩展的插件系统。1 个完整示例包（半导体）+ 3 个空模板（法律、金融、通用）供定制。可为任意领域定制行业包。</td></tr>
 <tr><td><b>👥 多租户</b></td><td>每租户独立数据库和向量空间。管理面板支持用户和文档管理。</td></tr>
@@ -31,6 +31,52 @@
 </table>
 
 ---
+
+## Docker 部署（0.4.0）
+
+最快的方式：API 单容器运行。模型服务保持在**容器外**——在宿主机运行
+llama-server / vLLM / Ollama，或直连任意云端 OpenAI 兼容端点。
+
+### 1. 安装 Docker
+
+```bash
+# Ubuntu
+sudo apt install -y docker.io
+sudo usermod -aG docker $USER   # 之后重新登录
+```
+
+### 2. 配置
+
+```bash
+cp docker/.env.example .env
+# 编辑 .env：管理员密码（必填）、模型地址、模型名称
+```
+
+### 3. 构建并运行
+
+```bash
+docker compose up -d --build
+# → http://<主机>:11296
+```
+
+- compose 使用 `network_mode: host`（Linux）：容器与宿主机共享网络，
+  `127.0.0.1:8080` 可直接访问本机模型服务。
+- 云端端点：将 `OPENLAD_LLM_URL` / `OPENLAD_EMB_URL` 设为公网地址。
+- 数据持久化在 `./data`（卷 `./data:/app/data`）。重建/重启不丢文档。
+
+### 4. 验证
+
+```bash
+curl http://127.0.0.1:11296/api/v1/health
+# {"status":"ok", ...} — 模型端点不可达时 status 为 "degraded"
+```
+
+首次启动时容器会用 `OPENLAD_ADMIN_PASSWORD` 创建管理员（仅在不存在任何
+管理员时生效；之后修改该变量不会重置已有密码）。
+
+> **为什么模型服务不一起容器化？** OpenLAD 刻意保持 API 与模型服务解耦：
+> 你可以用 llama.cpp、Ollama、vLLM 或任意 OpenAI 兼容 API——本地或云端。
+> API 容器本身纯 CPU，无需 GPU 透传。
 
 ## 快速开始
 
@@ -357,7 +403,6 @@ OpenLAD 基于 **MIT 许可证** 开源。
 | pypdf                      | BSD-3-Clause     | PDF 文本/元数据提取 |
 | pdfplumber                 | MIT              | PDF 表格提取     |
 | pdf2image                  | MIT              | PDF 页面渲染     |
-| PaddleOCR                  | Apache 2.0       | OCR 引擎       |
 | FastAPI, Pydantic, uvicorn | MIT/BSD          | Web 框架       |
 | NumPy, Pandas, OpenCV      | BSD/Apache 2.0   | 数据与图像处理      |
 | sqlite-vec                 | MIT / Apache 2.0 | 向量数据库        |

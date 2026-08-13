@@ -22,7 +22,7 @@ hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
 
 <table>
 <tr><td><b>🔒 Fully Offline</b></td><td>All processing — LLM inference, embeddings, OCR, document parsing — happens locally. Works on air-gapped networks.</td></tr>
-<tr><td><b>📄 Multi-Format Ingestion</b></td><td>PDF, Word, Excel, PowerPoint, images, Markdown, HTML, TXT. OCR with PaddleOCR for scanned documents.</td></tr>
+<tr><td><b>📄 Multi-Format Ingestion</b></td><td>PDF, Word, Excel, PowerPoint, images, Markdown, HTML, TXT. Scanned documents handled via OCR (multimodal VLM / Tesseract).</td></tr>
 <tr><td><b>🧠 Hybrid Retrieval</b></td><td>Full-text search (FTS5) + vector search (sqlite-vec) + LLM-driven planning. Three-phase pipeline: Plan → Retrieve → Synthesize.</td></tr>
 <tr><td><b>🏭 Industry Plugins</b></td><td>Extensible plugin system. 1 complete sample pack (Semiconductor) + 3 empty templates (Legal, Financial, Generic) for customization. Custom packs can be built for any domain.</td></tr>
 <tr><td><b>👥 Multi-Tenant</b></td><td>Isolated databases and vector spaces per tenant. Admin panel for user and document management.</td></tr>
@@ -32,6 +32,58 @@ hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
 </table>
 
 ---
+
+## Docker Deployment (0.4.0)
+
+The fastest way to run OpenLAD: a single container for the API. Model
+services stay **outside** the container — run llama-server / vLLM / Ollama on
+the host, or point at any cloud OpenAI-compatible endpoint.
+
+### 1. Install Docker
+
+```bash
+# Ubuntu
+sudo apt install -y docker.io
+sudo usermod -aG docker $USER   # re-login afterwards
+```
+
+### 2. Configure
+
+```bash
+cp docker/.env.example .env
+# edit .env: admin password (required), model URLs, model names
+```
+
+### 3. Build & Run
+
+```bash
+docker compose up -d --build
+# → http://<host>:11296
+```
+
+- The compose file uses `network_mode: host` (Linux): the container shares
+  the host network, so `127.0.0.1:8080` URLs reach the model service on your
+  machine directly.
+- Cloud endpoints: set `OPENLAD_LLM_URL` / `OPENLAD_EMB_URL` to the public
+  URLs.
+- Data is persisted in `./data` (volume `./data:/app/data`). Rebuilds and
+  restarts keep your documents.
+
+### 4. Verify
+
+```bash
+curl http://127.0.0.1:11296/api/v1/health
+# {"status":"ok", ...} — status is "degraded" if a model endpoint is down
+```
+
+On first startup the container creates the admin user with
+`OPENLAD_ADMIN_PASSWORD` (only when no admin exists; changing the variable
+later does not reset the password).
+
+> **Why not containerize the model services too?** OpenLAD deliberately
+> keeps the API and the model services separate: you can use llama.cpp,
+> Ollama, vLLM, or any OpenAI-compatible API — local or cloud. The API
+> container itself is CPU-only, so no GPU passthrough is required.
 
 ## Quick Start
 
@@ -369,7 +421,6 @@ All core dependencies use permissive licenses compatible with MIT:
 | pypdf                      | BSD-3-Clause     | PDF text/metadata extraction |
 | pdfplumber                 | MIT              | PDF table extraction         |
 | pdf2image                  | MIT              | PDF page rendering           |
-| PaddleOCR                  | Apache 2.0       | OCR engine                   |
 | FastAPI, Pydantic, uvicorn | MIT/BSD          | Web framework                |
 | NumPy, Pandas, OpenCV      | BSD/Apache 2.0   | Data & image processing      |
 | sqlite-vec                 | MIT / Apache 2.0 | Vector database              |

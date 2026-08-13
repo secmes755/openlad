@@ -1,0 +1,39 @@
+# OpenLAD single-container deployment (0.4.0).
+#
+# The API runs in the container; model services stay OUTSIDE (llama-server /
+# vLLM / Ollama on this host, or a cloud OpenAI-compatible endpoint).
+#
+# Linux + local model service (recommended): network_mode: host means the
+# container shares the host network, so 127.0.0.1 URLs below reach the host's
+# model service directly -- no extra_hosts needed.
+#
+# Cloud endpoints: just set OPENLAD_LLM_URL / OPENLAD_EMB_URL to the public
+# URLs in .env.
+#
+# Bridge-network alternative (host.docker.internal): remove network_mode: host,
+# add
+#   extra_hosts:
+#     - "host.docker.internal:host-gateway"
+# and use http://host.docker.internal:8080/v1 style URLs.
+#
+# Admin password: set OPENLAD_ADMIN_PASSWORD in .env. It is used ONLY on the
+# first startup when no admin user exists; changing it later does not reset an
+# existing password.
+services:
+  openlad:
+    build:
+      context: .
+    image: openlad:0.4.0
+    container_name: openlad
+    network_mode: host
+    environment:
+      OPENLAD_LLM_URL: "${OPENLAD_LLM_URL:-http://127.0.0.1:8080/v1}"
+      OPENLAD_EMB_URL: "${OPENLAD_EMB_URL:-http://127.0.0.1:8081/v1}"
+      OPENLAD_LLM_MODEL: "${OPENLAD_LLM_MODEL:-qwen3.5-9b}"
+      OPENLAD_EMB_MODEL: "${OPENLAD_EMB_MODEL:-qwen3-embedding-0.6b}"
+      OPENLAD_DATA_DIR: /app/data
+      OPENLAD_ADMIN_PASSWORD: "${OPENLAD_ADMIN_PASSWORD:?set OPENLAD_ADMIN_PASSWORD in .env}"
+      OPENLAD_QUERY_CONCURRENCY_MODE: "${OPENLAD_QUERY_CONCURRENCY_MODE:-serial}"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
