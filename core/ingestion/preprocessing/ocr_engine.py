@@ -1,7 +1,7 @@
 """
 V4 OCR Engine - Pluggable multi-engine architecture
 Load models on demand, release VRAM after processing
-Supports: PaddleOCR / Tesseract / Multimodal LLM (image description)
+Supports: Tesseract / Multimodal LLM (image description)
 """
 import base64
 import gc
@@ -25,12 +25,6 @@ class QualityLevel(Enum):
 
 
 # Try importing optional dependencies
-try:
-    from paddleocr import PaddleOCR
-    HAS_PADDLEOCR = True
-except ImportError:
-    HAS_PADDLEOCR = False
-
 try:
     import pytesseract
     HAS_TESSERACT = True
@@ -73,41 +67,7 @@ class OCREngine:
         self.fallback_engine = self.config.get("fallback_engine", "tesseract")
 
         # Engine instance (initialized on demand)
-        self._paddle_ocr = None
         self._tesseract_lang = None
-
-    def _get_paddle_ocr(self) -> Any | None:
-        """Get or create PaddleOCR instance"""
-        if not HAS_PADDLEOCR:
-            return None
-
-        if self._paddle_ocr is None:
-            # Language mapping
-            lang_map = {
-                "zh": "ch",
-                "en": "en",
-                "zh_en": "ch",
-                "ja": "japan",
-                "ko": "korean"
-            }
-            paddle_lang = lang_map.get(self.language, "ch")
-
-            logger.info(f"Initializing PaddleOCR (lang={paddle_lang})...")
-            try:
-                # FIX: PaddleOCR new version parameter changes
-                # use_gpu deprecated → use device
-                # show_log deprecated → removed
-                self._paddle_ocr = PaddleOCR(
-                    use_angle_cls=True,
-                    lang=paddle_lang,
-                    device='cpu'  # CPU mode, save VRAM
-                )
-                logger.info("PaddleOCR initialized (CPU mode)")
-            except Exception as e:
-                logger.error(f"PaddleOCR init failed: {e}")
-                return None
-
-        return self._paddle_ocr
 
     def _get_tesseract_lang(self) -> str:
         """Get Tesseract language parameter"""
@@ -142,9 +102,7 @@ class OCREngine:
         engine = self._select_engine()
         logger.info(f"Using OCR engine: {engine} for {Path(image_path).name}")
 
-        if engine == "paddleocr":
-            return self._recognize_paddleocr(image_path, page_num)
-        elif engine == "tesseract":
+        if engine == "tesseract":
             return self._recognize_tesseract(image_path, page_num)
         elif engine == "vlm":
             return self._recognize_vlm(image_path, page_num)
@@ -154,108 +112,27 @@ class OCREngine:
     def _select_engine(self) -> str:
         """Select OCR engine - V4: added VLM fallback"""
         if self.engine_name == "auto":
-            # Prefer PaddleOCR for Chinese-heavy, otherwise Tesseract, finally VLM
+            # Prefer Tesseract for Chinese-heavy content, fall back to VLM
             if self.language in ("zh", "zh_en", "ja", "ko"):
-                if HAS_PADDLEOCR:
-                    return "paddleocr"
-                elif HAS_TESSERACT:
+                if HAS_TESSERACT:
                     return "tesseract"
                 else:
                     return "vlm"
             else:
                 if HAS_TESSERACT:
                     return "tesseract"
-                elif HAS_PADDLEOCR:
-                    return "paddleocr"
                 else:
                     return "vlm"
-        elif self.engine_name == "paddleocr" and HAS_PADDLEOCR:
-            return "paddleocr"
         elif self.engine_name == "tesseract" and HAS_TESSERACT:
             return "tesseract"
         elif self.engine_name == "vlm":
             return "vlm"
 
         # Fallback: try all available engines
-        if HAS_PADDLEOCR:
-            return "paddleocr"
-        elif HAS_TESSERACT:
+        if HAS_TESSERACT:
             return "tesseract"
         else:
             return "vlm"
-
-    def _recognize_paddleocr(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
-        """Recognize using PaddleOCR - V4: added confidence filtering"""
-        ocr = self._get_paddle_ocr()
-        if ocr is None:
-            return "", [], {"error": "PaddleOCR not available"}
-
-        try:
-            result = ocr.ocr(str(image_path), cls=True)
-
-            ocr_results = []
-            all_texts = []
-            filtered_texts = []
-            total_confidence = 0.0
-            filtered_confidence = 0.0
-            count = 0
-            filtered_count = 0
-
-            if result and len(result) > 0 and result[0]:
-                for line in result[0]:
-                    if line:
-                        bbox = line[0]
-                        text = line[1][0]
-                        confidence = line[1][1]
-
-                        # bbox format: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]]
-                        x_coords = [p[0] for p in bbox]
-                        y_coords = [p[1] for p in bbox]
-                        simple_bbox = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
-
-                        ocr_result = OCRResult(
-                            text=text,
-                            confidence=confidence,
-                            bbox=simple_bbox,
-                            page_num=page_num
-                        )
-                        ocr_results.append(ocr_result)
-                        all_texts.append(text)
-                        total_confidence += confidence
-                        count += 1
-
-                        # V4: confidence filtering
-                        if confidence >= self.min_confidence:
-                            filtered_texts.append(text)
-                            filtered_confidence += confidence
-                            filtered_count += 1
-                        else:
-                            logger.debug(f"PaddleOCR dropped low-confidence block: confidence={confidence:.3f} < {self.min_confidence}, text='{text[:30]}...'")
-
-            # Use filtered text
-            full_text = "\n".join(filtered_texts) if filtered_texts else "\n".join(all_texts)
-            avg_confidence = (filtered_confidence / filtered_count if filtered_count > 0
-                           else total_confidence / count if count > 0 else 0.0)
-
-            metadata = {
-                "engine": "paddleocr",
-                "total_blocks": count,
-                "filtered_blocks": filtered_count,
-                "dropped_blocks": count - filtered_count,
-                "avg_confidence": avg_confidence,
-                "min_confidence_threshold": self.min_confidence,
-                "language": self.language,
-                "page_num": page_num
-            }
-
-            return full_text, ocr_results, metadata
-
-        except Exception as e:
-            logger.error(f"PaddleOCR failed: {e}")
-            # Try fallback
-            if self.fallback_engine == "tesseract" and HAS_TESSERACT:
-                return self._recognize_tesseract(image_path, page_num)
-            return "", [], {"error": str(e)}
 
     def _recognize_tesseract(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
         """
@@ -331,7 +208,7 @@ class OCREngine:
             return "", [], {"error": str(e)}
 
     def _recognize_vlm(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
-        """Recognize using VLM (9B multimodal model) - V4: fallback when PaddleOCR/Tesseract unavailable"""
+        """Recognize using VLM (9B multimodal model) - V4: fallback when Tesseract unavailable"""
         try:
             # Load and encode image
             img = Image.open(image_path).convert('RGB')
@@ -394,18 +271,15 @@ class OCREngine:
 
     def release(self):
         """Release OCR engine, clear VRAM"""
-        if self._paddle_ocr is not None:
-            logger.info("Releasing PaddleOCR engine...")
-            self._paddle_ocr = None
-            gc.collect()
-            # Try to clear CUDA cache
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    logger.info("CUDA cache cleared")
-            except ImportError:
-                pass
+        gc.collect()
+        # Try to clear CUDA cache
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("CUDA cache cleared")
+        except ImportError:
+            pass
 
     def __del__(self):
         self.release()

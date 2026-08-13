@@ -355,13 +355,13 @@ EMBEDDING_CONFIG = {
 # OCR Configuration
 # =============================================================================
 OCR_CONFIG = {
-    "engine": os.environ.get("OPENLAD_OCR_ENGINE", "paddleocr"),
+    "engine": os.environ.get("OPENLAD_OCR_ENGINE", "auto"),
     "language": "zh_en",
     "min_confidence": 0.6,
     "enable_deskew": True,
     "enable_dewarp": False,
     "enable_denoise": True,
-    "fallback_engine": "paddleocr",
+    "fallback_engine": "vlm",
 }
 
 # =============================================================================
