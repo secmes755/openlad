@@ -43,8 +43,14 @@ class DocumentIndexBuilder:
     def ingest_document(self, file_path: str, tenant_id: str = None,
                         industry_hint: str = None,
                         auto_confirm: bool = False,
-                        progress_callback=None) -> dict[str, Any]:
-        """Complete document ingestion workflow"""
+                        progress_callback=None,
+                        title: str | None = None) -> dict[str, Any]:
+        """Complete document ingestion workflow
+
+        title: optional explicit document title. When provided it takes
+        highest priority; otherwise the title is derived from filename +
+        L1 summary via structured LLM extraction (see build_index).
+        """
         tid = tenant_id or self.tenant_id or "default"
         # Store for backward compat (some downstream code may read self.tenant_id)
         self.tenant_id = tid
@@ -111,7 +117,8 @@ class DocumentIndexBuilder:
         if auto_confirm:
             return self.build_index(doc_id, parsed_doc, preprocessed_pages,
                                     industry_hint, progress_callback,
-                                    file_hash=file_hash, tenant_id=tid)
+                                    file_hash=file_hash, tenant_id=tid,
+                                    title=title)
 
         return result
 
@@ -120,13 +127,17 @@ class DocumentIndexBuilder:
                     industry_hint: str = None,
                     progress_callback=None,
                     file_hash: str = None,
-                    tenant_id: str = None) -> dict[str, Any]:
+                    tenant_id: str = None,
+                    title: str | None = None) -> dict[str, Any]:
         """Build document index (two layers: L2 content index + vector embeddings)
 
         Supports progress_callback(progress_percent, message) for reporting progress.
         file_hash: MD5 hash of the file, passed from ingest_document to avoid
         overwriting due to DB readback failures.
         tenant_id: required for thread-safe multi-tenant support.
+        title: optional explicit document title (highest priority). When absent,
+        derived from filename + L1 summary via structured LLM extraction,
+        falling back to filename-derived title.
         """
         tid = tenant_id or self.tenant_id or "default"
 
@@ -206,11 +217,17 @@ class DocumentIndexBuilder:
         final_hash = file_hash or (existing_doc.get("file_hash") if existing_doc else None)
         if not final_hash:
             logger.warning(f"[HASH_DEBUG] build_index: file_hash is None! existing_doc={existing_doc is not None}, passed_hash={file_hash}")
+        # Title derivation chain (priority):
+        #   1. explicit title param (upload API)
+        #   2. structured LLM extraction from L1 summary + filename
+        #   3. filename-derived title (existing behavior, unchanged fallback)
+        doc_title = self._derive_title(parsed_doc.filename, doc_summary, classification, title)
+        logger.info(f"[TITLE] doc={doc_id[:8]} final_title={doc_title!r}")
         metadata_db.save_document(
             doc_id=doc_id,
             filename=parsed_doc.filename,
             original_path=parsed_doc.original_path,
-            title=self._extract_title(parsed_doc.filename),
+            title=doc_title,
             doc_type=doc_type,
             metadata=parsed_doc.metadata,
             status="verified",
@@ -2323,6 +2340,96 @@ FIX3: dynamically adjust per-section chunk limit
         name = re.sub(r'\.(pdf|PDF|xlsx|xls|pptx|ppt|docx|jpg|jpeg|png|bmp|md|txt|html)$', '', name)
         name = name.replace('_', ' ').replace('-', ' ')
         return name.strip() if name.strip() else filename
+
+    def _generate_identifiable_title(self, filename: str, summary: str,
+                                     classification: dict) -> str | None:
+        """Generate an identifiable document title from L1 summary + filename.
+
+        Structured extraction (NOT free-form summarization): the LLM extracts
+        {subject, year, doc_type} as JSON. Every field is validated against the
+        source texts (filename/summary/category) before use — a field that does
+        not appear in the source is dropped (anti-hallucination gate). Returns
+        None when the LLM is unavailable or no field passes validation; callers
+        then fall back to the filename-derived title (existing behavior).
+
+        Works for any document type (annual report, employee handbook, medical
+        report, EIA plan, ...) because the summary is already LLM-generated from
+        full content and typically names the subject in its first sentence.
+        """
+        import re as _re
+
+        if not summary or len(summary.strip()) < 20:
+            return None
+
+        cat_text = " ".join(
+            str(classification.get(k) or "") for k in
+            ("category_level1", "category_level2", "category_level3")
+        )
+        prompt = f"""请根据文档文件名和文档内容摘要，提取该文档的标识信息。
+
+文件名: {filename}
+内容摘要: {summary}
+文档分类: {cat_text}
+
+请提取以下三个字段：
+1. subject: 文档主要描述的主体（公司/组织/项目/个人名称，使用全称；无法确定填 null）
+2. year: 文档内容涉及的年份（4位数字；无法确定填 null）
+3. doc_type: 文档类型（如 年度报告/员工手册/体检报告/datasheet；无法确定填 null）
+
+只输出一个 JSON 对象，不要输出任何其他内容：
+{{"subject": "...", "year": null, "doc_type": "..."}}"""
+
+        try:
+            data = self.model_client.generate_json(prompt, max_tokens=256, temperature=0)
+            if not isinstance(data, dict):
+                return None
+        except Exception as e:
+            logger.warning(f"[TITLE] LLM title extraction failed: {e}")
+            return None
+
+        subject = str(data.get("subject") or "").strip()
+        year_val = data.get("year")
+        year_str = str(year_val).strip() if year_val is not None else ""
+        doc_type = str(data.get("doc_type") or "").strip()
+
+        # Validation gates (anti-hallucination): every field must appear in source
+        source_text = f"{filename}\n{summary}\n{cat_text}"
+        parts = []
+        if subject and self._subject_in_text(subject, source_text):
+            parts.append(subject)
+        if _re.fullmatch(r"\d{4}", year_str) and year_str in source_text:
+            parts.append(year_str)
+        if doc_type and doc_type in source_text:
+            parts.append(doc_type)
+        if not parts:
+            return None
+        new_title = " ".join(parts)
+        if len(new_title) > 80:
+            new_title = new_title[:80]
+        return new_title
+
+    @staticmethod
+    def _subject_in_text(subject: str, text: str) -> bool:
+        """Whitespace-insensitive substring check (handles line breaks in summaries)."""
+        import re as _re
+        if not subject or not text:
+            return False
+        compact_s = _re.sub(r"\s+", "", subject)
+        compact_t = _re.sub(r"\s+", "", text)
+        return len(compact_s) >= 2 and compact_s in compact_t
+
+    def _derive_title(self, filename: str, summary: str, classification: dict,
+                      explicit_title: str | None = None) -> str:
+        """Title derivation chain (priority):
+
+        1. explicit title (upload API param) — highest priority
+        2. structured LLM extraction from L1 summary + filename
+        3. filename-derived title (existing behavior, unchanged fallback)
+        """
+        if explicit_title and explicit_title.strip():
+            return explicit_title.strip()
+        return (self._generate_identifiable_title(filename, summary, classification)
+                or self._extract_title(filename))
 
     def release(self):
         self.preprocessor.release()

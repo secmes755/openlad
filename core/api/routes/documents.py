@@ -68,7 +68,8 @@ def _cleanup_old_tasks(max_age_seconds: int = 3600):
 
 
 def _process_document_async_sync(task_id: str, tenant_id: str, file_path: str,
-                                  industry: str | None, auto_detect: bool, builder):
+                                  industry: str | None, auto_detect: bool, builder,
+                                  title: str | None = None):
     """Sync wrapper for document processing — runs directly in a thread pool.
 
     Uses builder.ingest_document() entry point with built-in MD5 dedup protection.
@@ -83,7 +84,8 @@ def _process_document_async_sync(task_id: str, tenant_id: str, file_path: str,
             tenant_id=tenant_id,
             industry_hint=industry if not auto_detect else None,
             auto_confirm=True,
-            progress_callback=_progress_callback
+            progress_callback=_progress_callback,
+            title=title
         )
         doc_id = result.get("doc_id", "")
         status = result.get("status", "unknown")
@@ -144,11 +146,14 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(...),
     industry: str | None = Form(None),
-    auto_detect: bool = Form(True)
+    auto_detect: bool = Form(True),
+    title: str | None = Form(None)
 ):
     """Upload document (async background processing)
 
     Returns task_id after successful upload. Query processing progress via /documents/upload-progress/{task_id}.
+    title: optional explicit document title (highest priority in title derivation;
+    when omitted the title is auto-derived from the L1 summary + filename).
     """
     ctx = get_tenant_context()
     if not ctx:
@@ -243,7 +248,7 @@ async def upload_document(
                     pool,
                     lambda: _process_document_async_sync(
                         task_id, ctx.tenant_id, str(upload_path),
-                        industry, auto_detect, builder
+                        industry, auto_detect, builder, title=title
                     )
                 )
         except Exception as e:
