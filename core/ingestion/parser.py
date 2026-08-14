@@ -448,37 +448,46 @@ class DocumentParser:
                 # pdfplumber + pypdf failed entirely.
                 # Fallback: extract text page-by-page with pymupdf (MuPDF),
                 # which is more lenient with corrupted PDF content streams.
-                pymupdf_text = self._extract_with_pymupdf(str(path))
-                if pymupdf_text:
-                    doc.pages.append(ParsedPage(page_num=1, raw_text=f"[Partial extraction via MuPDF fallback]\n\n{pymupdf_text}"))
+                # Page boundaries must be preserved: merging all pages into a
+                # single record disables page-level retrieval and structure
+                # indexing for exactly the documents that need this fallback.
+                page_texts = self._extract_pages_with_pymupdf(str(path))
+                if page_texts:
+                    for i, text in enumerate(page_texts, start=1):
+                        doc.pages.append(ParsedPage(
+                            page_num=i,
+                            raw_text=f"[Partial extraction via MuPDF fallback]\n\n{text}",
+                            content_dict={"pdf_text": text, "fallback": "pymupdf"},
+                        ))
                 else:
                     doc.pages.append(ParsedPage(page_num=1, raw_text=f"PDF parsing failed: {e}"))
 
         return doc
 
     @staticmethod
-    def _extract_with_pymupdf(path: str) -> str:
+    def _extract_pages_with_pymupdf(path: str) -> list[str]:
         """Fallback extraction using pymupdf (MuPDF).
 
         More lenient than pdfplumber/pypdf for PDFs with corrupted content
-        streams. Extracts text from all pages into a single string.
+        streams. Returns one text entry per non-empty page, preserving page
+        order so the caller can keep page-level addressing intact.
         """
         try:
             import fitz  # pymupdf
             doc = fitz.open(path)
-            parts = []
+            page_texts = []
             for i in range(doc.page_count):
                 try:
                     t = doc[i].get_text()
                     if t and t.strip():
-                        parts.append(t)
+                        page_texts.append(t)
                 except Exception:
                     pass
             doc.close()
-            return "\n\n".join(parts)
+            return page_texts
         except Exception as e:
             logger.warning(f"[PARSER] pymupdf fallback also failed: {e}")
-            return ""
+            return []
 
     def _classify_one_page(self, page_image, page_num: int) -> str:
         """Single-page VLM classification wrapper (for concurrent use)"""

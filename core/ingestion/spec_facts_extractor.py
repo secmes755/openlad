@@ -173,6 +173,15 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
     freq_re = _build_freq_re(
         [t for t in (extraction.get("frequency_terms") or []) if t])
 
+    # The assertion layer is industry-vocabulary driven. Without a pack
+    # providing spec vocabulary there are no meaningful assertions to
+    # extract, and the structural fallback produces noise on non-spec
+    # documents (annual reports, legal filings...), which then gets
+    # injected into queries via the spec-fact bypass. A pack-less or
+    # vocabulary-less document must not populate the assertion table.
+    if not (spec_headers or compute_re or freq_re):
+        return []
+
     text = strip_vlm_blocks(raw_text)
     if not text.strip():
         return []

@@ -65,7 +65,8 @@ SEMICON_EXTRACTION = {
 
 def test_extract_spec_facts_support_sentence():
     facts = extract_spec_facts_from_text(
-        "The chip supports ten UART interfaces.", 1, "RK3588", "d1")
+        "The chip supports ten UART interfaces.", 1, "RK3588", "d1",
+        extraction=SEMICON_EXTRACTION)
     # attribute keeps the surface case of the feature word (not lowercased)
     assert any(f["attribute"] == "UART interfaces count" and f["value"] == "10"
                for f in facts)
@@ -73,7 +74,8 @@ def test_extract_spec_facts_support_sentence():
 
 def test_extract_spec_facts_key_value():
     facts = extract_spec_facts_from_text(
-        "ball size: 0.35mm\nball pitch: 0.65mm", 1, "RK3588", "d1")
+        "ball size: 0.35mm\nball pitch: 0.65mm", 1, "RK3588", "d1",
+        extraction=SEMICON_EXTRACTION)
     assert any(f["attribute"] == "ball size" and f["value"] == "0.35mm"
                for f in facts)
 
@@ -82,7 +84,8 @@ def test_extract_spec_facts_skips_vlm_hallucinations():
     raw = ("Real spec line: ball size: 0.35mm\n"
            "--- Page Visual Analysis (VLM)\n"
            "The chip has 560 solder balls.")
-    facts = extract_spec_facts_from_text(raw, 1, "RK3588", "d1")
+    facts = extract_spec_facts_from_text(raw, 1, "RK3588", "d1",
+                                         extraction=SEMICON_EXTRACTION)
     assert any(f["value"] == "0.35mm" for f in facts)
     assert all(f["value"] != "560" for f in facts)
 
@@ -157,3 +160,53 @@ def test_extract_spec_facts_two_line_header_from_pack():
     assert any(f["attribute"] == "GPU" and "Mali-G52" in f["value"] for f in facts)
     plain = extract_spec_facts_from_text(text, 1, "RK3568", "d1")
     assert all(f["attribute"] != "GPU" for f in plain)
+
+
+def test_extract_no_vocabulary_returns_empty():
+    """Without industry-pack vocabulary the assertion layer must not extract
+    structural noise from non-spec documents (annual reports etc.), which
+    would otherwise be injected into queries as authoritative facts."""
+    from core.ingestion.spec_facts_extractor import extract_spec_facts_from_text
+    text = "营业收入（千元）\n456,451,731\n会议审议通过《2025 年第三季度报告》\n- 5亿用户\nPage Number: 49"
+    facts = extract_spec_facts_from_text(text, 9, "midea", "doc1", extraction=None)
+    assert facts == []
+    facts = extract_spec_facts_from_text(text, 9, "midea", "doc1", extraction={})
+    assert facts == []
+    facts = extract_spec_facts_from_text(text, 9, "midea", "doc1",
+                                         extraction={"spec_headers": [], "compute_units": [], "frequency_terms": []})
+    assert facts == []
+
+
+# ---- MuPDF fallback preserves page boundaries ----
+def test_pymupdf_fallback_keeps_page_boundaries(monkeypatch):
+    """Corrupted PDFs (pdfplumber/pypdf reject) fall back to MuPDF extraction.
+    The fallback must return one entry per page — merging all pages into a
+    single record would disable page-level retrieval and structure indexing
+    for exactly the documents that need the fallback most."""
+    import sys
+    import types
+
+    class _FakePage:
+        def __init__(self, text):
+            self._text = text
+
+        def get_text(self):
+            return self._text
+
+    class _FakeDoc:
+        page_count = 3
+
+        def __getitem__(self, i):
+            return _FakePage(["page one text", "", "page three text"][i])
+
+        def close(self):
+            pass
+
+    fake_fitz = types.ModuleType("fitz")
+    fake_fitz.open = lambda path: _FakeDoc()
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+
+    from core.ingestion.parser import DocumentParser
+    pages = DocumentParser._extract_pages_with_pymupdf("dummy.pdf")
+    # empty page dropped, order preserved
+    assert pages == ["page one text", "page three text"]
