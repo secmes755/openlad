@@ -272,13 +272,15 @@ class OCREngine:
     def release(self):
         """Release OCR engine, clear VRAM"""
         gc.collect()
-        # Try to clear CUDA cache
+        # Try to clear CUDA cache (best-effort; torch is not a hard
+        # dependency after the PaddleOCR removal, so any import or CUDA
+        # failure here must never abort document ingestion).
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 logger.info("CUDA cache cleared")
-        except ImportError:
+        except Exception:
             pass
 
     def __del__(self):
