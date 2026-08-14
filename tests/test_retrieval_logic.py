@@ -1,4 +1,5 @@
 """Retrieval pipeline pure-logic checks (synthetic inputs, no LLM/DB/services)."""
+from core.retrieval.planner import QueryPlanner
 from core.retrieval.retriever import HierarchicalRetriever, SegmentMerger
 from core.retrieval.router import IntentRouter, IntentType, QueryPlan
 
@@ -11,6 +12,11 @@ def _router():
 def _retriever():
     # skip __init__ (touches tenant DB) — tokenization is pure
     return object.__new__(HierarchicalRetriever)
+
+
+def _planner():
+    # skip __init__ (touches tenant DB / model client) — stopword filter is pure
+    return object.__new__(QueryPlanner)
 
 
 # ---- QueryPlan.get_max_results ----
@@ -100,3 +106,44 @@ def test_match_boost_rule():
     assert m._match_boost_rule("uart count", "History", rules) == -1.0
     assert m._match_boost_rule("other query", "UART Interfaces", rules) == 0.0
     assert m._match_boost_rule("uart count", "UART Interfaces", {}) == 0.0
+
+
+# ---- QueryPlanner._CN_ENTITY_STOPWORDS ----
+def test_entity_stopwords_filter_generic_terms():
+    """Generic Chinese query words must not be treated as document entities
+    (cross-doc contamination variant: '公司' force-merges unrelated
+    '...股份有限公司...' reports into the doc_filter)."""
+    import re
+    p = _planner()
+    text = "在美的集团(股票代码000333)的2025年年度报告中，公司2025年度营业收入是多少？"
+    cn = re.findall(r'[\u4e00-\u9fff]{2,12}', text)
+    kept = [w for w in cn if w not in p._CN_ENTITY_STOPWORDS]
+    assert "公司" not in kept
+    assert "股票代码" not in kept
+    assert "营业收入" not in kept
+    # The real entity must survive
+    assert any("美的集团" in w for w in kept)
+
+
+def test_entity_stopwords_keeps_real_entity():
+    p = _planner()
+    assert "美的集团" not in p._CN_ENTITY_STOPWORDS
+    assert "贵州茅台" not in p._CN_ENTITY_STOPWORDS
+    assert "公司" in p._CN_ENTITY_STOPWORDS
+    assert "营业收入" in p._CN_ENTITY_STOPWORDS
+
+
+# ---- HierarchicalRetriever._expand_query_terms ----
+def test_expand_query_terms_no_pack_returns_original():
+    """Without an industry pack the expansion must be a no-op: core generic
+    terms (数量/版本/...) stay exclusive to spec-fact lookup and never touch
+    FTS keywords (pure function path, no registry -> no plugin detected)."""
+    r = _retriever()
+    kw = r._expand_query_terms(["版本"], "版本是多少")
+    assert kw == ["版本"]  # unchanged: zero impact without packs
+
+
+def test_expand_query_terms_returns_original_when_empty():
+    r = _retriever()
+    kw = r._expand_query_terms([], "no terms")
+    assert kw == []

@@ -207,6 +207,22 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             logger.error(f"[PHASE-1] Coarse filter failed: {e}")
             return [], {}
 
+    # Generic Chinese query-noise words that are never document entities.
+    # Filtering these prevents generic terms ("公司", "营业收入", "多少")
+    # extracted from the query from force-merging unrelated documents into
+    # the doc_filter — a cross-document contamination variant where any
+    # report titled "...股份有限公司..." matches the entity "公司".
+    _CN_ENTITY_STOPWORDS = frozenset({
+        "公司", "集团", "股份", "有限", "责任", "公司名称", "股票代码",
+        "报告", "年度", "季度", "年报", "季报", "年度报告", "季度报告",
+        "营业", "收入", "利润", "资产", "负债", "权益", "现金流",
+        "营业收入", "净利润", "总资产", "净资产", "每股收益",
+        "财务", "指标", "数据", "金额", "数值", "总额", "合计",
+        "多少", "什么", "如何", "是否", "哪些", "怎样", "为何", "原因",
+        "是多少", "是什么", "怎么样", "有哪些", "为什么", "什么原因",
+        "情况", "介绍", "信息", "内容", "问题", "答案", "主要", "业务",
+    })
+
     def _ensure_entity_coverage(self, query: str, candidate_ids: list[str], docs: list[dict], chat_history: str = None) -> list[str]:
         """
         Check whether product model names / entities mentioned in the query
@@ -227,8 +243,6 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             model_pattern = re.findall(r'(?<![A-Za-z0-9])[A-Za-z]{1,}[-]?[A-Za-z0-9]+(?![A-Za-z0-9])', source_text)
             for m in model_pattern:
                 clean = m.replace('-', '').replace(' ', '').upper()
-                # Filter out noise words that are too short (e.g., "A1"), keep valid model names
-                # Rule: >=3 chars keep directly; 2 chars must contain both letters and digits (e.g., K7, T3)
                 if clean and clean not in entities:
                     has_letter = any(c.isalpha() for c in clean)
                     has_digit = any(c.isdigit() for c in clean)
@@ -238,7 +252,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             # FIX: Also extract Chinese entities (company names, product names, etc.)
             cn_pattern = re.findall(r'[\u4e00-\u9fff]{2,12}', source_text)
             for w in cn_pattern:
-                if w not in entities:
+                if w not in entities and w not in self._CN_ENTITY_STOPWORDS:
                     entities.append(w)
 
         if not entities:

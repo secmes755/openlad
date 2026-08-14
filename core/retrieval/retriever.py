@@ -243,6 +243,53 @@ class HierarchicalRetriever:
 
         return selected
 
+    def _expand_query_terms(self, keywords: list[str], query: str) -> list[str]:
+        """Merge industry-pack synonym expansions into retrieval keywords.
+
+        Only terms declared by the active industry pack (retrieval/rules.yaml
+        -> spec_query_terms) participate. Core's generic spec_query_terms
+        (quantity/version measure words) stay exclusive to the spec-fact
+        lookup layer they were designed for, so deployments without industry
+        packs see zero behavioural change from this mechanism.
+        Any term appearing in the query adds its synonyms to the keyword
+        list, bounded to avoid diluting FTS scores.
+        """
+        try:
+            from ..plugins import get_plugin_registry
+            registry = get_plugin_registry()
+            merged = {}
+            plugin = None
+            try:
+                plugin = registry.detect_plugin_for_text(query)
+            except Exception:
+                plugin = None
+            if plugin is not None and hasattr(plugin, "get_spec_query_terms"):
+                try:
+                    for k, v in (plugin.get_spec_query_terms() or {}).items():
+                        merged.setdefault(k, [])
+                        for item in v:
+                            if item not in merged[k]:
+                                merged[k].append(item)
+                except Exception:
+                    pass
+        except Exception:
+            return keywords
+
+        if not merged:
+            return keywords
+
+        expanded = list(keywords)
+        for term, synonyms in merged.items():
+            if term in query:
+                for syn in synonyms:
+                    if syn and syn not in expanded:
+                        expanded.append(syn)
+        # Bound expansion: keep original keywords first, cap total length to
+        # avoid diluting FTS trigram matching with too many broad terms.
+        if len(expanded) > 24:
+            expanded = expanded[:24]
+        return expanded
+
     def _tokenize_query(self, query: str) -> list[str]:
         """Extract meaningful keywords from a query for structure index / FTS search.
 
@@ -271,6 +318,22 @@ class HierarchicalRetriever:
         all_results = []
         query_lower = query.lower()
         query_keywords = self._tokenize_query(query_lower)
+
+        # Industry-vocabulary query expansion: only the active industry pack's
+        # spec_query_terms participate (core generic terms are reserved for
+        # spec-fact lookup and never touch FTS). When the query mentions an
+        # industry term, its synonyms from the active industry pack are merged
+        # into the retrieval keywords so FTS can recall pages that phrase the
+        # fact differently (e.g. "分行业占比" -> "制造业/其他业务/构成" for the
+        # revenue-breakdown appendix table). No pack -> zero expansion.
+        #
+        # CRITICAL: the FTS query string keeps the ORIGINAL query verbatim and
+        # only APPENDS expansion terms. Replacing the query with tokenized
+        # keywords breaks exact identifiers (e.g. "VDD_CPU" tokenizes to
+        # "VDD CPU", which never matches the FTS trigram index of "VDD_CPU").
+        expanded = self._expand_query_terms(query_keywords, query)
+        extra_terms = [t for t in expanded if t not in query_keywords]
+        fts_query = (query + " " + " ".join(extra_terms)).strip() if extra_terms else query
 
         # First use structure index for section-level routing
         structure_boosted_pages = set()
@@ -513,7 +576,7 @@ class HierarchicalRetriever:
                 page_filter = all_chapter_pages
                 logger.info(f"[RETRIEVER] Phase 2: FTS restricted to {len(page_filter)} pages from structure index chapters")
 
-        fts_results = self._search_fts(query, limit=max_results, doc_id_filter=doc_id_filter,
+        fts_results = self._search_fts(fts_query, limit=max_results, doc_id_filter=doc_id_filter,
                                        page_filter=page_filter)
         for result in fts_results:
             page = self.metadata_db.get_page(result["page_id"])
