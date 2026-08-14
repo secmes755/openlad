@@ -109,8 +109,12 @@ CONTEXT_CONFIG = {
     # ── Synthesis context budget (derived from llm_max_tokens) ──
     # Total safe prompt space (llm_max_tokens × token_to_char_ratio)
     "synthesis_safe_chars": 45875,  # 65536 × 0.7
-    # Context available after reserving ~15% for system prompt + query + output
-    "synthesis_context_budget": 39000,  # 65536 × 0.7 × 0.85
+    # Context available after reserving ~15% for system prompt + query + output.
+    # FIX: 39000 + real prompt overhead (~7.2K) totalled ~46.2K and exceeded
+    # synthesis_safe_chars, so every query hit the model-client tail truncation,
+    # silently dropping the LAST part of the context (often the totals pages).
+    # 35500 keeps total prompt under the safe limit without truncation.
+    "synthesis_context_budget": 35500,  # 65536 × 0.7 × 0.85 - overhead margin
     # Map-Reduce trigger: context exceeding this goes through chunked extraction
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.
