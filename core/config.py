@@ -463,6 +463,10 @@ TENANT_CONFIG = {
 PLUGIN_CONFIG = {
     "industries_scan_dirs": [
         str(INDUSTRIES_DIR),
+        # Extra closed-source industry pack dirs (private packs live outside
+        # this repo; never committed here). Colon-separated, e.g.
+        # OPENLAD_INDUSTRIES_DIRS=/srv/packs:/srv/more
+        *[d for d in os.environ.get("OPENLAD_INDUSTRIES_DIRS", "").split(os.pathsep) if d],
     ],
     "enable_hot_reload": os.environ.get("OPENLAD_HOT_RELOAD", "false").lower() == "true",
     "hot_reload_interval_seconds": 30,
