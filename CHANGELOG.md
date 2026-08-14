@@ -5,6 +5,44 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `OPENLAD_INDUSTRIES_DIRS` environment variable appends external industry
+  pack scan directories, so closed-source packs can live outside this repo
+  and load without code changes (colon-separated).
+- Retrieval: FTS queries are expanded with synonyms declared by the active
+  industry pack (`spec_query_terms` in pack rules), so pages that phrase a
+  fact differently can be recalled. Pack-declared terms only; deployments
+  without industry packs see zero behavioural change.
+
+### Fixed
+
+- Synthesis context budget (39000 -> 35500) now stays under the model
+  client's safe prompt limit together with the real template overhead.
+  Previously every query silently truncated the tail of the retrieved
+  context, which could drop exactly the pages holding the answer and made
+  answers flip between runs.
+- Text-rules structure extraction: numbered headings with ideographic
+  commas ("40、...") are recognised, and the structure index save no longer
+  silently drops every section when only `path` (no `short_path`) exists —
+  bookmarkless Chinese annual reports now get a usable chapter index.
+- Spec-fact assertion layer no longer extracts structural noise from
+  documents when no industry pack provides spec vocabulary (annual reports
+  accumulated thousands of junk "facts" that were later injected into
+  answers as authoritative).
+- OCR resource release tolerates torch import/runtime failures instead of
+  aborting document ingestion.
+- PDF parsing fallback (MuPDF, for files pdfplumber/pypdf reject) now
+  preserves page boundaries instead of merging the whole document into a
+  single page, keeping page-level retrieval and structure indexing working
+  for corrupted PDFs.
+- Query planner entity coverage filters generic Chinese query-noise words
+  (公司/报告/营业收入/多少/...), so they no longer force-merge unrelated
+  documents into the retrieval filter (a cross-document contamination
+  variant).
+
 ## [0.4.0] - 2026-08-13
 
 ### Added
