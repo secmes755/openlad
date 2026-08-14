@@ -1056,7 +1056,12 @@ class DocumentIndexBuilder:
                     page_structure.update({"level": level, "path": path, "title": title})
                     break
 
-                num_heading_match = re.match(r'^(\d+(?:\.\d+)*)\s+(.+)', line)
+                # Chinese financial reports number appendix items as
+                # "40、营业收入和营业成本" (digits + ideographic comma), which
+                # the ASCII-space rule below never matched — the whole appendix
+                # collapsed into one coarse chapter and note-level sections
+                # (e.g. the revenue breakdown table) became unaddressable.
+                num_heading_match = re.match(r'^(\d+(?:\.\d+)*)[\s、．.]{1,3}(.+)', line)
                 if num_heading_match and len(num_heading_match.group(1)) <= 8:
                     path = num_heading_match.group(1)
                     title = num_heading_match.group(2).strip()
@@ -1617,7 +1622,10 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
 
             for page_num in sorted_pages:
                 s = structure_index[page_num]
-                short_path = s.get("short_path", "")
+                # Text-rules builds use "path" only (no "short_path"); TOC
+                # builds provide both. Fall back so the merge never silently
+                # drops every section (structure index saved empty).
+                short_path = s.get("short_path") or s.get("path", "")
                 if not short_path:
                     continue
 
