@@ -141,6 +141,31 @@ def lookup_spec_facts(query_text: str, metadata_db, plan: dict | None = None,
         except Exception:
             doc_filter = None
 
+    # Selectivity guard: drop keywords that touch too many distinct
+    # attributes in the fact table. Zero-selectivity tokens (generic verbs
+    # like "support", present in every "Support X" source line) would
+    # otherwise qualify every such fact and flood the injected block with
+    # irrelevant authoritative-looking rows. Entity-vocabulary tokens are
+    # exempt — entity restriction below handles them.
+    if cfg.get("spec_facts_selectivity_guard", True) and hasattr(
+            metadata_db, "spec_fact_keyword_spread"):
+        try:
+            entity_vocab = ({e.strip().lower() for e in metadata_db.get_spec_fact_entities() if e}
+                            if hasattr(metadata_db, "get_spec_fact_entities") else set())
+            max_attrs = cfg.get("spec_facts_selectivity_max_attrs", 3)
+            spread = metadata_db.spec_fact_keyword_spread(uniq, doc_id_filter=doc_filter)
+            dropped = [kw for kw in uniq
+                       if kw.lower() not in entity_vocab
+                       and spread.get(kw.lower(), 0) > max_attrs]
+            if dropped:
+                uniq = [kw for kw in uniq if kw not in set(dropped)]
+                logger.info(f"[SPEC_FACTS] selectivity guard dropped "
+                            f"non-selective keywords: {dropped}")
+                if not uniq:
+                    return []
+        except Exception as e:
+            logger.warning(f"[SPEC_FACTS] selectivity guard failed (non-fatal): {e}")
+
     # Match against entity / attribute / value / source text. A fact needs
     try:
         hits = metadata_db.search_spec_facts(

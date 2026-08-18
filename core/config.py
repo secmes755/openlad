@@ -259,6 +259,17 @@ CONTEXT_CONFIG = {
     "spec_facts_max_inject": 12,          # max facts prepended to context
     "spec_facts_min_hits": 2,             # min keyword hits for a fact to qualify
     "spec_facts_entity_restriction": True,  # scope injected facts to query-named entities
+    # Selectivity guard for keyword matching: a keyword whose hits span more
+    # distinct attributes than the threshold has no discriminating power —
+    # generic verbs (e.g. "support") appear in the source line of nearly
+    # every "Support X" fact and would otherwise qualify all of them,
+    # flooding the injected block with irrelevant authoritative-looking rows.
+    # Measured against the document's own fact table; entity-vocabulary
+    # tokens are exempt (entity restriction handles them). No wordlists.
+    "spec_facts_selectivity_guard": os.environ.get(
+        "OPENLAD_SPEC_FACTS_SELECTIVITY_GUARD", "1") == "1",
+    "spec_facts_selectivity_max_attrs": int(os.environ.get(
+        "OPENLAD_SPEC_FACTS_SELECTIVITY_MAX_ATTRS", "3")),
     # Presentation of injected facts. "source_first": the verbatim source
     # sentence leads (the flattened value stays internal for matching only) —
     # an enumeration like "PCIe3.1(8Gbps), PCIe2.1" invites literal-list

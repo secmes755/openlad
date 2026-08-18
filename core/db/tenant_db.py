@@ -736,6 +736,39 @@ class TenantMetadataDB:
         except Exception:
             return []
 
+    def spec_fact_keyword_spread(self, keywords: list[str],
+                                 doc_id_filter: set | None = None) -> dict[str, int]:
+        """Per keyword, how many DISTINCT attributes it touches across
+        verified facts (matched against attribute/value/source_text; entity
+        excluded — entity selectivity is handled by entity restriction).
+
+        A keyword touching many distinct attributes is non-selective (generic
+        verbs like "support" match every "Support X" source line) and must
+        not qualify facts by itself; a keyword confined to one attribute
+        family genuinely discriminates.
+        """
+        spread: dict[str, set] = {kw.lower(): set() for kw in keywords if kw}
+        if not spread:
+            return {}
+        where, params = ["verified = 1"], []
+        if doc_id_filter:
+            where.append(f"doc_id IN ({','.join('?' * len(doc_id_filter))})")
+            params.extend(doc_id_filter)
+        try:
+            with self.get_connection() as conn:
+                rows = conn.execute(
+                    f"SELECT attribute, value, source_text FROM spec_facts WHERE {' AND '.join(where)}",
+                    params).fetchall()
+        except Exception:
+            return {}
+        for attr, value, source_text in rows:
+            hay = f"{value or ''} {source_text or ''}".lower()
+            attr_l = (attr or '').lower()
+            for kw in spread:
+                if kw in hay or kw in attr_l:
+                    spread[kw].add(attr or '')
+        return {kw: len(attrs) for kw, attrs in spread.items()}
+
     def find_pages_containing(self, doc_id: str, keyword: str, limit: int = 21) -> list[int]:
         """Return page numbers whose raw_text contains the keyword verbatim.
 
