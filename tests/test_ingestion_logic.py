@@ -23,6 +23,31 @@ def test_strip_vlm_blocks_plain_text_unchanged():
     assert strip_vlm_blocks(text) == text
 
 
+def test_strip_vlm_blocks_removes_chart_analysis_block():
+    # chart_analyzer.py appends this scaffold; its "Text Transcript:" label
+    # must never reach fact extraction as a key-value line.
+    text = ("Real page text.\n\n"
+            "=== Page Chart Content Analysis ===\n\n"
+            "Type: table\n\nSummary:\nSome table.\n\n"
+            "Text Transcript:\nRK3568 Datasheet\n\nData:\n2022-9-29, 1.3\n")
+    out = strip_vlm_blocks(text)
+    assert "Real page text" in out
+    assert "Text Transcript" not in out
+    assert "RK3568 Datasheet" not in out
+
+
+def test_extract_spec_facts_ignores_chart_transcript_scaffold():
+    # End-to-end: a page whose VLM transcript contains spec-looking text must
+    # not yield facts from the transcript (only from the real page text).
+    text = ("Support PCIe3.1(8Gbps) protocol\n\n"
+            "=== Page Chart Content Analysis ===\n\n"
+            "Text Transcript:\nSomeChip Datasheet\n")
+    extraction = {"spec_headers": ["interface"]}
+    facts = extract_spec_facts_from_text(text, 1, "SomeChip", "docX", extraction)
+    assert all("Text Transcript" not in f["attribute"] for f in facts)
+    assert all("Datasheet" not in f["value"] for f in facts)
+
+
 # ---- number words ----
 def test_num_word_to_int():
     assert _num_word_to_int("ten") == 10
@@ -210,3 +235,51 @@ def test_pymupdf_fallback_keeps_page_boundaries(monkeypatch):
     pages = DocumentParser._extract_pages_with_pymupdf("dummy.pdf")
     # empty page dropped, order preserved
     assert pages == ["page one text", "page three text"]
+
+
+# ---- source_text continuation (PDF line-wrap) ----
+
+def test_extend_source_joins_dangling_clause():
+    # PDF text extraction wraps this sentence mid-clause; the stored quote
+    # must be the complete sentence, not a fragment ending in "and".
+    text = ("Support PCIe3.1(8Gbps) protocol and backward compatible with\n"
+            "the PCIe2.1 and\n"
+            "PCIe1.1 protocol\n"
+            "Support two lane")
+    facts = extract_spec_facts_from_text(
+        text, 16, "RK3568", "d1", extraction=SEMICON_EXTRACTION)
+    pcie = [f for f in facts if f["attribute"] == "PCIe protocol"]
+    assert pcie, "expected a PCIe protocol fact"
+    assert pcie[0]["source_text"] == (
+        "Support PCIe3.1(8Gbps) protocol and backward compatible with "
+        "the PCIe2.1 and PCIe1.1 protocol")
+
+
+def test_extend_source_leaves_complete_fragments_alone():
+    # Bullet fragments end in a plain word: never extended, so adjacent
+    # bullets are never merged into one quote.
+    text = ("Support two PCIe controller with x1 mode\n"
+            "Support two lane\n"
+            "Support Root Complex mode")
+    facts = extract_spec_facts_from_text(
+        text, 16, "RK3568", "d1", extraction=SEMICON_EXTRACTION)
+    ctrl = [f for f in facts if f["attribute"] == "PCIe controller count"]
+    assert ctrl and ctrl[0]["source_text"] == (
+        "Support two PCIe controller with x1 mode")
+
+
+def test_extend_source_last_line_unchanged():
+    text = "Support four UART interfaces and"
+    facts = extract_spec_facts_from_text(
+        text, 1, "RK3588", "d1", extraction=SEMICON_EXTRACTION)
+    assert all(f["source_text"] == "Support four UART interfaces and"
+               for f in facts)
+
+
+def test_extend_source_respects_cap():
+    from core.ingestion.spec_facts_extractor import _extend_source
+    lines = ["word and"] + ["x" * 400]
+    joined = _extend_source(lines, 0, cap=300)
+    assert len(joined) <= 300
+    assert joined.startswith("word and")
+

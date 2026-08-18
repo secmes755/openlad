@@ -25,7 +25,14 @@ corresponding pattern (no pack = structural patterns only).
 import re
 
 # --- VLM block stripping -----------------------------------------------------
-_VLM_BLOCK_RE = re.compile(r'---\s*#{0,3}\s*Page Visual Analysis \(VLM\).*', re.S | re.I)
+# Both AI-generated block formats appended to page text must be stripped
+# before fact matching: parser.py's "--- ### Page Visual Analysis (VLM)" and
+# chart_analyzer.py's "=== Page Chart Content Analysis ===". Their scaffold
+# labels ("Text Transcript:", "Summary:", ...) look like key-value spec lines
+# and would otherwise enter the assertion table as junk facts.
+_VLM_BLOCK_RE = re.compile(
+    r'(?:---\s*#{0,3}\s*Page Visual Analysis \(VLM\)'
+    r'|===\s*Page Chart Content Analysis\s*===).*', re.S | re.I)
 
 def strip_vlm_blocks(text: str) -> str:
     """Remove AI-generated VLM description blocks from page text."""
@@ -151,6 +158,45 @@ def _clean(s: str) -> str:
     return re.sub(r'\s+', ' ', (s or '')).strip(' \t\r\n:;,.')
 
 
+# Words that signal an unfinished clause when they end a line. PDF text
+# extraction wraps long sentences across lines, so a line ending in a
+# dangling connector means the sentence continues on the next line.
+_DANGLING_ENDINGS = frozenset({
+    "and", "or", "with", "the", "a", "an", "of", "to", "for", "in", "on",
+    "per", "via", "by", "at", "as", "from", "than", "into", "between",
+})
+
+
+def _extend_source(lines: list[str], i: int, cap: int = 300) -> str:
+    """Return line i, extended with following lines while it ends mid-clause
+    (dangling connector word or trailing comma).
+
+    Line-by-line capture otherwise stores truncated, mid-sentence quotes
+    ("...backward compatible with the PCIe2.1 and") which then surface
+    verbatim in the injected spec block and the evidence appendix, and
+    keyword-match against source_text misses the wrapped-away tail.
+    Conservative by design: bullet fragments ("Support two lane") end in
+    a plain word and are never extended.
+    """
+    parts = [lines[i].strip()]
+    j = i
+    while j + 1 < len(lines):
+        cur = " ".join(parts)
+        if len(cur) >= cap:
+            break
+        stripped = cur.rstrip()
+        last_word = stripped.rsplit(" ", 1)[-1].lower() if stripped else ""
+        if not stripped.endswith(",") and last_word not in _DANGLING_ENDINGS:
+            break
+        nxt = lines[j + 1].strip()
+        if len(nxt) < 2:
+            break
+        parts.append(nxt)
+        j += 1
+    return " ".join(parts)[:cap]
+
+
+
 def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
                                   doc_id: str,
                                   extraction: dict | None = None) -> list[dict]:
@@ -225,6 +271,9 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         line = line.strip()
         if len(line) < 2:
             continue
+        # Stored quote: extend across PDF-wrapped continuation lines so the
+        # recorded source_text is a complete clause, not a truncated fragment.
+        ext = _extend_source(lines, i)
 
         # Pattern 0: two-line header+value. Two triggers:
         #  a) prev line is a pack-provided spec header word (GPU / CPU / ...)
@@ -241,7 +290,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
                 if (len(line) < 60 and not line.endswith(':')
                         and re.search(r'[A-Za-z0-9]', line)
                         and line.lower() not in spec_headers):
-                    add(prev.rstrip(':').strip(), line, f"{prev} {line}")
+                    add(prev.rstrip(':').strip(), line, f"{prev} {ext}")
 
         if len(line) < 6:
             continue
@@ -250,7 +299,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         for m in _RESOLUTION_RE.finditer(line):
             codec = _clean(m.group(1))
             res = _clean(m.group(2))
-            add(f"{codec} max resolution", res, line)
+            add(f"{codec} max resolution", res, ext)
 
         # Pattern 2 (Support sentences). verify_against keeps the original
         # number word so "Support ten UART" -> value "10" still verifies.
@@ -259,7 +308,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
             feature = _clean(m.group(2))
             unit_word = _clean(m.group(3))
             if num is not None and feature:
-                add(f"{feature} {unit_word} count", str(num), line,
+                add(f"{feature} {unit_word} count", str(num), ext,
                     verify_against=m.group(1))
 
         # Pattern 4 (compute power). Unit comes from the pack's
@@ -268,7 +317,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         if compute_re and compute_attribute:
             for m in compute_re.finditer(line):
                 add(compute_attribute, f"{m.group(1)} {m.group(2).upper()}",
-                    line, unit=m.group(2).upper())
+                    ext, unit=m.group(2).upper())
 
         # Pattern 6 (frequency/clock). Measure words come from the pack's
         # frequency_terms; attribute name is captured from the text; the
@@ -280,7 +329,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
                 attr = _clean(m.group(1))
                 unit = m.group(3)  # keep surface case ("GHz"/"MHz")
                 freq = f"{m.group(2)} {unit}"
-                add(f"{attr} frequency", freq, line, unit=unit)
+                add(f"{attr} frequency", freq, ext, unit=unit)
 
         # Pattern 5 (versioned protocol support). Value lists every same-family
         # version token in the sentence (e.g. "PCIe3.1(8Gbps), PCIe2.1, PCIe1.1").
@@ -306,12 +355,12 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
                 continue
             rest = [v for v in versions if v.lower() != family_tok.lower()]
             value = ', '.join([lead] + rest)
-            add(f"{stem} protocol", value, line, verify_against=family_tok)
+            add(f"{stem} protocol", value, ext, verify_against=family_tok)
 
         # Pattern 1 (key-value). Skip if the line was already fully explained
         # by a more specific pattern to reduce duplicates.
         for m in _KV_RE.finditer(line):
-            add(m.group(1), m.group(2), line)
+            add(m.group(1), m.group(2), ext)
 
     return facts
 
