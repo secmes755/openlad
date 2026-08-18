@@ -5,7 +5,7 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.1] - 2026-08-18
 
 ### Added
 
@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   industry pack (`spec_query_terms` in pack rules), so pages that phrase a
   fact differently can be recalled. Pack-declared terms only; deployments
   without industry packs see zero behavioural change.
+- Answers backed by authoritative spec facts now append a deterministic
+  "Source excerpts" section: the verbatim source line of every injected
+  fact, with page number and document title, assembled mechanically after
+  generation (never re-worded by the model). Controlled by
+  `spec_facts_appendix` (default on, env override
+  `OPENLAD_SPEC_FACTS_APPENDIX`).
+- Spec-fact injection blocks can present the verbatim source sentence first
+  (`spec_facts_presentation: "source_first"`, new default; env override
+  `OPENLAD_SPEC_FACTS_PRESENTATION`). The previous flattened
+  attribute/value enum remains available as `"value_first"`.
 
 ### Fixed
 
@@ -42,6 +52,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (公司/报告/营业收入/多少/...), so they no longer force-merge unrelated
   documents into the retrieval filter (a cross-document contamination
   variant).
+- Spec-fact extraction now runs after document classification, resolving
+  the industry plugin from the classified category (the same category→pack
+  matching used by query-time routing). Since extraction vocabulary moved
+  into industry packs, documents that no upload hint or detect hook claims
+  (e.g. datasheets) were ingested with zero spec facts, silently disabling
+  the authoritative-fact channel for them.
+- Spec-fact source excerpts no longer end mid-sentence at PDF line wraps:
+  an extracted line ending in a conjunction or comma is joined with the
+  following line (300-char cap), so queries can match the wrapped tail of a
+  sentence (e.g. "...backward compatible with the PCIe2.1 and | PCIe1.1
+  protocol").
+- Spec-fact matching now measures each query keyword's selectivity against
+  the document's own fact table: a keyword whose hits span more distinct
+  attributes than `spec_facts_selectivity_max_attrs` (default 3) carries no
+  discriminating power — generic verbs appear in the source line of nearly
+  every "Support X" fact — and is dropped from scoring. Entity-vocabulary
+  tokens are exempt. Controlled by `spec_facts_selectivity_guard` (default
+  on, env override `OPENLAD_SPEC_FACTS_SELECTIVITY_GUARD`).
+- Fact extraction now strips both AI-generated block formats appended to
+  page text (the page-level visual-analysis block and the chart-analysis
+  block). The chart block's scaffold labels previously matched the
+  key-value extraction pattern and entered the assertion table as junk
+  facts.
 
 ## [0.4.0] - 2026-08-13
 
