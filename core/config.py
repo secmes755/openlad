@@ -259,6 +259,20 @@ CONTEXT_CONFIG = {
     "spec_facts_max_inject": 12,          # max facts prepended to context
     "spec_facts_min_hits": 2,             # min keyword hits for a fact to qualify
     "spec_facts_entity_restriction": True,  # scope injected facts to query-named entities
+    # Presentation of injected facts. "source_first": the verbatim source
+    # sentence leads (the flattened value stays internal for matching only) —
+    # an enumeration like "PCIe3.1(8Gbps), PCIe2.1" invites literal-list
+    # readings by small models ("3.0 is not in the list -> unsupported").
+    # "value_first": legacy attribute:value rendering. One-switch rollback.
+    # Env-overridable for ops rollback without a code edit.
+    "spec_facts_presentation": os.environ.get(
+        "OPENLAD_SPEC_FACTS_PRESENTATION", "source_first"),
+    # Evidence appendix: after the LLM answer, mechanically append the verbatim
+    # source sentences behind the injected facts (never model-written). The
+    # reader gets an auditable original even when the narrative layer slips.
+    "spec_facts_evidence_appendix": os.environ.get(
+        "OPENLAD_SPEC_FACTS_APPENDIX", "1") == "1",
+    "spec_facts_evidence_max": 5,             # max excerpt lines appended
     "rewrite_collapse_guard": True,         # planner rewrite dropping a query entity -> frame synthesis with the original query
     # Chinese query-term -> English keyword expansion for spec-fact lookup.
     # This is a QUERY-UNDERSTANDING layer (synonym expansion), extensible via

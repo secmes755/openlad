@@ -416,6 +416,19 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                     "confidence": "none", "elapsed_ms": elapsed_ms}
 
         answer = synthesis_result.get("answer", "")
+        # Evidence appendix: when authoritative spec facts were injected, attach
+        # their verbatim source sentences so the reader can audit the narrative
+        # against the original page text (deterministic, never LLM-written).
+        spec_facts = retrieval_result.get("spec_facts") or []
+        if spec_facts:
+            from .spec_facts import build_evidence_appendix
+            sources = retrieval_result.get("sources") or []
+            doc_titles: dict = {}
+            for s in sources:
+                if isinstance(s, dict) and s.get("doc_id"):
+                    doc_titles[s["doc_id"]] = s.get("title") or s.get("filename") or ""
+            answer += build_evidence_appendix(spec_facts, doc_titles=doc_titles,
+                                              query_text=query_text)
         elapsed_ms = int((time.time() - start_time) * 1000)
 
         metadata_db.log_query(

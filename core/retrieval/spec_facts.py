@@ -141,6 +141,7 @@ def lookup_spec_facts(query_text: str, metadata_db, plan: dict | None = None,
         except Exception:
             doc_filter = None
 
+    # Match against entity / attribute / value / source text. A fact needs
     try:
         hits = metadata_db.search_spec_facts(
             uniq, doc_id_filter=doc_filter,
@@ -195,9 +196,23 @@ def format_spec_facts(facts: list[dict]) -> str:
     Facts are grouped by entity so the model cannot misattribute a value
     (e.g. RK3562's GPU frequency) to another entity: each group carries a
     clear [ENTITY] header and every fact keeps its verbatim source line.
+
+    Two presentations, switchable via CONTEXT_CONFIG['spec_facts_presentation']:
+
+    - 'source_first' (default): the verbatim source sentence is the content;
+      attribute/page are citation metadata. The flattened (attribute, value)
+      pair is NOT shown to the model — an enumeration like
+      "PCIe3.1(8Gbps), PCIe2.1" drops the claim's relational semantics
+      ("backward compatible with ...") and small models read it as a closed
+      list ("3.0 not in the list -> unsupported"), then confabulate to
+      reconcile the contradiction. The value stays in the index for keyword
+      matching only.
+    - 'value_first' (legacy, one-switch rollback): attribute: value with a
+      truncated source note.
     """
     if not facts:
         return ""
+    presentation = settings.CONTEXT_CONFIG.get("spec_facts_presentation", "source_first")
     lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
     order: list[str] = []
     by_entity: dict[str, list[dict]] = {}
@@ -210,7 +225,68 @@ def format_spec_facts(facts: list[dict]) -> str:
     for ent in order:
         lines.append(f"- [{ent}]")
         for f in by_entity[ent]:
-            lines.append(
-                f"  - {f.get('attribute','')}: {f.get('value','')}"
-                f"  (page {f.get('page_num','?')}; 原文: \"{f.get('source_text','')[:120]}\")")
+            src = (f.get("source_text") or "").strip()
+            if presentation == "value_first" or not src:
+                lines.append(
+                    f"  - {f.get('attribute','')}: {f.get('value','')}"
+                    f"  (page {f.get('page_num','?')}; 原文: \"{src[:120]}\")")
+            else:
+                lines.append(
+                    f"  - \"{src}\""
+                    f"  ({f.get('attribute','')}, page {f.get('page_num','?')})")
     return "\n".join(lines)
+
+
+_EVIDENCE_SOURCE_CAP = 300  # chars; verbatim prefix, cut at a sentence boundary
+
+
+def _trim_verbatim(text: str, cap: int = _EVIDENCE_SOURCE_CAP) -> str:
+    """Trim to a verbatim prefix ending at a sentence boundary when possible."""
+    if len(text) <= cap:
+        return text
+    cut = max(text.rfind(". ", 0, cap), text.rfind("。", 0, cap))
+    if cut > cap // 2:
+        return text[:cut + 1]
+    return text[:cap].rstrip() + "…"
+
+
+def build_evidence_appendix(facts: list[dict], doc_titles: dict | None = None,
+                            query_text: str = "") -> str:
+    """Deterministic post-answer appendix: the verbatim source sentences behind
+    the injected facts, with document/page citations. Never model-written —
+    the reader can audit the narrative against the original text even when the
+    generation layer slips. Controlled by spec_facts_evidence_appendix /
+    spec_facts_evidence_max. Facts without source_text are skipped (nothing
+    quotable to attest)."""
+    if not facts:
+        return ""
+    if not settings.CONTEXT_CONFIG.get("spec_facts_evidence_appendix", True):
+        return ""
+    zh = bool(re.search(r'[\u4e00-\u9fff]', query_text or ""))
+    max_show = int(settings.CONTEXT_CONFIG.get("spec_facts_evidence_max", 5) or 5)
+    titles = doc_titles or {}
+    seen: set = set()
+    items: list[str] = []
+    for f in facts:
+        src = (f.get("source_text") or "").strip()
+        if not src:
+            continue
+        key = (src[:80], f.get("page_num"))
+        if key in seen:
+            continue
+        seen.add(key)
+        title = titles.get(f.get("doc_id")) or ""
+        page = f.get("page_num") or "?"
+        excerpt = _trim_verbatim(src)
+        if zh:
+            loc = f"《{title}》第 {page} 页" if title else f"第 {page} 页"
+            items.append(f"- {loc}：\"{excerpt}\"")
+        else:
+            loc = f"{title}, p.{page}" if title else f"p.{page}"
+            items.append(f"- {loc}: \"{excerpt}\"")
+        if len(items) >= max_show:
+            break
+    if not items:
+        return ""
+    header = "\n\n---\n依据原文：\n" if zh else "\n\n---\nSource excerpts:\n"
+    return header + "\n".join(items)
