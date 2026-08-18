@@ -650,6 +650,25 @@ class PluginRegistry:
                 return self._plugins.get(plugin_id)
         return self.get_generic()
 
+    def resolve_plugin_for_categories(self, categories: list) -> IndustryPlugin | None:
+        """Resolve an industry plugin from classified document categories
+        (tried in order — pass most specific first). Exact category_mapping
+        hit, then fuzzy substring match, same matching rules as
+        get_plugin_by_category but WITHOUT the generic fallback: ingestion
+        vocabulary (spec-fact extraction) must only come from a pack that
+        genuinely claims the document's category, never from a generic
+        fallback that would inject industry vocabulary into unrelated
+        documents."""
+        for category in categories:
+            if not category:
+                continue
+            if category in self._category_map:
+                return self._plugins.get(self._category_map[category])
+            for cat_key, plugin_id in self._category_map.items():
+                if cat_key in category or category in cat_key:
+                    return self._plugins.get(plugin_id)
+        return None
+
     def detect_plugin_for_document(self, parsed_doc: Any) -> IndustryPlugin | None:
         """Auto-detect an industry plugin by inspecting the parsed document.
 

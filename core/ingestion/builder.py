@@ -204,6 +204,26 @@ class DocumentIndexBuilder:
         logger.info(f"[CLASSIFY] Result: L1={classification['category_level1']}, "
                    f"L2={classification['category_level2']}, L3={classification['category_level3']}")
 
+        # Spec-fact extraction runs AFTER classification. The extractor's
+        # vocabulary lives in the industry pack (core stays industry-agnostic),
+        # but documents no detect hook claims (e.g. datasheets) reach this
+        # point with plugin=None. Resolve the plugin from the classified
+        # category — the same category→pack matching as query-time routing —
+        # then run extraction over the L2 page texts. Fully local, rule-based
+        # (no LLM), and failure never blocks ingest.
+        extraction_plugin = plugin
+        if extraction_plugin is None:
+            extraction_plugin = registry.resolve_plugin_for_categories(
+                [classification.get("category_level3"),
+                 classification.get("category_level2"),
+                 classification.get("category_level1")])
+            if extraction_plugin is not None:
+                logger.info(f"[BUILDER] Resolved industry plugin "
+                            f"'{extraction_plugin.manifest.id}' for spec-fact "
+                            f"extraction from document category")
+        self._extract_spec_facts(doc_id, l2_results, tid, extraction_plugin,
+                                 parsed_doc)
+
         # Generate L2 page vector embeddings
         _report(75, "Generating L2 vector embeddings")
         self._build_embeddings(doc_id, l2_results, tid)
@@ -445,19 +465,6 @@ class DocumentIndexBuilder:
         # Clean up old data
         metadata_db.delete_document(doc_id)
 
-        # Document-level entity for spec facts (from filename — the only
-        # reliable title source at this stage). Entity patterns come from the
-        # active industry pack (core stays industry-agnostic).
-        from .spec_facts_extractor import infer_doc_entity
-        entity_patterns = None
-        if plugin is not None:
-            try:
-                entity_patterns = plugin.retrieval.get_entity_patterns() or None
-            except Exception as e:
-                logger.warning(f"[BUILDER] get_entity_patterns failed (non-fatal): {e}")
-        spec_entity = infer_doc_entity(
-            parsed_doc.filename, entity_patterns=entity_patterns) if parsed_doc else ""
-
         # Industry package document subtype detection
         doc_subtype = None
         if plugin and hasattr(plugin.ingestion, 'detect_document_subtype'):
@@ -639,19 +646,44 @@ class DocumentIndexBuilder:
                 "page_text": r["page_text"]
             })
 
-            # Extract assertion-level spec facts from this page's authoritative
-            # text. The extractor strips VLM description blocks first and
-            # self-verifies every value against the original line — fully local,
-            # rule-based (no LLM, no external API). Failure never blocks ingest.
-            if settings.CONTEXT_CONFIG.get("spec_facts_enabled", True):
+        self._save_structure_index_to_db(doc_id, structure_index, page_results, tenant_id=tid,
+                                         explicit_sections=explicit_sections)
+        return l2_results
+
+    def _extract_spec_facts(self, doc_id: str, l2_results: list, tid: str,
+                            plugin, parsed_doc) -> None:
+        """Extract assertion-level spec facts from L2 page texts.
+
+        Runs after classification so the industry plugin can be resolved from
+        the classified category when no upload hint / detect hook claimed the
+        document. The extractor strips VLM description blocks first and
+        self-verifies every value against the original line — fully local,
+        rule-based (no LLM, no external API). Failure never blocks ingest.
+        """
+        if not settings.CONTEXT_CONFIG.get("spec_facts_enabled", True):
+            return
+        try:
+            from .spec_facts_extractor import extract_spec_facts_from_text, infer_doc_entity
+            metadata_db, _ = self._get_dbs(tid)
+            entity_patterns = None
+            extraction = None
+            if plugin is not None:
                 try:
-                    from .spec_facts_extractor import extract_spec_facts_from_text
-                    extraction = None
-                    if plugin is not None:
-                        try:
-                            extraction = plugin.retrieval.get_spec_extraction_config() or None
-                        except Exception as e:
-                            logger.warning(f"[BUILDER] get_spec_extraction_config failed (non-fatal): {e}")
+                    entity_patterns = plugin.retrieval.get_entity_patterns() or None
+                except Exception as e:
+                    logger.warning(f"[BUILDER] get_entity_patterns failed (non-fatal): {e}")
+                try:
+                    extraction = plugin.retrieval.get_spec_extraction_config() or None
+                except Exception as e:
+                    logger.warning(f"[BUILDER] get_spec_extraction_config failed (non-fatal): {e}")
+            # Document-level entity from filename — the only reliable title
+            # source at this stage. Entity patterns come from the active
+            # industry pack (core stays industry-agnostic).
+            spec_entity = infer_doc_entity(
+                parsed_doc.filename, entity_patterns=entity_patterns) if parsed_doc else ""
+            count = 0
+            for r in l2_results:
+                try:
                     for fact in extract_spec_facts_from_text(
                             r["page_text"], r["page_num"], spec_entity, doc_id,
                             extraction=extraction):
@@ -660,12 +692,14 @@ class DocumentIndexBuilder:
                             attribute=fact["attribute"], value=fact["value"],
                             page_num=fact["page_num"], source_text=fact["source_text"],
                             verified=fact["verified"])
+                        count += 1
                 except Exception as e:
                     logger.warning(f"spec fact extraction failed for page {r['page_num']}: {e}")
-
-        self._save_structure_index_to_db(doc_id, structure_index, page_results, tenant_id=tid,
-                                         explicit_sections=explicit_sections)
-        return l2_results
+            logger.info(f"[BUILDER] spec-fact extraction: {count} facts "
+                        f"(plugin={plugin.manifest.id if plugin else None}, "
+                        f"entity={spec_entity!r})")
+        except Exception as e:
+            logger.warning(f"[BUILDER] spec-fact extraction failed (non-fatal): {e}")
 
     def _build_structure_index(self, doc_id: str, page_results: dict[int, dict],
                                 parsed_doc=None):
