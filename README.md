@@ -1,12 +1,10 @@
 <p align="center">
-  <h1>OpenLAD ☤</h1>
+  <h1>OpenLAD</h1>
   <em>Local Document AI Knowledge Base — Fully Offline, Fully Open</em>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
-  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-5_minutes-blue?style=for-the-badge" alt="Quick Start"></a>
-  <a href="#-configuration-reference"><img src="https://img.shields.io/badge/GPU-16_GB_rec-orange?style=for-the-badge" alt="GPU: 16GB rec"></a>
   <a href="README_zh-CN.md"><img src="https://img.shields.io/badge/中文-简体-red?style=for-the-badge" alt="中文"></a>
 </p>
 
@@ -14,8 +12,8 @@
 
 **OpenLAD** is an offline-first, local document intelligent Q&A system. Upload
 your PDFs, Word documents, spreadsheets, and presentations — then ask questions
-in natural language. Everything runs on your own hardware. No cloud. No API
-keys. No data leaves your premises.
+in natural language. Everything runs on your own hardware. No cloud. No
+external API keys. No data leaves your premises.
 
 Built for organizations that need a private document knowledge base on modest
 hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
@@ -26,18 +24,19 @@ hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
 <tr><td><b>🧠 Hybrid Retrieval</b></td><td>Full-text search (FTS5) + vector search (sqlite-vec) + LLM-driven planning. Three-phase pipeline: Plan → Retrieve → Synthesize.</td></tr>
 <tr><td><b>🏭 Industry Plugins</b></td><td>Extensible plugin system. 1 complete sample pack (Semiconductor) + 3 empty templates (Legal, Financial, Generic) for customization. Custom packs can be built for any domain.</td></tr>
 <tr><td><b>👥 Multi-Tenant</b></td><td>Isolated databases and vector spaces per tenant. Admin panel for user and document management.</td></tr>
-<tr><td><b>🔐 Security</b></td><td>Login rate limiting (per-username + per-IP, no account lockout), expiring API keys (default 90 days, rotatable via admin panel), per-tenant data isolation, unique usernames per tenant.</td></tr>
+<tr><td><b>🔐 Security</b></td><td>Login rate limiting (per-username + per-IP, no account lockout), expiring API keys (default 90 days, rotatable via admin panel), per-tenant data isolation, globally unique usernames.</td></tr>
 <tr><td><b>🌐 Web UI</b></td><td>Built-in web interface. Admin panel at <code>/admin</code>, user Q&A at <code>/</code>. LAN-accessible.</td></tr>
 <tr><td><b>🧩 BYO-LLM Architecture</b></td><td>Choose your own LLM and embedding backends — llama.cpp, Ollama, vLLM, or any OpenAI-compatible API.</td></tr>
 </table>
 
 ---
 
-## Docker Deployment (0.4.0)
+## Docker Deployment
 
-The fastest way to run OpenLAD: a single container for the API. Model
-services stay **outside** the container — run llama-server / vLLM / Ollama on
-the host, or point at any cloud OpenAI-compatible endpoint.
+The fastest way to run OpenLAD: a single container for the API. The container
+is CPU-only by design — model services stay **outside**: run llama-server /
+vLLM / Ollama on the host, or point at any OpenAI-compatible endpoint, local
+or cloud.
 
 ### 1. Install Docker
 
@@ -80,11 +79,6 @@ On first startup the container creates the admin user with
 `OPENLAD_ADMIN_PASSWORD` (only when no admin exists; changing the variable
 later does not reset the password).
 
-> **Why not containerize the model services too?** OpenLAD deliberately
-> keeps the API and the model services separate: you can use llama.cpp,
-> Ollama, vLLM, or any OpenAI-compatible API — local or cloud. The API
-> container itself is CPU-only, so no GPU passthrough is required.
-
 ## Quick Start
 
 ### Prerequisites
@@ -97,8 +91,8 @@ later does not reset the password).
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/your-org/OpenLAD.git
-cd OpenLAD
+git clone https://github.com/secmes755/openlad.git
+cd openlad
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -160,8 +154,9 @@ llama-server \
 Verify:
 
 ```bash
-curl http://127.0.0.1:11296/health
-# → {"status":"ok","llm":true,"embedding":true}
+curl http://127.0.0.1:11296/api/v1/health
+# → {"status":"ok","version":"...","name":"OpenLAD","services":{"database":...,"llm":...,"embedding":...}}
+#   status is "degraded" if a model endpoint is unreachable
 ```
 
 Open your browser: **`http://localhost:11296/`**
@@ -252,12 +247,12 @@ All settings are environment variables. Create a `.env` file or export directly.
 
 ### Model Backends
 
-| Variable            | Default                    | Description                      |
-| ------------------- | -------------------------- | -------------------------------- |
-| `OPENLAD_LLM_URL`   | `http://127.0.0.1:8080/v1` | LLM API endpoint                 |
-| `OPENLAD_LLM_MODEL` | `qwen3.5-9b`               | Model name registered in backend |
-| `OPENLAD_EMB_URL`   | `http://127.0.0.1:8081/v1` | Embedding API endpoint           |
-| `OPENLAD_EMB_MODEL` | `qwen3-embedding`          | Embedding model name             |
+| Variable            | Default                    | Description                              |
+| ------------------- | -------------------------- | ---------------------------------------- |
+| `OPENLAD_LLM_URL`   | `http://localhost:8080/v1` | LLM API endpoint                         |
+| `OPENLAD_LLM_MODEL` | *(required — no default)*  | Model name registered in the LLM backend |
+| `OPENLAD_EMB_URL`   | `http://localhost:8081/v1` | Embedding API endpoint                   |
+| `OPENLAD_EMB_MODEL` | *(required — no default)*  | Embedding model name                     |
 
 ### Security & Authentication
 
@@ -295,34 +290,6 @@ user-management panel, or via `POST /api/v1/admin/users/{id}/regenerate-key`.
 | `--embeddings`   | —      | Enable embedding mode                             |
 | `--pooling`      | `mean` | Mean pooling for embedding vectors                |
 | `--batch-size`   | `2048` | Batch size                                        |
-
-### 8 GB VRAM Configuration (Reduced Context)
-
-If you have an 8 GB GPU, you must significantly reduce the context window.
-The trade-off: shorter documents and simpler queries will work, but multi-page
-comparisons and long technical manuals may hit context limits.
-
-**Math check** (Qwen3.5-9B Q5_K_M, ~6.5 GB weights):
-
-- 8 GB VRAM − 6.5 GB model − 0.7 GB CUDA overhead − 0.7 GB embedding = **0.1 GB left for KV cache**
-- At q4_0 KV quantization: **~4,000 tokens max context**
-- A typical OpenLAD query needs **~13,000 tokens** (6 retrieved pages × 1,500 tokens + prompt + output)
-
-**Realistic 8 GB setup** (single model, no embedding on same GPU):
-
-```bash
-# Run embedding on CPU or a second GPU. LLM gets the full 8 GB.
-llama-server \
-    --model ~/models/qwen3.5-9b-q5_k_m.gguf \
-    --n-gpu-layers 35 --ctx-size 16384 \
-    --parallel 1 --batch-size 1024 --reasoning off \
-    --cache-type-k q4_0 --cache-type-v q4_0 -n -1 \
-    --host 127.0.0.1 --port 8080 --alias qwen3.5-9b
-```
-
-With `--ctx-size 16384`, you can process **~10 retrieved pages** — adequate for
-single-document Q&A, marginal for cross-document synthesis. For production use,
-16 GB VRAM is strongly recommended.
 
 ### Using Ollama Instead
 
@@ -384,7 +351,8 @@ llama-server --model ~/models/qwen3.5-9b-q5_k_m.gguf \
 The retrieved context exceeds the model's context window.
 
 - Increase `--ctx-size` (if VRAM allows)
-- Or set `OPENLAD_MAX_CHARS=80000` to truncate retrieval context
+- Or lower the retrieval context quota, e.g. `OPENLAD_MAX_CHARS=40000`
+  (overrides the default phase-2 budget)
 
 ### "No module named 'xxx'"
 
@@ -437,15 +405,6 @@ solutions. Proprietary/commercial industry packs are available under separate
 licensing.
 
 See [LICENSE](LICENSE) for the full text.
-
-### Why MIT?
-
-OpenLAD was originally developed privately under AGPLv3 due to its dependency
-on PyMuPDF (AGPLv3). In v1.0, PyMuPDF was replaced with a combination of
-pypdf (BSD), pdfplumber (MIT), and pdf2image (MIT) — all permissively
-licensed — allowing OpenLAD to adopt the MIT license. The public repository
-has been MIT-licensed since its first public release (v1.0.0); the AGPL
-period predates the public history and is not part of the git repository.
 
 ---
 
