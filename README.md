@@ -395,14 +395,7 @@ All core dependencies use permissive licenses compatible with MIT:
 
 All dependencies are permissively licensed — no AGPL, no GPL, no copyleft
 restrictions. You are free to use, modify, and distribute OpenLAD under the
-MIT terms.
-
-**Industry packs** under `industries/sample_*/` are provided under MIT as
-reference implementations. The repository ships with 1 complete sample pack
-(Semiconductor) and 3 empty templates (Legal, Financial, Generic) — the
-templates are starting points for customization, not production-grade industry
-solutions. Proprietary/commercial industry packs are available under separate
-licensing.
+terms of the MIT license.
 
 See [LICENSE](LICENSE) for the full text.
 
