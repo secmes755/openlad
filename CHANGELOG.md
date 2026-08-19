@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - 2026-08-18
 
+> **Upgrading from 0.4.0 or earlier: re-ingest your documents.** Existing
+> databases remain fully compatible (schema migrations are additive), and
+> the query-side fixes apply to old data immediately. But several fixes in
+> this release change what is stored at ingestion time — spec-fact
+> extraction now runs after classification, AI-scaffold junk is stripped
+> before it enters the fact table, wrapped source sentences are joined,
+> and bookmarkless documents get a usable chapter index. Documents
+> ingested by older versions keep their old extraction results — including
+> junk spec facts that would continue to be injected into answers as
+> authoritative — until they are deleted and uploaded again.
+
 ### Added
 
 - `OPENLAD_INDUSTRIES_DIRS` environment variable appends external industry
