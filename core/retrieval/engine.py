@@ -264,7 +264,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             sources=retrieval_result.get("sources", []),
             chat_history=chat_history,
             routed_category=routed_category,
-            original_query=query_text
+            original_query=query_text,
+            explicit_pack_id=industry_hint if industry_hint and industry_hint != "auto" else None
         )
         return retrieval_result, synthesis_result, router_plan
 
@@ -401,7 +402,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                 sources=retrieval_result.get("sources", []),
                 chat_history=chat_history_str,
                 routed_category=routed_category,
-                original_query=query_text
+                original_query=query_text,
+                explicit_pack_id=industry_hint if industry_hint and industry_hint != "auto" else None
             )
 
         # Empty retrieval guard: if context is empty or very short, refuse to let LLM fabricate

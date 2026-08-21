@@ -1,0 +1,13 @@
+id: generic
+name: General Base Pack (通用基础包)
+version: 1.0.0
+description: >-
+  Always-on base layer of universal, cross-industry document knowledge:
+  numbers and counting units (Chinese 万/亿 magnitudes), physical and
+  financial units, bilingual structural references, and conservative
+  answer discipline. Industry packs carry only vertical-domain increments
+  and are layered over this base at runtime (conflicts resolve in favor
+  of the industry pack). Pure YAML, no Python entry point.
+author: OpenLAD Team
+category_mapping: []
+is_builtin: true

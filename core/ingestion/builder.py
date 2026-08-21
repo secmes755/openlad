@@ -180,6 +180,9 @@ class DocumentIndexBuilder:
         # package manually, while leaving generic documents unchanged.
         if plugin is None and parsed_doc is not None:
             plugin = registry.detect_plugin_for_document(parsed_doc)
+        if plugin is not None:
+            # Layer the always-on generic base pack under the selected pack
+            plugin = registry.compose_with_base(plugin)
 
         # L2: Page-level processing
         _report(30, "Building L2 page index")
@@ -218,6 +221,9 @@ class DocumentIndexBuilder:
                  classification.get("category_level2"),
                  classification.get("category_level1")])
             if extraction_plugin is not None:
+                composed = registry.compose_with_base(extraction_plugin)
+                if composed is not None:
+                    extraction_plugin = composed
                 logger.info(f"[BUILDER] Resolved industry plugin "
                             f"'{extraction_plugin.manifest.id}' for spec-fact "
                             f"extraction from document category")

@@ -205,6 +205,41 @@ class RetrievalPlugin(ABC):
         the pack. Missing/empty lists disable the corresponding pattern."""
         return {}
 
+    def get_evidence_anchor_patterns(self) -> list[str]:
+        """Regex patterns (via re.findall) that extract domain-specific
+        evidence-anchor keywords from an answer for self-check context
+        sampling (e.g. a legal pack might anchor on article numbers).
+        Core always applies its generic anchors (numbers, model tokens,
+        long phrases); these patterns are additive. Default: none."""
+        return []
+
+    def get_section_boost_rules(self) -> dict[str, Any]:
+        """Section boost rules (query-intent -> boost/penalty), default {}."""
+        return {}
+
+    def get_retrieval_rules(self) -> dict[str, Any]:
+        """Complete retrieval rules (query_expansion, low_value_sections,
+        spec_sections, etc.), default {}."""
+        return {}
+
+    def get_query_expansion_keywords(self) -> list[str]:
+        """Query expansion keywords (decomposed_retrieve sub-query
+        enhancement), default []."""
+        return []
+
+    def get_low_value_sections(self) -> list[dict[str, Any]]:
+        """Low-value section penalty rules, default []."""
+        return []
+
+    def get_spec_sections(self) -> list[dict[str, Any]]:
+        """Spec-related section boost rules, default []."""
+        return []
+
+    def get_specificity_vocabulary(self) -> dict[str, list[str]]:
+        """Domain vocabulary (units/terms regex fragments) for the
+        confidence heuristic's specificity signal, default {}."""
+        return {}
+
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         """Format citation (default [^page_num^])"""
         return f"[^{page_num}^]"
@@ -337,6 +372,11 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         # empty -> core runs structural patterns only).
         return self.config.rules.get("spec_extraction", {}) or {}
 
+    def get_evidence_anchor_patterns(self) -> list[str]:
+        # Domain-specific evidence-anchor regexes from rules.yaml
+        # `evidence_anchor_patterns` (default empty).
+        return self.config.rules.get("evidence_anchor_patterns", []) or []
+
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"
 
@@ -362,6 +402,11 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
     def get_spec_sections(self) -> list[dict[str, Any]]:
         """Get spec-related section boost rules (boost key pages during retrieval phase)"""
         return self.config.rules.get("spec_sections", [])
+
+    def get_specificity_vocabulary(self) -> dict[str, list[str]]:
+        """Specificity vocabulary from rules.yaml `specificity_vocabulary`
+        (default empty -> confidence heuristic keeps structural signals only)."""
+        return self.config.rules.get("specificity_vocabulary", {}) or {}
 
 
 class YAMLIndustryPlugin(IndustryPlugin):
@@ -467,6 +512,200 @@ class YAMLIndustryPlugin(IndustryPlugin):
 
 请用中文回答。"""
         return prompt
+
+
+# =============================================================================
+# Pack Composition: generic base layer + selected industry overlay
+# =============================================================================
+
+def _union_list(base: list, overlay: list) -> list:
+    """Union two lists, base items first, preserving order."""
+    out = list(base or [])
+    for item in (overlay or []):
+        if item not in out:
+            out.append(item)
+    return out
+
+
+def _merge_hook_dicts(base: dict, overlay: dict) -> dict:
+    """Merge hook config dicts: dicts recurse, lists union, scalars overlay-wins."""
+    merged = dict(base or {})
+    for key, value in (overlay or {}).items():
+        if key not in merged:
+            merged[key] = value
+        elif isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _merge_hook_dicts(merged[key], value)
+        elif isinstance(merged[key], list) and isinstance(value, list):
+            merged[key] = _union_list(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+class ComposedRetrievalPlugin(RetrievalPlugin):
+    """Retrieval hooks of (generic base + industry overlay) composed.
+
+    Vocabulary/config hooks merge (lists union, overlay wins scalar/dict
+    conflicts); behavioral hooks chain or delegate to the overlay. Core
+    holds no vocabulary — both layers are pack data.
+    """
+
+    def __init__(self, base: RetrievalPlugin, overlay: RetrievalPlugin):
+        self._base = base
+        self._overlay = overlay
+
+    # --- behavioral hooks: overlay decides / chains ---
+    def rewrite_query(self, query: str, chat_history: list[dict] = None) -> str:
+        return self._overlay.rewrite_query(query, chat_history)
+
+    def format_citation(self, page_num: int, doc_title: str = "") -> str:
+        return self._overlay.format_citation(page_num, doc_title)
+
+    def post_process_answer(self, answer: str, context: str) -> str:
+        return self._overlay.post_process_answer(
+            self._base.post_process_answer(answer, context), context)
+
+    def enhance_context(self, query: str, context: str,
+                        sources: list[dict[str, Any]] = None) -> str:
+        context = self._base.enhance_context(query, context, sources)
+        return self._overlay.enhance_context(query, context, sources)
+
+    def supplement_results(self, query: str, results: list[Any],
+                           metadata_db: Any = None) -> list[Any]:
+        return _union_list(
+            self._base.supplement_results(query, results, metadata_db),
+            self._overlay.supplement_results(query, results, metadata_db))
+
+    # --- vocabulary/config hooks: merge ---
+    def get_retrieval_prompts(self) -> dict[str, str]:
+        return _merge_hook_dicts(self._base.get_retrieval_prompts(),
+                                 self._overlay.get_retrieval_prompts())
+
+    def get_answer_constraints(self) -> dict[str, Any]:
+        return _merge_hook_dicts(self._base.get_answer_constraints(),
+                                 self._overlay.get_answer_constraints())
+
+    def disambiguate_terms(self, query: str) -> dict[str, str]:
+        return _merge_hook_dicts(self._base.disambiguate_terms(query),
+                                 self._overlay.disambiguate_terms(query))
+
+    def get_synonyms(self, term: str) -> list[str]:
+        return _union_list(self._base.get_synonyms(term),
+                           self._overlay.get_synonyms(term))
+
+    def get_spec_query_terms(self) -> dict[str, list[str]]:
+        return _merge_hook_dicts(self._base.get_spec_query_terms(),
+                                 self._overlay.get_spec_query_terms())
+
+    def get_entity_patterns(self) -> list[str]:
+        # Overlay patterns first: industry claims are more specific.
+        return _union_list(self._overlay.get_entity_patterns(),
+                           self._base.get_entity_patterns())
+
+    def get_spec_extraction_config(self) -> dict[str, Any]:
+        return _merge_hook_dicts(self._base.get_spec_extraction_config(),
+                                 self._overlay.get_spec_extraction_config())
+
+    def get_evidence_anchor_patterns(self) -> list[str]:
+        return _union_list(self._base.get_evidence_anchor_patterns(),
+                           self._overlay.get_evidence_anchor_patterns())
+
+    def get_section_boost_rules(self) -> dict[str, Any]:
+        return _merge_hook_dicts(self._base.get_section_boost_rules(),
+                                 self._overlay.get_section_boost_rules())
+
+    def get_retrieval_rules(self) -> dict[str, Any]:
+        return _merge_hook_dicts(self._base.get_retrieval_rules(),
+                                 self._overlay.get_retrieval_rules())
+
+    def get_query_expansion_keywords(self) -> list[str]:
+        return _union_list(self._base.get_query_expansion_keywords(),
+                           self._overlay.get_query_expansion_keywords())
+
+    def get_low_value_sections(self) -> list[dict[str, Any]]:
+        return _union_list(self._base.get_low_value_sections(),
+                           self._overlay.get_low_value_sections())
+
+    def get_spec_sections(self) -> list[dict[str, Any]]:
+        return _union_list(self._base.get_spec_sections(),
+                           self._overlay.get_spec_sections())
+
+    def get_specificity_vocabulary(self) -> dict[str, list[str]]:
+        return _merge_hook_dicts(self._base.get_specificity_vocabulary(),
+                                 self._overlay.get_specificity_vocabulary())
+
+
+class ComposedIngestionPlugin(IngestionPlugin):
+    """Ingestion hooks of (generic base + industry overlay) composed."""
+
+    def __init__(self, base: IngestionPlugin, overlay: IngestionPlugin):
+        self._base = base
+        self._overlay = overlay
+
+    def classify_document(self, content_sample: str, filename: str) -> dict[str, Any]:
+        return self._overlay.classify_document(content_sample, filename) \
+            or self._base.classify_document(content_sample, filename)
+
+    def extract_entities(self, page_text: str, page_type: str) -> list[dict[str, Any]]:
+        return _union_list(self._base.extract_entities(page_text, page_type),
+                           self._overlay.extract_entities(page_text, page_type))
+
+    def get_ingestion_prompts(self) -> dict[str, str]:
+        return _merge_hook_dicts(self._base.get_ingestion_prompts(),
+                                 self._overlay.get_ingestion_prompts())
+
+    def get_parsing_rules(self) -> dict[str, Any]:
+        return _merge_hook_dicts(self._base.get_parsing_rules(),
+                                 self._overlay.get_parsing_rules())
+
+    def enhance_summary(self, raw_summary: str, doc_metadata: dict) -> str:
+        return self._overlay.enhance_summary(
+            self._base.enhance_summary(raw_summary, doc_metadata), doc_metadata)
+
+    def get_skill_config(self) -> dict[str, Any] | None:
+        return self._overlay.get_skill_config() or self._base.get_skill_config()
+
+    def detect_document_subtype(self, parsed_doc: Any) -> str | None:
+        return self._overlay.detect_document_subtype(parsed_doc) \
+            or self._base.detect_document_subtype(parsed_doc)
+
+    def process_page(self, page: Any, raw_text: str, *args, **kwargs):
+        self._base.process_page(page, raw_text, *args, **kwargs)
+        return self._overlay.process_page(page, raw_text, *args, **kwargs)
+
+    def on_document_complete(self, doc_id: str, metadata_db: Any) -> None:
+        self._base.on_document_complete(doc_id, metadata_db)
+        self._overlay.on_document_complete(doc_id, metadata_db)
+
+
+class ComposedIndustryPlugin(IndustryPlugin):
+    """An explicitly-selected industry pack layered over the generic base pack.
+
+    Identity (manifest) is the overlay's; hooks are composed. Intentionally
+    exposes no `name` attribute: the self-check gate keys off `name` and must
+    stay disabled until its own fix lands.
+    """
+
+    def __init__(self, base: IndustryPlugin, overlay: IndustryPlugin):
+        self._base = base
+        self._overlay = overlay
+        self._retrieval = ComposedRetrievalPlugin(base.retrieval, overlay.retrieval)
+        self._ingestion = ComposedIngestionPlugin(base.ingestion, overlay.ingestion)
+
+    @property
+    def manifest(self) -> IndustryManifest:
+        return self._overlay.manifest
+
+    @property
+    def ingestion(self) -> IngestionPlugin:
+        return self._ingestion
+
+    @property
+    def retrieval(self) -> RetrievalPlugin:
+        return self._retrieval
+
+    def match_category(self, category: str) -> float:
+        return self._overlay.match_category(category)
 
 
 # =============================================================================
@@ -706,6 +945,21 @@ class PluginRegistry:
             if pid == "generic" or "通用" in plugin.manifest.name:
                 return plugin
         return None
+
+    def compose_with_base(self, plugin: IndustryPlugin | None) -> IndustryPlugin | None:
+        """Layer the selected pack over the always-on generic base pack.
+
+        - plugin None -> the generic base alone (universal knowledge still
+          applies; returns None only when no generic pack is registered)
+        - plugin is the generic base (or no base registered) -> plugin as-is
+        - otherwise -> ComposedIndustryPlugin(base=generic, overlay=plugin)
+        """
+        base = self.get_generic()
+        if plugin is None:
+            return base
+        if base is None or base is plugin or plugin.manifest.id == base.manifest.id:
+            return plugin
+        return ComposedIndustryPlugin(base, plugin)
 
     def detect_plugin_for_text(self, text: str) -> IndustryPlugin | None:
         """Detect which industry pack claims a piece of text (query or

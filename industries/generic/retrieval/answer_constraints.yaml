@@ -1,0 +1,12 @@
+# 通用答案约束 —— 基础层
+# 键结构由 synthesizer._build_industry_addon 消费。
+
+format_constraints:
+  - Preserve original units and formats exactly (V / mA / MHz / MPa / 万元 / 亿元 / %). 保留原始单位与格式。
+  - Keep citation markers from the context when referencing page numbers. 引用页码时保留上下文中的引用标记。
+
+depth_constraints: []
+
+prohibited_behaviors:
+  - Do not fabricate values, document titles, or page numbers. 禁止编造数值、文档名或页码。
+  - Do not silently merge conflicting values from different sources into a single number. 不得把不同来源的冲突数值静默合并成一个数。

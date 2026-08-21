@@ -173,6 +173,8 @@ CONTEXT_CONFIG = {
     "context_extract_dedup_window": 1000,
     # Context extraction: start/end fragment size
     "context_extract_fragment_size": 3000,
+    # Self-check context sampling: max evidence-anchor keywords per answer
+    "context_extract_max_keywords": 20,
     # Map-Reduce: chunk size for splitting context
     "map_reduce_chunk_size": 8000,
     # Direct generation: max_tokens for simple queries

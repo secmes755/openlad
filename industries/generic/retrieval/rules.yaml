@@ -1,0 +1,95 @@
+# 通用基础包检索规则 —— 只放跨行业公共知识
+# 组合语义：list 与行业包并集、dict 同键行业包优先（core/plugins Composed* 实现）。
+#
+# 基线安全说明：query_expansion / low_value_sections / spec_sections /
+# entity_patterns 本版刻意留空 —— 这些 hook 会改变所有租户的检索行为，
+# 待 A/B 验证后再增量启用。
+
+# 通用单位词表：spec 事实抽取（ingestion 规则抽取器）的合法单位集合。
+# 只影响新入库文档，不回溯既有数据。
+spec_extraction:
+  compute_units:
+    # SI / 物理量
+    - V
+    - mV
+    - kV
+    - A
+    - mA
+    - µA
+    - W
+    - kW
+    - Hz
+    - kHz
+    - MHz
+    - GHz
+    - Pa
+    - kPa
+    - MPa
+    - ℃
+    - °C
+    - mm
+    - cm
+    - m
+    - km
+    - g
+    - kg
+    - s
+    - ms
+    - "%"
+    # 存储/速率
+    - KB
+    - MB
+    - GB
+    - TB
+    - bps
+    - Mbps
+    - Gbps
+    # 中文计数/财务量级
+    - 元
+    - 千元
+    - 万元
+    - 亿元
+    - 百万元
+    - 万美元
+    - 亿美元
+    - USD
+    - RMB
+    - CNY
+
+# 置信度启发式（synthesizer._assess_confidence）的通用单位信号。
+# terms 留空：专有名词属领域知识，归行业包。
+specificity_vocabulary:
+  units:
+    - V
+    - mV
+    - A
+    - mA
+    - W
+    - kW
+    - MHz
+    - GHz
+    - MPa
+    - ℃
+    - mm
+    - KB
+    - MB
+    - GB
+    - Mbps
+    - Gbps
+    - "%"
+    - 元
+    - 万元
+    - 亿元
+  terms: []
+
+# 领域抽取锚点：core 通用锚点（数值/型号词元/长词组）已覆盖公共场景，
+# 领域锚点（如法律条文号）由各行业包提供。
+evidence_anchor_patterns: []
+
+# 本版刻意留空（见文件头说明）
+query_expansion:
+  keywords: []
+low_value_sections: []
+spec_sections: []
+entity_patterns: []
+spec_query_terms: {}

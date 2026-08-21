@@ -5,6 +5,35 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Explicit industry-pack selection.** The query API accepts an optional
+  `industry` field carried end-to-end (API → engine → synthesizer).
+  Explicit selection wins over category routing and text detection; when
+  omitted, the existing detection fallback chain is unchanged.
+- **Generic base pack with runtime composition.** A new built-in
+  `industries/generic` pack carries universal, cross-industry document
+  knowledge (bilingual numbering and magnitude words, physical and
+  financial units, structural reference terms, conservative answer
+  discipline). Every resolved pack — explicit, routed, or detected — is
+  layered over this base at runtime: list hooks merge as unions and dict
+  conflicts resolve in favor of the industry pack. The generic pack
+  deliberately leaves retrieval-shaping hooks (query expansion, low-value
+  sections, spec sections, entity patterns) empty, so default retrieval
+  behaviour is unchanged.
+- Industry packs can declare evidence-anchor patterns through the
+  `get_evidence_anchor_patterns()` plugin hook, and the self-check
+  evidence sampler caps anchors via the new `context_extract_max_keywords`
+  config knob — no domain word lists remain in core.
+
+### Fixed
+
+- Retrieval: exact-match chapter pages are pinned above the
+  context-budget cut, so a page containing the queried term can no longer
+  be truncated away by higher-scoring but less specific pages.
+
 ## [0.4.1] - 2026-08-18
 
 > **Upgrading from 0.4.0 or earlier: re-ingest your documents.** Existing

@@ -33,7 +33,8 @@ class AnswerSynthesizer:
                    context: str, sources: list[dict],
                    chat_history: str = None,
                    routed_category: str = None,
-                   original_query: str = None) -> dict[str, Any]:
+                   original_query: str = None,
+                   explicit_pack_id: str = None) -> dict[str, Any]:
         # Last line of defense: if context is empty or very short, directly return a no-info message
         if not context or len(context.strip()) < 50:
             logger.warning("[SYNTHESIZER] Retrieval context is empty, refusing to generate answer")
@@ -44,13 +45,14 @@ class AnswerSynthesizer:
         elif plan.intent == IntentType.CROSS_REFERENCE:
             return self._synthesize_cross_reference(query, plan, context, sources, chat_history, routed_category)
         else:
-            return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query)
+            return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query, explicit_pack_id)
 
     def _synthesize_standard(self, query: str, plan: QueryPlan,
                              context: str, sources: list[dict],
                              chat_history: str = None,
                              routed_category: str = None,
-                             original_query: str = None) -> dict[str, Any]:
+                             original_query: str = None,
+                             explicit_pack_id: str = None) -> dict[str, Any]:
         history_section = f"\n\nChat history (for background reference only, absolutely do not repeat answers to these questions):\n{chat_history}" if chat_history else ""
 
         # corpus_taxonomy has no equivalent in OpenLAD, leave catalog empty
@@ -60,8 +62,20 @@ class AnswerSynthesizer:
         schematic_context = ""
 
         industry_pack = None
-        if hasattr(self.plugin_registry, "get_plugin_by_category"):
-            industry_pack = self.plugin_registry.get_plugin_by_category(routed_category)
+        # Explicit selection wins over every detection path: the caller
+        # (API field `industry`) has declared which pack's rules apply.
+        if explicit_pack_id:
+            industry_pack = self.plugin_registry.get_plugin(explicit_pack_id)
+            if industry_pack is not None:
+                logger.info(f"[SYNTHESIZER] Explicit industry pack selected: {explicit_pack_id}")
+            else:
+                logger.warning(f"[SYNTHESIZER] Explicit industry pack '{explicit_pack_id}' "
+                               f"not registered, falling back to detection")
+        if industry_pack is None:
+            # Category lookup WITHOUT the generic fallback — detection must
+            # still get its chance when no pack claims the routed category.
+            industry_pack = self.plugin_registry.resolve_plugin_for_categories(
+                [routed_category])
         if industry_pack is None and hasattr(self.plugin_registry, "detect_plugin_for_text"):
             # Category routing is modal (tenant-wide dominant category), so
             # fall back to content-grounded detection: a pack applies only
@@ -73,6 +87,9 @@ class AnswerSynthesizer:
             industry_pack = self.plugin_registry.detect_plugin_for_text(
                 f"{original_query or ''}\n{query or ''}"
             )
+        # Layer the always-on generic base pack under whatever was selected
+        # (or use it alone when nothing claimed the query).
+        industry_pack = self.plugin_registry.compose_with_base(industry_pack)
 
         logger.info(f"[SYNTHESIZER] original_query='{original_query}', query='{query}'")
 
@@ -127,7 +144,7 @@ class AnswerSynthesizer:
             self_check_passed = False
             if industry_pack and getattr(industry_pack, "name", "generic") != "generic":
                 answer_before_check = answer
-                answer = self._self_check(query, answer, context)
+                answer = self._self_check(query, answer, context, industry_pack=industry_pack)
                 self_check_passed = (answer == answer_before_check)  # unchanged = passed
 
             confidence = self._assess_confidence(answer, context, self_check_passed, industry_pack=industry_pack)
@@ -245,7 +262,7 @@ For example: if the user asks whether a capability exists, the answer should inc
             return ""
         return "\n\n".join(parts)
 
-    def _self_check(self, query: str, raw_answer: str, context: str) -> str:
+    def _self_check(self, query: str, raw_answer: str, context: str, industry_pack=None) -> str:
         if "not found" in raw_answer.lower() or "not mentioned" in raw_answer.lower():
             return raw_answer
 
@@ -254,7 +271,7 @@ For example: if the user asks whether a capability exists, the answer should inc
         # Avoid missing middle/later content by only sampling the first 5000 chars
         cfg = settings.CONTEXT_CONFIG
         extract_max_chars = cfg.get("context_extract_max_chars", 10000)
-        sample_context = self._extract_relevant_context(raw_answer, context, max_chars=extract_max_chars)
+        sample_context = self._extract_relevant_context(raw_answer, context, max_chars=extract_max_chars, industry_pack=industry_pack)
 
         check_prompt = f"""Please review the following answer as a quality inspector.
 
@@ -278,7 +295,7 @@ Output only JSON."""
             logger.warning(f"[SYNTHESIZER] Self-Check failed: {e}")
             return raw_answer
 
-    def _extract_relevant_context(self, raw_answer: str, context: str, max_chars: int = None) -> str:
+    def _extract_relevant_context(self, raw_answer: str, context: str, max_chars: int = None, industry_pack=None) -> str:
         """
         Extract key paragraphs related to the answer from the full context.
         Strategy:
@@ -295,20 +312,46 @@ Output only JSON."""
         dedup_window = cfg.get("context_extract_dedup_window", 1000)
         fragment_size = cfg.get("context_extract_fragment_size", 3000)
 
-        # Extract potential keywords: article numbers, crime names, legal terms
+        # Extract potential keywords: generic, industry-agnostic evidence
+        # anchors. Anchors that never occur in the context simply produce no
+        # fragments, so extraction can be liberal. Domain-specific patterns
+        # (e.g. legal article numbers) live in industry packs and arrive via
+        # the get_evidence_anchor_patterns() hook — core holds no vocabulary.
         keywords = set()
 
-        # Match article numbers: Article XXX, Article 200-XX
-        article_pattern = re.findall(r'第[一二三四五六七八九十百零\d]+条', raw_answer)
-        keywords.update(article_pattern)
+        # Numeric values (keep thousand separators / decimals) — the most
+        # checkable facts in any domain. Require >= 3 raw chars to skip
+        # noise like bare "3".
+        for num in re.findall(r'\d[\d,]*\.?\d*', raw_answer):
+            if len(num) >= 3:
+                keywords.add(num)
 
-        # Match crime names: XX Crime
-        crime_pattern = re.findall(r'[\u4e00-\u9fa5]{2,6}罪', raw_answer)
-        keywords.update(crime_pattern)
+        # Model-like tokens (letters + digits, e.g. AB1234) — shared generic
+        # shape extractor, no domain vocabulary.
+        from .spec_facts import extract_model_tokens
+        keywords.update(extract_model_tokens(raw_answer))
 
-        # Match numbers (e.g., amounts, prison terms)
-        number_pattern = re.findall(r'\d+年|\d+万元|\d+元以上', raw_answer)
-        keywords.update(number_pattern)
+        # Long CJK phrases (4+ chars) — specific term names / article numbers
+        # written as words.
+        keywords.update(re.findall(r'[\u4e00-\u9fff]{4,}', raw_answer))
+
+        # Latin terms (4+ chars) — product / standard names in any language.
+        keywords.update(re.findall(r'[A-Za-z][A-Za-z0-9_-]{3,}', raw_answer))
+
+        # Industry-pack anchor patterns (additive regexes, vocabulary in pack)
+        if industry_pack is not None:
+            try:
+                retrieval = getattr(industry_pack, "retrieval", None)
+                patterns = retrieval.get_evidence_anchor_patterns() if retrieval else []
+                for pat in patterns or []:
+                    keywords.update(re.findall(pat, raw_answer))
+            except Exception as e:
+                logger.debug(f"[SYNTHESIZER] pack evidence anchor patterns failed: {e}")
+
+        max_keywords = cfg.get("context_extract_max_keywords", 20)
+        if len(keywords) > max_keywords:
+            # Keep the most specific (longest) anchors when capping
+            keywords = set(sorted(keywords, key=len, reverse=True)[:max_keywords])
 
         if not keywords:
             # No keywords extracted, fallback to uniform sampling
