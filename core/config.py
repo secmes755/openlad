@@ -135,6 +135,11 @@ CONTEXT_CONFIG = {
     "chapter_select_max": 20,
     # Chapter retrieval: LLM max_tokens for chapter selection
     "chapter_select_max_tokens": 1024,
+    # Chapter retrieval: pin pages containing selective exact query-term hits
+    # above the character-budget cut, so blind tail truncation can never drop
+    # the only page that literally mentions the queried parameter.
+    # Set False to roll back to pure document-order truncation.
+    "chapter_exact_match_pinning": True,
     # Single-step query quota cap (for 128K context models)
     "single_step_quota_max": 80000,
     # Multi-step query total quota cap

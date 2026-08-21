@@ -1054,6 +1054,47 @@ Output only JSON, no explanation."""
                 results = direct_match_pages + others
                 logger.info(f"[CHAPTER-RETRIEVE] Prioritized {len(direct_match_pages)} direct-match chapter start pages")
 
+        # FIX: Exact-match page pinning — hoist pages containing selective
+        # verbatim query-term hits above the character-budget cut below, so
+        # blind tail truncation can never drop the only page that literally
+        # mentions the queried parameter (e.g. "VDD_CPU" living on p54 while
+        # the cut lands around p21). Selectivity is self-calibrated within the
+        # candidate page set: terms appearing on too many pages (e.g. the
+        # product name itself, present on every page) carry no pinning signal
+        # and are ignored. Controlled by chapter_exact_match_pinning config.
+        if query and results and settings.CONTEXT_CONFIG.get("chapter_exact_match_pinning", True):
+            pin_terms = []
+            for m in re.finditer(r'[A-Za-z][A-Za-z0-9_]{1,}', query):
+                pin_terms.append(m.group().lower())
+            for m in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
+                pin_terms.append(m.group())
+            pin_terms = list(dict.fromkeys(pin_terms))
+            if pin_terms:
+                def _term_hit(term: str, text: str) -> bool:
+                    if re.fullmatch(r'[a-z0-9_]+', term):
+                        # Boundary-aware for alnum tokens: "T53" must not hit "T536"
+                        return re.search(r'(?<![a-z0-9_])' + re.escape(term) + r'(?![a-z0-9_])',
+                                         text) is not None
+                    return term in text
+
+                contents = [(r.content or "").lower() for r in results]
+                n_pages = len(results)
+                max_selective_hits = max(3, int(0.3 * n_pages))
+                selective = []
+                for t in pin_terms:
+                    hits = sum(1 for c in contents if _term_hit(t, c))
+                    if 0 < hits <= max_selective_hits:
+                        selective.append(t)
+                if selective:
+                    pinned = [r for r, c in zip(results, contents)
+                              if any(_term_hit(t, c) for t in selective)]
+                    if pinned:
+                        pinned_set = {id(r) for r in pinned}
+                        others = [r for r in results if id(r) not in pinned_set]
+                        results = pinned + others
+                        logger.info(f"[CHAPTER-RETRIEVE] Pinned {len(pinned)} exact-match pages "
+                                    f"(selective terms: {selective[:6]}) above budget cut")
+
         # 5. Limit total character count
         if max_context_quota:
             total_chars = 0
