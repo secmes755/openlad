@@ -404,18 +404,20 @@ class TenantMetadataDB:
         if "schematic_data" in kwargs and isinstance(kwargs["schematic_data"], dict):
             kwargs["schematic_data"] = json.dumps(kwargs["schematic_data"], ensure_ascii=False)
         fields = ["doc_id", "page_num"] + list(kwargs.keys())
-        if raw_text:
-            fields.append("raw_text")
         values = [doc_id, page_num] + list(kwargs.values())
-        if raw_text:
-            values.append(raw_text)
+        # Always store raw_text: omitting the column on falsy input persists
+        # NULL, and downstream retrieval assumes page text is a string
+        # (len()/or-coercion inconsistently applied across consumers).
+        # Empty text normalizes to "" — never NULL.
+        fields.append("raw_text")
+        values.append(raw_text or "")
         cols = ", ".join(fields)
         ph = ", ".join(["?"] * len(fields))
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"INSERT INTO doc_pages ({cols}) VALUES ({ph})", values)
             page_id = cursor.lastrowid
-            if raw_text:
+            if raw_text:  # only index pages that actually have text
                 try:
                     cursor.execute("INSERT INTO doc_pages_fts(rowid, raw_text) VALUES (?, ?)", (page_id, raw_text))
                 except Exception as e:

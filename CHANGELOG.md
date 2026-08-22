@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retrieval: exact-match chapter pages are pinned above the
   context-budget cut, so a page containing the queried term can no longer
   be truncated away by higher-scoring but less specific pages.
+- Page text storage: `save_page` no longer omits the `raw_text` column on
+  empty extraction (previously persisted NULL, e.g. from VLM-degraded
+  chart pages), and `SearchResult.content` is coerced to a string at
+  construction — the content-is-always-str invariant now holds at both
+  boundaries, so the chapter-retrieve context quota loop cannot crash on
+  `len(None)`.
 
 ## [0.4.1] - 2026-08-18
 

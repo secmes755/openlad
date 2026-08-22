@@ -29,7 +29,10 @@ class SearchResult:
         self.page_id = page_id
         self.page_num = page_num
         self.score = score
-        self.content = content
+        # Invariant: content is always a string. Storage may yield NULL for
+        # pages whose text extraction was empty (e.g. VLM-degraded chart
+        # pages); consumers call len()/str ops on content unconditionally.
+        self.content = content or ""
         self.section_title = section_title
         self.filename = filename
         self.title = title
