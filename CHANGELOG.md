@@ -5,7 +5,7 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.5] - 2026-08-24
 
 ### Added
 
@@ -39,6 +39,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   construction — the content-is-always-str invariant now holds at both
   boundaries, so the chapter-retrieve context quota loop cannot crash on
   `len(None)`.
+- Section entity harvesting: `harvest_section_entities` had no function
+  body (the implementation was misplaced into the acronym helper), so
+  per-section entity lists silently never reached the chapter index. The
+  body is restored and the helper slimmed to its own responsibility.
+- Document metadata upsert: saving an existing document used
+  `INSERT OR REPLACE`, which deleted and re-inserted the row — resetting
+  `created_at` and wiping columns not present in the update (skill tags,
+  permissions, content flags). Updates now merge only the supplied columns.
+- Retrieval (comparison path): spec-fact hits now run before the
+  empty-retrieval guard and count toward its context total, so an
+  authoritative fact can still answer when page retrieval returns nothing
+  — matching the traditional path's first-class assertion layer.
+- Synthesis: the comparison and cross-reference answer branches (pure
+  passthroughs) now forward `original_query` and the explicit industry
+  pack id, so table-detection and language instructions keep using the
+  original user query instead of the planner-rewritten one.
+- Audit: the Agent skill query endpoint now records query-log entries
+  with user id and intent, matching the chat endpoint — Agent-channel
+  queries previously left no audit trail.
+- Plugin registry: the `taxonomy` field is now exposed via
+  `list_plugins()` (base class default `{}`, YAML plugins read it from
+  their shared config), so classifier consumers no longer read a dead key.
+- Context-budget fallbacks aligned with the configured defaults
+  (60000 / 35500), so deployments without explicit config get the
+  intended budgets instead of stale values.
 
 ## [0.4.1] - 2026-08-18
 
