@@ -1042,6 +1042,12 @@ class DocumentIndexBuilder:
 
     def _build_structure_from_text(self, doc_id: str, page_results: dict[int, dict]) -> dict[int, dict]:
         import re
+
+        from .structure_text_rules import (
+            build_repeated_lines,
+            chapter_heading_title_is_valid,
+            numeric_title_is_heading,
+        )
         structure_index = {}
         current_path = ""
         current_level = 0
@@ -1050,6 +1056,10 @@ class DocumentIndexBuilder:
         chapter_titles = {}  # chapter_num -> title
         # Extract chapter titles from TOC pages (if any)
         self._extract_chapter_titles_from_toc(page_results, chapter_titles)
+
+        # Fix 2a: lines repeated verbatim on >= 3 pages (running headers,
+        # cross-page table headers, footers) are never headings.
+        repeated_lines = build_repeated_lines(page_results)
 
         for page_num in sorted(page_results.keys()):
             r = page_results[page_num]
@@ -1062,6 +1072,8 @@ class DocumentIndexBuilder:
             for line in lines:
                 line = line.strip()
                 if not line:
+                    continue
+                if line in repeated_lines:
                     continue
 
                 heading_match = re.match(r'^(#{1,6})\s+(.+)', line)
@@ -1105,6 +1117,10 @@ class DocumentIndexBuilder:
                 if num_heading_match and len(num_heading_match.group(1)) <= 8:
                     path = num_heading_match.group(1)
                     title = num_heading_match.group(2).strip()
+                    # Fix 3: reject numeric-fragment lines (table rows, year
+                    # runs, page-header stitches) — see numeric_title_is_heading.
+                    if not numeric_title_is_heading(path, title):
+                        continue
                     level = path.count(".") + 1
 
                     # FIX: detect new top-level chapter number, infer parent chapter
@@ -1132,6 +1148,11 @@ class DocumentIndexBuilder:
                     unit = chapter_heading_match.group(1).capitalize()
                     num = chapter_heading_match.group(2)
                     title = chapter_heading_match.group(3).strip()
+                    # Fix 2b: reject empty titles or titles that begin with
+                    # Chapter/Section/Part again (page-header stitch lines
+                    # like "Chapter 5 Chapter 5" — group(3) is the repeat).
+                    if not chapter_heading_title_is_valid(title):
+                        continue
                     level = 1 if unit == "Chapter" else 2 if unit == "Section" else 1
                     path = f"{unit} {num}"
                     current_path = path
@@ -1176,6 +1197,8 @@ class DocumentIndexBuilder:
     def _extract_chapter_titles_from_toc(self, page_results: dict[int, dict], chapter_titles: dict):
         """Extract chapter titles from TOC pages"""
         import re
+
+        from .structure_text_rules import chapter_heading_title_is_valid
         for page_num, r in page_results.items():
             text = r.get("page_text", "")
             if not text:
@@ -1188,6 +1211,12 @@ class DocumentIndexBuilder:
                 if match:
                     num = int(match.group(2))
                     title = match.group(3).strip()
+                    # Reject page-header stitch lines ("Chapter 5 Chapter 5
+                    # 128"): a recorded title that itself begins with
+                    # Chapter/Section/Part would later be double-prefixed by
+                    # _fill_parent_chapters into "Chapter 5 Chapter 5".
+                    if not chapter_heading_title_is_valid(title):
+                        continue
                     # Clean page numbers and dots from titles
                     title = re.sub(r'\s+\d+$', '', title)  # Remove trailing numbers
                     title = re.sub(r'\.{2,}$', '', title)  # Remove trailing dots
@@ -1227,7 +1256,8 @@ class DocumentIndexBuilder:
                     if top_num.isdigit():
                         chapter_num = int(top_num)
                         if chapter_num in chapter_titles:
-                            current_chapter = f"Chapter {chapter_num} {chapter_titles[chapter_num]}"
+                            from .structure_text_rules import compose_parent_chapter
+                            current_chapter = compose_parent_chapter(chapter_num, chapter_titles[chapter_num])
                 continue
 
             # If current page has no title but has a parent chapter, fill parent chapter info
@@ -1686,6 +1716,18 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
             # Save last section
             if current_short_path:
                 merged_sections.append((current_short_path, current_start, current_end, current_level, current_title, current_full_path))
+
+            # Fix 1: coverage invariant — every page must belong to at least
+            # one section interval. Orphan pages (gaps left by junk headings
+            # that truncated real sections) make those page ranges
+            # unreachable by _retrieve_exact's page filter; merge them into
+            # the nearest section (or create a coarse Document Body fallback
+            # when nothing exists). Text-rules path only: TOC/bookmark
+            # sections are authoritative and already cover the document, and
+            # this release must not alter the bookmark path at all.
+            from .structure_text_rules import ensure_page_coverage
+            max_page = max(page_results.keys()) if page_results else max((s[2] for s in merged_sections), default=0)
+            merged_sections = ensure_page_coverage(merged_sections, max_page)
 
         # Step 2: Collect page text for each merged section
         # V5.0 FIX: For the first page of each section, detect and remove previous section's tail

@@ -665,7 +665,13 @@ class TenantMetadataDB:
                              summary: str = None, entities: str = None) -> int:
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM doc_structure_index WHERE doc_id = ? AND section_path = ?", (doc_id, section_path))
+            # (doc_id, section_path, start_page) is the identity key: the same
+            # path can legitimately span multiple discontinuous ranges (e.g. a
+            # chapter that resumes after an appendix), and the primary consumer
+            # (retriever section expansion) dedupes by (section_path,
+            # start_page). Deleting on path alone would silently drop all but
+            # the last segment.
+            cursor.execute("DELETE FROM doc_structure_index WHERE doc_id = ? AND section_path = ? AND start_page = ?", (doc_id, section_path, start_page))
             cursor.execute("""
                 INSERT INTO doc_structure_index
                 (doc_id, section_path, section_title, section_level, start_page, end_page,

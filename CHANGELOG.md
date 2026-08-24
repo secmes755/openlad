@@ -5,6 +5,24 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Bookmarkless-document structure index.** Text-rule structure building
+  for documents without embedded bookmarks/TOC now filters junk headings
+  (table rows, year runs, page-header stitch lines such as
+  "Chapter 5 Chapter 5", body-text fragments) and guarantees the coverage
+  invariant: every page belongs to at least one `[start_page, end_page]`
+  interval, so sections truncated by junk headings no longer leave page
+  ranges (e.g. consolidated financial statements) structurally
+  unreachable by chapter-scoped retrieval. The same section path may now
+  span multiple discontinuous page ranges (composite identity key), and
+  section expansion in the retriever sees every segment instead of only
+  the last one. **Re-ingest your bookmarkless documents to benefit** —
+  existing databases keep their previously extracted (junk-tainted)
+  structure indexes until the document is deleted and uploaded again.
+
 ## [0.4.5] - 2026-08-24
 
 ### Added

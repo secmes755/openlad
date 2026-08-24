@@ -1140,26 +1140,34 @@ class SegmentMerger:
                         (doc_id,)
                     ).fetchall()
 
-            # Build a map: section_path -> (start, end, level, parent_path)
+            # Build a map: (section_path, start_page) -> (start, end, level, parent_path)
+            # The composite key mirrors the primary consumer's dedup key so
+            # that multiple discontinuous segments of the same path are all
+            # visible (a chapter that resumes after an appendix keeps both
+            # ranges expandable instead of only the last one).
             section_map = {}
+            path_segments = {}  # section_path -> [(start_page, end_page), ...]
             for row in sections:
-                section_map[row[0]] = {
+                key = (row[0], row[3])
+                section_map[key] = {
                     'start': row[3], 'end': row[4],
                     'level': row[2], 'parent': row[5],
                     'title': row[1]
                 }
+                path_segments.setdefault(row[0], []).append((row[3], row[4]))
 
             # For each existing page, find all sections that cover it
             pages_to_add = set()
             parent_ranges = {}  # parent_path -> (min_page, max_page)
 
-            # Build parent section ranges
-            for sp, info in section_map.items():
+            # Build parent section ranges: the parent path may itself have
+            # multiple segments, so aggregate across all of them.
+            for info in section_map.values():
                 parent = info['parent']
-                if parent and parent in section_map:
-                    ps = section_map[parent]
+                if parent and parent in path_segments:
                     if parent not in parent_ranges:
-                        parent_ranges[parent] = [ps['start'], ps['end']]
+                        segs = path_segments[parent]
+                        parent_ranges[parent] = [min(s[0] for s in segs), max(s[1] for s in segs)]
 
             for page_num in existing_pages:
                 # Find which sections contain this page

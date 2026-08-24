@@ -964,6 +964,9 @@ Output only JSON, no explanation."""
                 continue
             ch_info = chapter_list[idx]
             # Find the corresponding full chapter data
+            # NOTE: first-match by title — when the same section_path spans
+            # multiple discontinuous segments (same title, different
+            # start_page), only the first segment's page range is used here.
             for ch in chapters:
                 if ch.get("section_title") == ch_info["title"]:
                     start_page = ch.get("start_page", 0)
