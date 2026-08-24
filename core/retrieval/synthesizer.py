@@ -41,9 +41,20 @@ class AnswerSynthesizer:
             return {"answer": "Based on the documents in the current knowledge base, no relevant information was found.", "sources": sources, "structured": False, "confidence": "none"}
 
         if plan.intent == IntentType.VERSION_COMPARE or plan.requires_comparison:
-            return self._synthesize_version_compare(query, plan, context, sources, chat_history, routed_category)
+            # NOTE: both comparison branches currently pass straight through
+            # to _synthesize_standard with identical arguments. Keep the full
+            # parameter set (original_query / explicit_pack_id) intact when
+            # touching them — dropping either silently disables explicit
+            # industry-pack selection and the table/language judgment
+            # fallbacks (which deliberately use the original Chinese query,
+            # not the planner-rewritten one) for comparison queries.
+            return self._synthesize_version_compare(
+                query, plan, context, sources, chat_history, routed_category,
+                original_query, explicit_pack_id)
         elif plan.intent == IntentType.CROSS_REFERENCE:
-            return self._synthesize_cross_reference(query, plan, context, sources, chat_history, routed_category)
+            return self._synthesize_cross_reference(
+                query, plan, context, sources, chat_history, routed_category,
+                original_query, explicit_pack_id)
         else:
             return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query, explicit_pack_id)
 
@@ -926,8 +937,8 @@ Organized result:"""
 
         return combined
 
-    def _synthesize_version_compare(self, query, plan, context, sources, chat_history=None, routed_category=None, original_query=None):
-        return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query)
+    def _synthesize_version_compare(self, query, plan, context, sources, chat_history=None, routed_category=None, original_query=None, explicit_pack_id=None):
+        return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query, explicit_pack_id)
 
-    def _synthesize_cross_reference(self, query, plan, context, sources, chat_history=None, routed_category=None, original_query=None):
-        return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query)
+    def _synthesize_cross_reference(self, query, plan, context, sources, chat_history=None, routed_category=None, original_query=None, explicit_pack_id=None):
+        return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query, explicit_pack_id)
