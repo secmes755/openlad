@@ -18,10 +18,16 @@ def _make_db(tmp_path: Path) -> TenantMetadataDB:
 def test_save_document_preserves_created_at_and_omitted_columns(tmp_path):
     db = _make_db(tmp_path)
     doc_id = "doc123"
+    # First insert mirrors real builder.py calls: created_at is never passed,
+    # so the schema DEFAULT CURRENT_TIMESTAMP must populate it.
     db.save_document(doc_id, filename="a.pdf", title="Alpha",
                      status="pending", skill_id="semiconductor",
                      topic_tags=["chip", "uart"], default_permission="read",
-                     is_mixed=False, created_at="2026-01-01 00:00:00")
+                     is_mixed=False)
+    row0 = db.get_document(doc_id)
+    assert row0 is not None
+    created0 = row0["created_at"]
+    assert created0  # DEFAULT CURRENT_TIMESTAMP fired
 
     # Second call simulates the pending -> verified transition (builder.py
     # always passes filename + the new fields; created_at and the extra
@@ -38,7 +44,7 @@ def test_save_document_preserves_created_at_and_omitted_columns(tmp_path):
     assert row["topic_tags"] == ["chip", "uart"]  # preserved
     assert row["default_permission"] == "read"    # preserved
     assert not row["is_mixed"]                     # preserved (SQLite BOOLEAN reads back as 0)
-    assert row["created_at"] == "2026-01-01 00:00:00"  # NOT drifted to now
+    assert row["created_at"] == created0  # NOT drifted to now on update
 
 
 def test_save_document_insert_path_still_works(tmp_path):

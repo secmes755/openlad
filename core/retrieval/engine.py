@@ -224,18 +224,13 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                 "strategy": "decomposed_retrieve"
             }
 
-        # Empty retrieval guard for deep_research path
-        total_results = retrieval_result.get("total_results", 0)
-        total_chars = retrieval_result.get("total_chars", 0)
-        if total_results == 0 or total_chars < 50:
-            empty_answer = "No relevant information found in the knowledge base."
-            synthesis_result = {"answer": empty_answer, "sources": [], "structured": False}
-            return retrieval_result, synthesis_result, router_plan
-
         # Spec-fact bypass for the deep_research path: the assertion layer must
         # cover comparison/enumeration queries too, not only the traditional
         # path — page-level retrieval is asymmetric across entities ("same
         # attribute, two products"), which is exactly what this index fixes.
+        # Run BEFORE the empty-retrieval guard so a fully-failed page retrieval
+        # can still be rescued by authoritative facts (same semantics as the
+        # traditional path).
         facts_plan = dict(main_plan or {})
         facts_plan["rewritten_query"] = sub_queries
         facts_plan["routed_category"] = plan_routed_category or facts_plan.get("routed_category", "")
@@ -245,7 +240,17 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             spec_block = self._format_spec_facts(spec_facts)
             retrieval_result["context"] = spec_block + "\n\n" + retrieval_result.get("context", "")
             retrieval_result["spec_facts"] = spec_facts
+            retrieval_result["total_chars"] = retrieval_result.get("total_chars", 0) + len(spec_block)
+            retrieval_result["total_results"] = retrieval_result.get("total_results", 0) + len(spec_facts)
             logger.info(f"[ENGINE] deep_research spec-fact bypass: injected {len(spec_facts)} authoritative facts")
+
+        # Empty retrieval guard for deep_research path (spec-fact hits exempt)
+        total_results = retrieval_result.get("total_results", 0)
+        total_chars = retrieval_result.get("total_chars", 0)
+        if (total_results == 0 or total_chars < 50) and not spec_facts:
+            empty_answer = "No relevant information found in the knowledge base."
+            synthesis_result = {"answer": empty_answer, "sources": [], "structured": False}
+            return retrieval_result, synthesis_result, router_plan
 
         # Compute routed_category: prefer planner result over user-enforced industry
         routed_category = plan_routed_category

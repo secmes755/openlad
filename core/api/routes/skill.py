@@ -55,13 +55,34 @@ async def skill_query(req: SkillQueryRequest, request: Request):
     wait_start = time.time()
     async with _query_lock:
         wait_ms = int((time.time() - wait_start) * 1000)
+        engine_start = time.time()
         result = await asyncio.to_thread(
             engine.query,
             query_text=req.query,
             tenant_id=ctx.tenant_id,
             industry_hint=req.industry
         )
+        elapsed_ms = int((time.time() - engine_start) * 1000)
         result["wait_ms"] = wait_ms
+
+    # Record query log (audit). Engine no longer logs — the route layer owns
+    # the audit trail (mirrors routes/query.py); without this the Agent
+    # channel's queries would have no query_log rows at all.
+    try:
+        from ...db.tenant_db import get_tenant_metadata_db
+        db = get_tenant_metadata_db(ctx.tenant_id)
+        db.log_query(
+            query=req.query,
+            user_id=ctx.user_id or "",
+            intent=result.get("plan", {}).get("intent", "unknown"),
+            industry_package_id=req.industry or "auto",
+            elapsed_ms=elapsed_ms,
+            results_count=len(result.get("sources", [])),
+            answer_length=len(result.get("answer", "")),
+            trace={"channel": "skill", "wait_ms": wait_ms}
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record query log: {e}")
 
     return {
         "query": req.query,
