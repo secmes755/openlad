@@ -54,39 +54,6 @@ def harvest_section_entities(text: str) -> str:
 
     Returns e.g. 'DDR3-DDR4, GPIO0-GPIO4, UART0-UART9' or '' when the section
     contains no identifier instances. Deterministic and model-free."""
-
-
-def harvest_acronyms(client, text: str, title: str = "") -> str:
-    """Ask the LLM to extract acronym/alias pairs from section text.
-
-    Returns comma-delimited pairs like 'NPU=Neural Process Unit, IPU=Intelligence
-    Processing Unit' or '' when none found.
-
-    This is model-driven and fully generic: the LLM reads the text for patterns
-    like 'X (Y)' or 'Y stands for X' and emits any it finds. No industry-specific
-    rules, no hardcoded mappings.
-    """
-    if not text or len(text) < 100:
-        return ""
-    snippet = text[:3000] + ("..." if len(text) > 3000 else "")
-    title_hint = f' in section "{title}"' if title else ""
-    prompt = (
-        f"Extract all abbreviation-fullname pairs from this technical text{title_hint}.\n"
-        f"Look for patterns like 'NPU (Neural Process Unit)', 'DDR (Double Data Rate)', "
-        f"'DOCSIS (Data Over Cable Service Interface Specification)'.\n"
-        f"Return each as 'ABBREV=Full Name', separated by commas.\n"
-        f"If no abbreviation pairs found, return 'NONE'.\n\n"
-        f"Text:\n{snippet}\n\n"
-        f"Output only the pairs or NONE:"
-    )
-    try:
-        result = client.generate(prompt, temperature=0.1, max_tokens=256)
-        result = result.strip()
-        if not result or result.upper() == "NONE":
-            return ""
-        return result
-    except Exception:
-        return ""
     if not text or len(text) < 50:
         return ''
     try:
@@ -126,3 +93,36 @@ def harvest_acronyms(client, text: str, title: str = "") -> str:
     except Exception as e:
         logger.debug(f'[ENTITY] harvest failed: {e}')
         return ''
+
+
+def harvest_acronyms(client, text: str, title: str = "") -> str:
+    """Ask the LLM to extract acronym/alias pairs from section text.
+
+    Returns comma-delimited pairs like 'NPU=Neural Process Unit, IPU=Intelligence
+    Processing Unit' or '' when none found.
+
+    This is model-driven and fully generic: the LLM reads the text for patterns
+    like 'X (Y)' or 'Y stands for X' and emits any it finds. No industry-specific
+    rules, no hardcoded mappings.
+    """
+    if not text or len(text) < 100:
+        return ""
+    snippet = text[:3000] + ("..." if len(text) > 3000 else "")
+    title_hint = f' in section "{title}"' if title else ""
+    prompt = (
+        f"Extract all abbreviation-fullname pairs from this technical text{title_hint}.\n"
+        f"Look for patterns like 'NPU (Neural Process Unit)', 'DDR (Double Data Rate)', "
+        f"'DOCSIS (Data Over Cable Service Interface Specification)'.\n"
+        f"Return each as 'ABBREV=Full Name', separated by commas.\n"
+        f"If no abbreviation pairs found, return 'NONE'.\n\n"
+        f"Text:\n{snippet}\n\n"
+        f"Output only the pairs or NONE:"
+    )
+    try:
+        result = client.generate(prompt, temperature=0.1, max_tokens=256)
+        result = result.strip()
+        if not result or result.upper() == "NONE":
+            return ""
+        return result
+    except Exception:
+        return ""

@@ -184,7 +184,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             total_results = 0
             # Per-subquery context quota: use config budget split across sub-queries
             cfg = settings.CONTEXT_CONFIG
-            per_subquery_max = cfg.get("synthesis_context_budget", 39000) // max(len(sub_queries), 1)
+            per_subquery_max = cfg.get("synthesis_context_budget", 35500) // max(len(sub_queries), 1)
             for i, sq in enumerate(sub_queries, 1):
                 sub_plan = planner.plan(sq, chat_history)
                 if i == 1:
@@ -200,7 +200,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
             final_context = "\n".join(all_contexts)
             # Proportional truncation: use config budget, proportional across sub-queries
-            context_budget = cfg.get("synthesis_context_budget", 39000)
+            context_budget = cfg.get("synthesis_context_budget", 35500)
             if len(final_context) > context_budget:
                 if len(all_contexts) > 1:
                     ratio = context_budget / len(final_context)
@@ -355,6 +355,12 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                 spec_block = self._format_spec_facts(spec_facts)
                 retrieval_result["context"] = spec_block + "\n\n" + retrieval_result.get("context", "")
                 retrieval_result["spec_facts"] = spec_facts
+                # Spec-fact hits are retrieval results too: update the counters
+                # so the empty-retrieval guard below does not discard an answer
+                # that has authoritative (verbatim) evidence purely because page
+                # retrieval came up short.
+                retrieval_result["total_chars"] = retrieval_result.get("total_chars", 0) + len(spec_block)
+                retrieval_result["total_results"] = retrieval_result.get("total_results", 0) + len(spec_facts)
                 logger.info(f"[ENGINE] spec-fact bypass: injected {len(spec_facts)} authoritative facts")
 
             # Phase 3: Synthesize
@@ -412,8 +418,9 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         if total_results == 0 or total_chars < 50:
             answer = "No relevant information found in the knowledge base."
             elapsed_ms = int((time.time() - start_time) * 1000)
-            metadata_db.log_query(query=query_text, intent="empty_retrieval",
-                                  elapsed_ms=elapsed_ms, results_count=0, answer_length=len(answer))
+            # NOTE: query audit logging happens in the API route layer
+            # (routes/query.py), which always runs after engine.query returns.
+            # Engine-level log_query here would double-write the audit trail.
             return {"query": query_text, "answer": answer, "sources": [],
                     "confidence": "none", "elapsed_ms": elapsed_ms}
 
@@ -433,15 +440,11 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                                               query_text=query_text)
         elapsed_ms = int((time.time() - start_time) * 1000)
 
-        metadata_db.log_query(
-            query=query_text,
-            intent=router_plan.intent.value,
-            industry_package_id=industry_hint,
-            elapsed_ms=elapsed_ms,
-            results_count=retrieval_result.get("total_results", 0),
-            answer_length=len(answer),
-            trace={"plan": retrieval_result.get("strategy", ""), "sources_count": len(retrieval_result.get("sources", []))}
-        )
+        # NOTE: query audit logging happens in the API route layer
+        # (routes/query.py), which always runs after engine.query returns and
+        # carries the richer audit fields (user_id, session_id). Engine-level
+        # log_query here would double-write the audit trail. The `intent`
+        # value the route needs is exposed on the result below.
 
         result = {
             "query": query_text,

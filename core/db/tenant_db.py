@@ -312,11 +312,23 @@ class TenantMetadataDB:
         # Build SQL
         cols = ", ".join(kwargs.keys())
         ph = ", ".join(["?"] * len(kwargs))
+        # UPSERT instead of INSERT OR REPLACE: REPLACE deletes the row and
+        # re-inserts, which resets columns not present in this call (created_at,
+        # skill_id, topic_tags, default_permission, is_mixed) to defaults and
+        # drifts the document's creation timestamp on every update. ON CONFLICT
+        # DO UPDATE only touches the columns passed in.
+        #
+        # NOTE: we do NOT use excluded.<col> in the SET clause. `excluded.X`
+        # refers to the value that was *attempted* to insert in this statement,
+        # which for columns absent from this call is NULL — that would wipe the
+        # existing row. Instead, set each passed column to its own new value.
+        update_set = ", ".join(f"{k}=?" for k in kwargs.keys())
         with self.get_connection() as conn:
             conn.execute(f"""
-                INSERT OR REPLACE INTO documents (id, {cols}, updated_at)
+                INSERT INTO documents (id, {cols}, updated_at)
                 VALUES (?, {ph}, CURRENT_TIMESTAMP)
-            """, [doc_id] + list(kwargs.values()))
+                ON CONFLICT(id) DO UPDATE SET {update_set}, updated_at=CURRENT_TIMESTAMP
+            """, [doc_id] + list(kwargs.values()) + list(kwargs.values()))
             conn.commit()
         return doc_id
 

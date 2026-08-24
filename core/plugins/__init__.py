@@ -298,6 +298,17 @@ class IndustryPlugin(ABC):
                 return 0.8
         return 0.0
 
+    @property
+    def taxonomy(self) -> dict[str, Any]:
+        """Document-classification taxonomy (optional; empty when not declared).
+
+        Industry packages may ship a shared/taxonomy.yaml with a three-level
+        document classification tree. It feeds the classifier prompt when the
+        package is present. Defaults to empty so Python plugins that do not
+        declare a taxonomy are unaffected.
+        """
+        return {}
+
 
 # =============================================================================
 # YAML-driven Default Implementations
@@ -419,10 +430,16 @@ class YAMLIndustryPlugin(IndustryPlugin):
         self._manifest = manifest
         self._ingestion = YAMLIngestionPlugin(ingestion_config, shared_config)
         self._retrieval = YAMLRetrievalPlugin(retrieval_config, shared_config)
+        self._shared_config = shared_config
 
     @property
     def manifest(self) -> IndustryManifest:
         return self._manifest
+
+    @property
+    def taxonomy(self) -> dict[str, Any]:
+        """Classification taxonomy loaded from shared/taxonomy.yaml (if any)."""
+        return self._shared_config.taxonomy or {}
 
     @property
     def ingestion(self) -> IngestionPlugin:
@@ -695,6 +712,10 @@ class ComposedIndustryPlugin(IndustryPlugin):
     @property
     def manifest(self) -> IndustryManifest:
         return self._overlay.manifest
+
+    @property
+    def taxonomy(self) -> dict[str, Any]:
+        return self._overlay.taxonomy
 
     @property
     def ingestion(self) -> IngestionPlugin:
@@ -997,6 +1018,7 @@ class PluginRegistry:
                 "version": p.manifest.version,
                 "description": p.manifest.description,
                 "categories": p.manifest.category_mapping,
+                "taxonomy": p.taxonomy,
             }
             for pid, p in self._plugins.items()
         }

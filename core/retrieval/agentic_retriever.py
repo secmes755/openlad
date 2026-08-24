@@ -178,7 +178,7 @@ class AgenticRetriever:
 Document: {doc_title}
 
 Document chapter structure:
-{json.dumps(chapters[:settings.AGENTIC_CONFIG.get('expand_chapters_max', 20)], ensure_ascii=False)}  # Max chapters to avoid exceeding context
+{json.dumps(chapters[:settings.AGENTIC_CONFIG.get('expand_chapters_max', 20)], ensure_ascii=False)}
 
 From the chapter titles above, select 3-5 chapter title keywords most relevant to the query.
 Only choose from existing chapter titles; do not generate new terms.

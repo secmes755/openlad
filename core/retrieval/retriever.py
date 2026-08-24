@@ -117,10 +117,6 @@ class HierarchicalRetriever:
         3. Collect all matching chunks, aggregate scores by page, return full pages
            instead of individual chunks.
         """
-        import re
-        cjk_chars = re.findall(r'[\u4e00-\u9fff]', query)
-        len(cjk_chars) >= 3
-
         all_chunk_results = []
 
         # Primary tenant search

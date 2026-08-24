@@ -23,7 +23,7 @@ class RetrievalExecutor:
         self.merger = SegmentMerger(tenant_id)
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
         self.industry_hint = None  # Initialized in execute()
-        self.max_chars = settings.CONTEXT_CONFIG.get("phase2_max_chars", 160000)
+        self.max_chars = settings.CONTEXT_CONFIG.get("phase2_max_chars", 60000)
         env_max = os.environ.get("OPENLAD_MAX_CHARS")
         if env_max:
             self.max_chars = int(env_max)
@@ -131,7 +131,7 @@ class RetrievalExecutor:
         # discarding the tail (which was the old behavior and could silently
         # drop an entire document in multi-document comparisons).
         cfg = settings.CONTEXT_CONFIG
-        context_budget = cfg.get("synthesis_context_budget", 39000)
+        context_budget = cfg.get("synthesis_context_budget", 35500)
         if len(final_context) > context_budget:
             if len(step_contexts) > 1:
                 # Multi-step: proportional allocation per step, min 500 chars each
@@ -241,7 +241,7 @@ class RetrievalExecutor:
         # Proportional truncation: decomposed path content has been LLM-extracted,
         # so it's higher-density than raw context. Use same budget as standard path.
         cfg = settings.CONTEXT_CONFIG
-        context_budget = cfg.get("synthesis_context_budget", 39000)
+        context_budget = cfg.get("synthesis_context_budget", 35500)
         if len(final_context) > context_budget:
             # Proportional allocation across steps, min 300 chars each
             # (decomposed steps are already summarized, can be more compact)
