@@ -17,6 +17,11 @@ function getAuthHeaders() {
     };
 }
 
+function clearAuthStorage() {
+    // Remove only auth-related keys; preserve user preferences (e.g. openlad_lang)
+    ['tenant_id', 'api_key', 'user_role', 'username'].forEach(k => localStorage.removeItem(k));
+}
+
 async function checkAuth() {
     const tenantId = localStorage.getItem('tenant_id');
     const apiKey = localStorage.getItem('api_key');
@@ -38,7 +43,7 @@ async function checkAuth() {
                 if (data.username) localStorage.setItem('username', data.username);
             } else if (res.status === 401) {
                 // Token expired, re-login
-                localStorage.clear();
+                clearAuthStorage();
                 const modal = document.getElementById('loginModal');
                 if (modal) modal.classList.add('show');
                 return;
@@ -139,6 +144,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// Re-render dynamic (JS-generated) content when language changes
+window.addEventListener('langchange', () => {
+    if (localStorage.getItem('tenant_id') && localStorage.getItem('api_key')) {
+        loadSessions();
+        renderIndustrySelector();
+    }
+});
+
 // ===== Industry Management =====
 async function loadIndustries() {
     console.log('[INDUSTRY] [INDUSTRY] Loading industry list......');
@@ -165,8 +178,8 @@ function renderIndustrySelector() {
         return;
     }
 
-    // Keep auto option
-    let html = '<option value="auto">Auto Detect</option>';
+    // Keep auto option (translated)
+    let html = `<option value="auto">${escapeHtml(__('industry.auto'))}</option>`;
     let count = 0;
     for (const ind of availableIndustries) {
         if (ind.id === 'generic') continue; // Hide generic option
@@ -240,34 +253,13 @@ function renderSessionList(sessions) {
     `).join('');
 }
 
-async function createNewSession() {
-    try {
-        const res = await fetch(`${API_BASE}/chat/sessions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify({ title: __('app.newChat'), industry: currentIndustry })
-        });
-        if (!res.ok) {
-            const text = await res.text();
-            console.error('Create session HTTP error:', res.status, text);
-            alert(__('chat.error') + ': HTTP ' + res.status);
-            return;
-        }
-        const data = await res.json();
-        if (!data.id) {
-            console.error('Create session response missing id:', data);
-            alert(__('chat.error') + ': invalid response format');
-            return;
-        }
-        currentSessionId = data.id;
-        sessionMessages = [];
-        await loadSessions();
-        showWelcome();
-        window.history.replaceState({}, '', `?session=${data.id}`);
-    } catch (e) {
-        console.error('Create session failed:', e);
-        alert(__('chat.error') + ': ' + e.message);
-    }
+function createNewSession() {
+    // Lazy creation: only reset local state here; the session row is created
+    // by the auto-create branch in sendMessage() on the first message
+    currentSessionId = null;
+    showWelcome();
+    window.history.replaceState({}, '', '/');
+    loadSessions(); // clear active highlight in the list
 }
 
 async function switchSession(sessionId) {
@@ -316,7 +308,7 @@ async function loadMessages(sessionId) {
 }
 
 async function deleteSession(sessionId) {
-    if (!confirm(__('usermgmt.confirmDelete') + __('usermgmt.confirmDeleteSuffix') + '?')) return;
+    if (!confirm(__('chat.confirmDelete'))) return;
     try {
         await fetch(`${API_BASE}/chat/sessions/${sessionId}`, { method: 'DELETE', headers: getAuthHeaders() });
         if (currentSessionId === sessionId) {
@@ -396,10 +388,24 @@ async function sendMessage() {
                 chat_history: chatHistoryForRequest
             })
         });
-        const data = await res.json();
-
         // Remove loading state
         removeLoadingMessage(loadingId);
+
+        if (!res.ok) {
+            let errDetail = 'HTTP ' + res.status;
+            try {
+                const errData = await res.json();
+                errDetail = errData.detail || errDetail;
+            } catch (e2) {}
+            if (res.status === 401) {
+                clearAuthStorage();
+                const modal = document.getElementById('loginModal');
+                if (modal) modal.classList.add('show');
+            }
+            appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${errDetail}`);
+            return; // finally block still resets isLoading / send button
+        }
+        const data = await res.json();
 
         // V6 /query does not return session_id, frontend manages it
         // Show assistant message (V6 has no debug_info / citation_map)
@@ -420,10 +426,65 @@ async function sendMessage() {
 }
 
 // ===== Page Image Viewer =====
-function openPageImage(docId, pageNum) {
-    const url = `/images/${docId}_p${pageNum}.png`;
-    window.open(url, '_blank');
+// /images/* requires Authorization headers, which neither <img src> nor
+// window.open can send — fetch as an authenticated blob and hand out an
+// object URL instead. Object URLs are cached per source URL.
+const _imageBlobCache = new Map();
+
+async function fetchProtectedImage(url) {
+    if (_imageBlobCache.has(url)) return _imageBlobCache.get(url);
+    try {
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        if (!res.ok) {
+            console.warn('[IMAGE] load failed:', url, res.status);
+            return null;
+        }
+        const blobUrl = URL.createObjectURL(await res.blob());
+        _imageBlobCache.set(url, blobUrl);
+        return blobUrl;
+    } catch (e) {
+        console.error('[IMAGE] load error:', url, e);
+        return null;
+    }
 }
+
+async function openProtectedImage(url) {
+    const blobUrl = await fetchProtectedImage(url);
+    if (blobUrl) window.open(blobUrl, '_blank');
+}
+
+function openPageImage(docId, pageNum) {
+    openProtectedImage(`/images/${docId}_p${pageNum}.png`);
+}
+
+// Resolve data-img-url placeholders inside a freshly rendered message
+// (chart thumbnails) with limited concurrency
+function hydrateProtectedImages(container) {
+    const imgs = Array.from(container.querySelectorAll('img[data-img-url]'));
+    const CONCURRENCY = 3;
+    let idx = 0;
+    async function worker() {
+        while (idx < imgs.length) {
+            const img = imgs[idx++];
+            const blobUrl = await fetchProtectedImage(img.dataset.imgUrl);
+            if (blobUrl) img.src = blobUrl;
+            else img.alt = (img.alt || 'image') + ' (unavailable)';
+        }
+    }
+    for (let i = 0; i < Math.min(CONCURRENCY, imgs.length); i++) worker();
+}
+
+// Delegated handlers for protected images: chart thumbnails open the blob in
+// a new tab; page-image links fetch-then-open
+document.addEventListener('click', (e) => {
+    const thumb = e.target.closest('img.chart-thumb');
+    if (thumb && thumb.src) { window.open(thumb.src, '_blank'); return; }
+    const link = e.target.closest('a.page-img-link[data-img-url]');
+    if (link) {
+        e.preventDefault();
+        openProtectedImage(link.dataset.imgUrl);
+    }
+});
 
 function findDocIdForPage(sources, pageNum) {
     if (!sources) return null;
@@ -535,7 +596,7 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
         if (allCharts.length > 0) {
             const chartItems = allCharts.map(c => {
                 const imgTag = c.image_url
-                    ? `<img src="${c.image_url}" alt="${escapeHtml(c.chart_type)}" class="chart-thumb" loading="lazy" onclick="window.open('${c.image_url}', '_blank')">`
+                    ? `<img data-img-url="${escapeHtml(c.image_url)}" alt="${escapeHtml(c.chart_type)}" class="chart-thumb" loading="lazy">`
                     : '';
                 const desc = c.description ? `<div class="chart-desc">${escapeHtml(c.description)}</div>` : '';
                 const caption = c.caption ? `<div class="chart-caption">${escapeHtml(c.caption)}</div>` : '';
@@ -552,7 +613,7 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
         let pageImagesHtml = '';
         if (allPageImages.length > 0) {
             const imgLinks = allPageImages.map(p =>
-                `<a href="${p.url}" target="_blank" class="page-img-link">Page ${p.page_num} Image</a>`
+                `<a href="#" class="page-img-link" data-img-url="${escapeHtml(p.url)}">Page ${p.page_num} Image</a>`
             ).join(' ');
             pageImagesHtml = `<div class="page-images-bar"><i class="fas fa-image"></i> ${imgLinks}</div>`;
         }
@@ -603,7 +664,12 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
         safeContent = safeContent.replace(/\[\^(\w+?_\d+)\^\]/g, '%%CITE_$1%%');
         safeContent = safeContent.replace(/\[\^(\d+)\^\]/g, '%%CITE_$1%%');
         safeContent = safeContent.replace(/\[\^(\d+)\]/g, '%%CITE_$1%%');
-        safeContent = safeContent.replace(/\[(\d+)\](?!\()/g, '%%CITE_$1%%');
+        // Bare [N] counts as a citation only when evidence maps it to a real
+        // source page; otherwise (e.g. "[2023]", "[1]" in prose) leave it as text
+        safeContent = safeContent.replace(/\[(\d+)\](?!\()/g, (m, n) => {
+            const mapped = (citationMap && citationMap[n]) || findDocIdForPage(sources, parseInt(n));
+            return mapped ? `%%CITE_${n}%%` : m;
+        });
         htmlContent = marked.parse(safeContent);
         htmlContent = renderLatex(htmlContent);
         // Process page citation badges
@@ -617,6 +683,7 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
         <div class="message-content">${htmlContent}${sourcesHtml}${debugHtml}</div>
     `;
     container.appendChild(msgDiv);
+    hydrateProtectedImages(msgDiv);
     scrollToBottom();
 }
 
@@ -657,9 +724,14 @@ function scrollToBottom() {
 }
 
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    // Escape all HTML-significant chars including quotes, so the result is
+    // safe both as element text and inside single/double-quoted attributes
+    return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // ===== Service Status Monitoring =====
@@ -803,11 +875,25 @@ async function loadServiceLogs(serviceKey) {
 
     preEl.textContent = __('misc.loading');
     try {
-        const res = await fetch(`${API_BASE}/services/${serviceKey}/logs?lines=200`, {
+        // /services/events is the real endpoint (admin-gated server-side);
+        // it returns {events: [...]} with datetime/event_type/message fields
+        const res = await fetch(`${API_BASE}/services/events?service=${serviceKey}&limit=200`, {
             headers: getAuthHeaders(),
         });
+        if (!res.ok) {
+            preEl.textContent = __('misc.error') + ': HTTP ' + res.status;
+            return;
+        }
         const data = await res.json();
-        preEl.innerHTML = colorizeLog(data.tail || __('misc.empty'));
+        const events = data.events || [];
+        if (events.length === 0) {
+            preEl.textContent = __('misc.empty');
+            return;
+        }
+        const text = events.map(ev =>
+            `${ev.datetime || ''}  [${(ev.event_type || 'event').toUpperCase()}]  ${ev.message || ''}`
+        ).join('\n');
+        preEl.innerHTML = colorizeLog(text);
     } catch (e) {
         preEl.textContent = __('misc.error') + ': ' + e.message;
     }
@@ -837,6 +923,13 @@ function initServiceStatusBar() {
         mgmtLink.style.display = role === 'admin' ? 'flex' : 'none';
     }
 
+    // Logs modal is backed by /services/events which is admin-gated
+    // server-side; hide the entry point for non-admin users
+    const logsBtn = document.querySelector('.logs-btn');
+    if (logsBtn) {
+        logsBtn.style.display = role === 'admin' ? '' : 'none';
+    }
+
     // Show service status bar for all authenticated users
     if (bar) {
         bar.style.display = 'flex';
@@ -850,11 +943,21 @@ async function doLogout() {
     try {
         await fetch('/api/v1/logout', { method: 'POST', headers: getAuthHeaders() });
     } catch (e) {}
-    localStorage.clear();
+    clearAuthStorage();
     location.reload();
 }
 
 // ===== User Management =====
+// Event delegation for user-table action buttons: parameters travel via
+// data-* attributes instead of inline onclick string interpolation (XSS-safe)
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('#userTableBody button[data-action]');
+    if (!btn) return;
+    const { action, id, name } = btn.dataset;
+    if (action === 'regenerate') regenerateKey(id, name);
+    else if (action === 'delete') deleteUser(id, name);
+});
+
 function openUserMgmt() {
     document.getElementById('userMgmtModal').style.display = 'flex';
     loadUsers();
@@ -901,8 +1004,8 @@ async function loadUsers() {
                 <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#6b7280;font-family:monospace;">${escapeHtml(u.api_key)}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;">${renderExpiry(u.api_key_expires_at)}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;text-align:center;white-space:nowrap;">
-                    <button onclick="regenerateKey('${u.id}', '${escapeHtml(u.username)}')" title="Rotate API Key" style="background:#2563eb;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;margin-right:4px;"><i class="fas fa-sync-alt"></i> ${__('usermgmt.regenerate')}</button>
-                    ${u.role !== 'admin' ? `<button onclick="deleteUser('${u.id}', '${escapeHtml(u.username)}')" style="background:#dc2626;color:white;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">${__('usermgmt.delete')}</button>` : ''}
+                    <button data-action="regenerate" data-id="${escapeHtml(u.id)}" data-name="${escapeHtml(u.username)}" title="Rotate API Key" style="background:#2563eb;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;margin-right:4px;"><i class="fas fa-sync-alt"></i> ${__('usermgmt.regenerate')}</button>
+                    ${u.role !== 'admin' ? `<button data-action="delete" data-id="${escapeHtml(u.id)}" data-name="${escapeHtml(u.username)}" style="background:#dc2626;color:white;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">${__('usermgmt.delete')}</button>` : ''}
                 </td>
             </tr>
         `).join('');

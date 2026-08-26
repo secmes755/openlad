@@ -85,6 +85,7 @@ const I18N_DICT = {
     "chat.error":                { zh: "请求失败，请重试", en: "Request failed, please retry" },
     "chat.thinking":             { zh: "思考中...", en: "Thinking..." },
     "chat.empty":                { zh: "暂无回复内容", en: "No response content" },
+    "chat.confirmDelete":        { zh: "确定删除该会话？", en: "Delete this conversation?" },
 
     // === Admin Page — Header ===
     "admin.title":               { zh: "数据库管理", en: "Database Admin" },
@@ -214,7 +215,18 @@ function applyI18n() {
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
             el.placeholder = __(key, el.placeholder);
         } else {
-            el.textContent = __(key, el.textContent);
+            // Replace only the direct text child node so child elements
+            // (e.g. <i> icons, nested inputs/links) survive translation
+            const textNodes = Array.from(el.childNodes).filter(
+                n => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0
+            );
+            if (textNodes.length > 0) {
+                const target = textNodes[textNodes.length - 1];
+                const leadWs = (target.textContent.match(/^\s*/) || [''])[0];
+                target.textContent = leadWs + __(key, target.textContent.trim());
+            } else {
+                el.appendChild(document.createTextNode(__(key, '')));
+            }
         }
     });
 
