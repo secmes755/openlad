@@ -36,7 +36,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
         # here because the frontend opens /static/admin.html via a plain
         # anchor link — browser top-level navigation never sends
         # Authorization headers.
-        if path.startswith("/static/") or any(path.endswith(ext) for ext in (".js", ".css", ".png", ".jpg", ".svg", ".ico", ".woff2", ".html", ".json", ".txt", ".md")):
+        # Exception: /images/* serves tenant-owned ingestion images (page
+        # renders / chart crops) and must ALWAYS go through authentication,
+        # even though the files end in .png/.jpg.
+        if path.startswith("/static/") or (not path.startswith("/images/") and any(path.endswith(ext) for ext in (".js", ".css", ".png", ".jpg", ".svg", ".ico", ".woff2", ".html", ".json", ".txt", ".md"))):
             return await call_next(request)
         # /api/v1/industries is no longer public — requires authentication
         # (industry package listing is not sensitive data but stays behind auth)

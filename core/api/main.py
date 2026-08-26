@@ -3,6 +3,7 @@ OpenLAD API Service Entry Point
 """
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 
 # Load .env file before any other imports that might read env vars
@@ -199,6 +200,32 @@ async def admin_page():
     if os.path.exists(admin_path):
         return FileResponse(admin_path)
     raise HTTPException(status_code=404, detail="Admin page not found")
+
+
+# ---------------------------------------------------------------------------
+# Tenant-scoped ingestion images (page renders / chart crops)
+#
+# The retriever emits URLs like /images/{doc_id}_p{N}.png. These files live
+# under data/tenants/<tenant_id>/images/, so they must be authenticated and
+# resolved per-tenant — a global StaticFiles mount would break tenant
+# isolation. The filename whitelist (basename charset) blocks path traversal.
+# ---------------------------------------------------------------------------
+_IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:png|jpg|jpeg|webp)$", re.IGNORECASE)
+
+
+@app.get("/images/{filename}")
+async def tenant_image(filename: str):
+    # Lazy import: module-level imports sit above load_dotenv() by design
+    from ..tenant.context import get_tenant_context
+    ctx = get_tenant_context()
+    if not ctx:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not _IMAGE_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid image filename")
+    image_path = settings.get_tenant_data_dir(ctx.tenant_id) / "images" / filename
+    if not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(image_path, headers={"Cache-Control": "private, max-age=3600"})
 
 
 if __name__ == "__main__":
