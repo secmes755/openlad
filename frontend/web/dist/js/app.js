@@ -670,7 +670,7 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
             const mapped = (citationMap && citationMap[n]) || findDocIdForPage(sources, parseInt(n));
             return mapped ? `%%CITE_${n}%%` : m;
         });
-        htmlContent = marked.parse(safeContent);
+        htmlContent = DOMPurify.sanitize(marked.parse(safeContent));
         htmlContent = renderLatex(htmlContent);
         // Process page citation badges
         htmlContent = processCitations(htmlContent, citationMap, sources);

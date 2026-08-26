@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Authenticated tenant-scoped image serving.** Ingestion images
+  (page renders, chart crops) are served via `GET /images/{filename}`,
+  which requires a valid session and resolves files only under the
+  caller's own tenant directory. The web UI loads them as
+  authenticated blob URLs, so citation badges, chart thumbnails, and
+  page-image links work for the first time.
+
+### Security
+
+- **Tenant images no longer bypass authentication.** The static-asset
+  auth exemption now excludes `/images/*`; a filename whitelist blocks
+  path traversal, and cross-tenant requests return 404.
+- **Rendered answer markdown is sanitized** with vendored DOMPurify,
+  and HTML escaping now also covers quotes (attribute-safe).
+
 ### Fixed
+
+- **Web UI wiring reconnections.** The Logs modal reads the real
+  `/services/events` endpoint (admin-gated, hidden for non-admin
+  users); chat sessions are created lazily on first message instead of
+  eagerly; non-OK chat responses surface as errors instead of silent
+  empties; logout/401 handling preserves the language preference;
+  i18n language switches no longer wipe icon elements; assorted
+  malformed i18n markup corrected; removed an unused legacy auth
+  script.
 
 - **Bookmarkless-document structure index.** Text-rule structure building
   for documents without embedded bookmarks/TOC now filters junk headings
