@@ -5,6 +5,56 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Unified local/cloud model backends (OpenAI-compatible), configurable at
+  runtime.** The admin panel gains a "Model Services" tab: set URL, API
+  key, and model name for the LLM and for embeddings, test the endpoint
+  before saving (lists available model ids from `/models` to copy exact
+  names), and apply — hot reload, no process restart. Local backends
+  ignore keys, so an unset key resolves to a well-formed placeholder
+  ("123") and one code path serves both. Resolution order per field:
+  admin-saved value > environment variable > built-in default; an API key
+  is never returned by the config API (masked to `set`/`hint`), and
+  saved cloud keys live in the local system DB by design of this
+  LAN-deployed tool.
+- New endpoints (admin-gated): `GET/PUT /api/v1/admin/models/config`,
+  `POST /api/v1/admin/models/test`. `Authorization: Bearer <key>` is now
+  sent on every model call (`core/models/client.py`); `/health` and the
+  status bar follow the runtime-configured endpoints, not startup env.
+- **Windows deployment support.** `start.ps1` / `stop.ps1` mirror the bash
+  entry points (same environment defaults, venv detection at
+  `.venv\Scripts\python.exe`, port-based stop). All requirements ship
+  Windows wheels, sqlite-vec loads via the standard
+  `enable_load_extension` sequence, and `python main.py` runs unchanged.
+  Optional native components (poppler for page rendering, tesseract for
+  OCR) degrade gracefully when absent; text-extractable PDFs are
+  unaffected.
+
+### Fixed
+
+- **Auto-detection language gap.** The LLM classifier emits categories in
+  the language of the pack's `taxonomy.yaml` (Chinese for the sample
+  semiconductor pack), while `manifest.category_mapping` is English.
+  Plugin resolution (`get_plugin_by_category`,
+  `resolve_plugin_for_categories`) matched mapping keys only, so
+  auto-ingested documents classified in Chinese silently lost their
+  industry pack — spec-fact extraction ran vocabulary-less and query-time
+  pack routing missed. Matching now covers each pack's full key set
+  (mapping + taxonomy names, exact before fuzzy).
+- Documents auto-ingested before the language-gap fix may lack pack spec
+  facts; delete and re-upload them to rebuild (re-ingestion is
+  idempotent).
+- Admin upload form: "Industry Classification Mode" label and the
+  "Manual Select" option were missing i18n wiring (identical text in both
+  languages); the Embedding "Test" button now translates too. i18n assets
+  bumped to v4.
+- Data-dir configuration: an env-provided path is now compared as a
+  parsed path instead of a raw string, so a POSIX-style custom
+  `OPENLAD_DATA_DIR` resolves identically across platforms.
+
 ## [0.4.6] - 2026-08-27
 
 ### Added
