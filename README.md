@@ -83,10 +83,43 @@ later does not reset the password).
 
 ### Prerequisites
 
-- **Ubuntu 22.04/24.04** (x86_64) or macOS
+- **Ubuntu 22.04/24.04** (x86_64), macOS, or **Windows 10/11 + Python 3.10+**
 - **Python 3.10+**
 - **16+ GB VRAM GPU** (NVIDIA recommended; 8 GB works with reduced context — see below)
 - **32+ GB RAM** (16 GB minimum for CPU-only inference)
+
+### Windows Quick Start
+
+All Python dependencies ship Windows wheels (`pip install -r requirements.txt`
+just works). `sqlite-vec` loads through the standard extension API and is
+verified on Windows.
+
+```powershell
+git clone https://github.com/secmes755/openlad.git
+cd openlad
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# Set the admin password for first startup (required):
+$env:OPENLAD_ADMIN_PASSWORD = "<your-password>"
+
+.\start.ps1          # stops with .\stop.ps1
+```
+
+Notes:
+
+- Model backends work natively on Windows too: llama.cpp publishes
+  prebuilt CUDA binaries (`llama-server.exe`) and Ollama has a native
+  Windows build — point `OPENLAD_LLM_URL` / `OPENLAD_EMB_URL` at them.
+- Two **optional** native components degrade gracefully when absent:
+  [poppler](https://github.com/oschwartz10612/poppler-windows/releases)
+  enables PDF page rendering / chart analysis / page-image viewing, and
+  Tesseract (`tesseract.exe` + `chi_sim` language pack) enables OCR of
+  scanned documents. Text-extractable PDFs need neither.
+- Data persists in `.\data` (gitignored). Multiple extra scan dirs in
+  `OPENLAD_INDUSTRIES_DIRS` are semicolon-separated on Windows.
 
 ### 1. Clone & Install
 
