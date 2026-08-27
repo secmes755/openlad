@@ -898,35 +898,66 @@ class PluginRegistry:
     def get_plugin(self, plugin_id: str) -> IndustryPlugin | None:
         return self._plugins.get(plugin_id)
 
+    def _plugin_match_keys(self, plugin: "IndustryPlugin") -> list[str]:
+        """All strings a pack can be routed by: manifest.category_mapping
+        PLUS its taxonomy names. The LLM classifier reads taxonomy.yaml and
+        may emit its language (e.g. 数据手册) while category_mapping is
+        English (Datasheets) — matching on mapping keys alone silently
+        drops the pack for auto-ingested documents (spec-fact extraction
+        then runs vocabulary-less). description is excluded on purpose."""
+        keys: list[str] = [c for c in (plugin.manifest.category_mapping or []) if c]
+
+        tax = getattr(plugin, "taxonomy", None) or {}
+
+        def _collect(node: Any) -> None:
+            if isinstance(node, str):
+                if node and node not in keys:
+                    keys.append(node)
+            elif isinstance(node, dict):
+                for k, v in node.items():
+                    if k == "description":
+                        continue
+                    _collect(v)
+            elif isinstance(node, list):
+                for v in node:
+                    _collect(v)
+
+        _collect({"level1": tax.get("level1"), "level2": tax.get("level2")})
+        return keys
+
     def get_plugin_by_category(self, category: str) -> IndustryPlugin | None:
         if not category:
             return self.get_generic()
-        if category in self._category_map:
-            plugin_id = self._category_map[category]
-            return self._plugins.get(plugin_id)
-        # Fuzzy match
-        for cat_key, plugin_id in self._category_map.items():
-            if cat_key in category or category in cat_key:
-                return self._plugins.get(plugin_id)
+        # Pass 1: exact, Pass 2: fuzzy substring — over the full key set
+        # (category_mapping + taxonomy names, any language).
+        for plugin in self._plugins.values():
+            if category in self._plugin_match_keys(plugin):
+                return plugin
+        for plugin in self._plugins.values():
+            for key in self._plugin_match_keys(plugin):
+                if key in category or category in key:
+                    return plugin
         return self.get_generic()
 
     def resolve_plugin_for_categories(self, categories: list) -> IndustryPlugin | None:
         """Resolve an industry plugin from classified document categories
-        (tried in order — pass most specific first). Exact category_mapping
-        hit, then fuzzy substring match, same matching rules as
-        get_plugin_by_category but WITHOUT the generic fallback: ingestion
-        vocabulary (spec-fact extraction) must only come from a pack that
-        genuinely claims the document's category, never from a generic
-        fallback that would inject industry vocabulary into unrelated
-        documents."""
+        (tried in order — pass most specific first). Matching runs over each
+        pack's full key set (category_mapping + taxonomy names, any
+        language); exact hit wins over fuzzy substring. WITHOUT the generic
+        fallback: ingestion vocabulary (spec-fact extraction) must only come
+        from a pack that genuinely claims the document's category, never
+        from a generic fallback that would inject industry vocabulary into
+        unrelated documents."""
         for category in categories:
             if not category:
                 continue
-            if category in self._category_map:
-                return self._plugins.get(self._category_map[category])
-            for cat_key, plugin_id in self._category_map.items():
-                if cat_key in category or category in cat_key:
-                    return self._plugins.get(plugin_id)
+            for plugin in self._plugins.values():
+                if category in self._plugin_match_keys(plugin):
+                    return plugin
+            for plugin in self._plugins.values():
+                for key in self._plugin_match_keys(plugin):
+                    if key in category or category in key:
+                        return plugin
         return None
 
     def detect_plugin_for_document(self, parsed_doc: Any) -> IndustryPlugin | None:
