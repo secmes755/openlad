@@ -40,11 +40,12 @@ def _check_model_service(url: str, name: str) -> dict:
 
 @router.get("/health")
 async def health_check():
-    from ...config import settings
+    from ...services.model_config import get_model_settings
 
     db_status = _check_db()
-    llm_status = _check_model_service(settings.LLM_BASE_URL, "llm")
-    emb_status = _check_model_service(settings.EMBEDDING_API_BASE, "embedding")
+    cfg = get_model_settings()
+    llm_status = _check_model_service(cfg["llm_url"], "llm")
+    emb_status = _check_model_service(cfg["emb_url"], "embedding")
 
     overall = "ok"
     if db_status["status"] != "ok":

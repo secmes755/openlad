@@ -23,10 +23,16 @@ class ModelClient:
     """Model Client - Thread-safe"""
 
     def __init__(self):
-        self.llm_base_url = settings.LLM_BASE_URL
-        self.llm_model = settings.LLM_MODEL_NAME
-        self.embedding_base_url = settings.EMBEDDING_API_BASE
-        self.embedding_model = settings.EMBEDDING_MODEL_NAME
+        # Resolve once through the runtime registry (system DB > env >
+        # defaults); hot config updates swap these attrs via reload below.
+        from ..services.model_config import get_model_settings
+        cfg = get_model_settings()
+        self.llm_base_url = cfg["llm_url"]
+        self.llm_api_key = cfg["llm_api_key"]
+        self.llm_model = cfg["llm_model"]
+        self.embedding_base_url = cfg["emb_url"]
+        self.embedding_api_key = cfg["emb_api_key"]
+        self.embedding_model = cfg["emb_model"]
         self._session = None
         self._lock = threading.Lock()
 
@@ -35,6 +41,13 @@ class ModelClient:
         if self._session is None:
             self._session = requests.Session()
         return self._session
+
+    @staticmethod
+    def _auth_headers(api_key: str) -> dict:
+        """Authorization for OpenAI-compatible endpoints. The key always
+        resolves to at least "123", so local llama.cpp (which ignores it)
+        and cloud providers are served by one code path."""
+        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     def generate(self, prompt: str, system_prompt: str = None,
                  max_tokens: int = 2048, temperature: float = 0.7,
@@ -173,10 +186,12 @@ class ModelClient:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         target_url = (base_url or self.llm_base_url) + "/chat/completions"
+        req_headers = self._auth_headers(self.llm_api_key)
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = self.session.post(target_url, json=payload, timeout=300)
+                response = self.session.post(target_url, json=payload, timeout=300,
+                                             headers=req_headers)
                 # Handle "context size exceeded" errors — truncate and retry
                 if response.status_code == 400:
                     error_text = response.text[:500]
@@ -346,7 +361,8 @@ class ModelClient:
             response = self.session.post(
                 f"{self.embedding_base_url}/embeddings",
                 json={"model": self.embedding_model, "input": text},
-                timeout=60
+                timeout=60,
+                headers=self._auth_headers(self.embedding_api_key),
             )
             response.raise_for_status()
             result = response.json()
@@ -361,7 +377,8 @@ class ModelClient:
             response = self.session.post(
                 f"{self.embedding_base_url}/embeddings",
                 json={"model": self.embedding_model, "input": truncated},
-                timeout=300
+                timeout=300,
+                headers=self._auth_headers(self.embedding_api_key),
             )
             response.raise_for_status()
             result = response.json()
@@ -394,3 +411,30 @@ def get_model_client() -> ModelClient:
             if _model_client is None:
                 _model_client = ModelClient()
     return _model_client
+
+
+def reload_model_client() -> bool:
+    """Hot-swap endpoint/key/model on the live singleton (admin UI save).
+
+    Field assignment is atomic-reference per attribute; a query already in
+    flight keeps the old string it captured, the next request uses the new
+    backend. Returns True if a live client was updated.
+    """
+    global _model_client
+    from ..services.model_config import get_model_settings
+    cfg = get_model_settings()
+    with _model_lock:
+        if _model_client is None:
+            return False
+        c = _model_client
+        c.llm_base_url = cfg["llm_url"]
+        c.llm_api_key = cfg["llm_api_key"]
+        c.llm_model = cfg["llm_model"]
+        c.embedding_base_url = cfg["emb_url"]
+        c.embedding_api_key = cfg["emb_api_key"]
+        c.embedding_model = cfg["emb_model"]
+    logger.info(
+        "[MODEL] client hot-reloaded: llm=%s/%r emb=%s/%r",
+        cfg["llm_url"], cfg["llm_model"], cfg["emb_url"], cfg["emb_model"],
+    )
+    return True

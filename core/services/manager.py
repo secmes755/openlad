@@ -10,7 +10,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from ..config import settings
 from ..db.system_db import get_system_db
 
 logger = logging.getLogger(__name__)
@@ -139,10 +138,14 @@ class ServiceManager:
 
     def get_status(self) -> dict[str, ServiceStatus]:
         """Perform HTTP health check on all configured service endpoints"""
+        # Runtime registry, not import-time env: the admin UI can hot-swap
+        # endpoints without a process restart, and this panel must follow.
+        from .model_config import get_model_settings
+        cfg = get_model_settings()
         result = {}
         services = [
-            ("llm", "LLM", settings.LLM_BASE_URL),
-            ("embedding", "Embedding", settings.EMBEDDING_API_BASE),
+            ("llm", "LLM", cfg["llm_url"]),
+            ("embedding", "Embedding", cfg["emb_url"]),
         ]
         for key, name, url in services:
             http_status, code = self._check_http(url)

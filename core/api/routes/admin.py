@@ -8,6 +8,7 @@ When admin creates ordinary users, each user is automatically assigned an indepe
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ...services import model_config
 from ...services.resource_capacity import get_capacity_manager
 from ...tenant.auth import get_auth_manager
 from ...tenant.tenant_manager import get_tenant_manager
@@ -333,6 +334,7 @@ async def list_tenant_users(tenant_id: str):
             {
                 "id": u.id,
                 "username": u.username,
+                "tenant_id": u.tenant_id,
                 "email": u.email,
                 "role": u.role,
                 "api_key_expires_at": u.api_key_expires_at.isoformat() if u.api_key_expires_at else None,
@@ -341,3 +343,77 @@ async def list_tenant_users(tenant_id: str):
             for u in users
         ]
     }
+
+
+# =========================================================================
+# Model backend configuration (runtime, local & cloud unified)
+#
+# Any OpenAI-compatible endpoint = (url, api_key, model). Local backends
+# ignore the key; an unset key resolves to a placeholder ("123") so one
+# code path serves both. Keys are write-only over this API — reads come
+# back masked.
+# =========================================================================
+
+
+class ModelConfigRequest(BaseModel):
+    """Omitted / null fields are left untouched. Empty string clears the
+    stored override (falls back to env/default). API keys: send the secret
+    to set or rotate it; omit to keep; empty string reverts to default."""
+    llm_url: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
+    emb_url: str | None = None
+    emb_api_key: str | None = None
+    emb_model: str | None = None
+
+
+class ModelTestRequest(BaseModel):
+    target: str = "llm"                    # "llm" | "emb"
+    url: str | None = None                 # optional unsaved values to test first
+    api_key: str | None = None             # never persisted; test-only
+    model: str | None = None               # informational echo in response
+
+
+@router.get("/models/config")
+async def get_model_config():
+    """Current effective model backends (api keys masked)"""
+    _require_admin()
+    from ...models.client import get_model_client  # ensure one exists
+    get_model_client()
+    return model_config.public_view(model_config.get_model_settings())
+
+
+@router.put("/models/config")
+async def put_model_config(req: ModelConfigRequest):
+    """Save and hot-apply model backend config (no restart needed)"""
+    _require_admin()
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        view = model_config.update_model_settings(updates)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save: {e}")
+    return {"success": True, "config": view}
+
+
+@router.post("/models/test")
+async def test_model_endpoint(req: ModelTestRequest):
+    """Probe an endpoint before/without saving. Falls back to the current
+    effective URL/key for the chosen target when url/key omitted."""
+    _require_admin()
+    resolved = model_config.get_model_settings()
+    if req.target == "llm":
+        url = req.url if req.url is not None else resolved["llm_url"]
+        key = req.api_key if req.api_key is not None else resolved["llm_api_key"]
+    elif req.target == "emb":
+        url = req.url if req.url is not None else resolved["emb_url"]
+        key = req.api_key if req.api_key is not None else resolved["emb_api_key"]
+    else:
+        raise HTTPException(status_code=400, detail="target must be 'llm' or 'emb'")
+    result = model_config.probe_endpoint(url, api_key=key)
+    result["target"] = req.target
+    result["url_tested"] = url.rstrip("/")
+    if req.model:
+        result["model_requested"] = req.model
+    return result
