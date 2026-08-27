@@ -457,6 +457,17 @@ function openPageImage(docId, pageNum) {
     openProtectedImage(`/images/${docId}_p${pageNum}.png`);
 }
 
+// Delegated citation clicks: processCitations emits data-* attributes (no
+// inline JS), and a single document-level listener routes them to the
+// tenant-scoped image viewer.
+document.addEventListener('click', function(e) {
+    const el = e.target && e.target.closest ? e.target.closest('sup.page-cite[data-doc-id]') : null;
+    if (!el) return;
+    const page = parseInt(el.getAttribute('data-page'), 10);
+    if (!page || page < 1) return;
+    openPageImage(el.getAttribute('data-doc-id'), page);
+});
+
 // Resolve data-img-url placeholders inside a freshly rendered message
 // (chart thumbnails) with limited concurrency
 function hydrateProtectedImages(container) {
@@ -512,7 +523,7 @@ function processCitations(html, citationMap, sources) {
         const pageNum = pageNum1 || pageNum2;
         const docId = findDocIdForPage(sources, parseInt(pageNum));
         if (docId) {
-            return `<sup class="page-cite" onclick="openPageImage('${docId}', ${pageNum})" title="View page ${pageNum}">[${pageNum}]</sup>`;
+            return `<sup class="page-cite" data-doc-id="${docId}" data-page="${pageNum}" title="View page ${pageNum}">[${pageNum}]</sup>`;
         }
         return `<sup class="page-cite" title="Page ${pageNum}">[${pageNum}]</sup>`;
     });
@@ -521,7 +532,7 @@ function processCitations(html, citationMap, sources) {
     html = html.replace(/\[\^(\d+)\^\]/g, (match, pageNum) => {
         const docId = findDocIdForPage(sources, parseInt(pageNum));
         if (docId) {
-            return `<sup class="page-cite" onclick="openPageImage('${docId}', ${pageNum})" title="View page ${pageNum}">[${pageNum}]</sup>`;
+            return `<sup class="page-cite" data-doc-id="${docId}" data-page="${pageNum}" title="View page ${pageNum}">[${pageNum}]</sup>`;
         }
         return `<sup class="page-cite" title="Page ${pageNum}">[${pageNum}]</sup>`;
     });
@@ -530,7 +541,7 @@ function processCitations(html, citationMap, sources) {
     html = html.replace(/\[\^(\d+)\]/g, (match, pageNum) => {
         const docId = findDocIdForPage(sources, parseInt(pageNum));
         if (docId) {
-            return `<sup class="page-cite" onclick="openPageImage('${docId}', ${pageNum})" title="View page ${pageNum}">[${pageNum}]</sup>`;
+            return `<sup class="page-cite" data-doc-id="${docId}" data-page="${pageNum}" title="View page ${pageNum}">[${pageNum}]</sup>`;
         }
         return `<sup class="page-cite" title="Page ${pageNum}">[${pageNum}]</sup>`;
     });
@@ -540,7 +551,7 @@ function processCitations(html, citationMap, sources) {
         const docIds = citationMap ? citationMap[pageNum] : null;
         const docId = docIds && docIds.length > 0 ? docIds[0] : findDocIdForPage(sources, parseInt(pageNum));
         if (docId) {
-            return `<sup class="page-cite" onclick="openPageImage('${docId}', ${pageNum})" title="View page ${pageNum}">[${pageNum}]</sup>`;
+            return `<sup class="page-cite" data-doc-id="${docId}" data-page="${pageNum}" title="View page ${pageNum}">[${pageNum}]</sup>`;
         }
         return `<sup class="page-cite" title="Page ${pageNum}">[${pageNum}]</sup>`;
     });
@@ -555,7 +566,7 @@ function processCitations(html, citationMap, sources) {
         const suffixStr = suffix || '';
         const docId = findDocIdForPage(sources, parseInt(pageNum));
         if (docId) {
-            return `${suffixStr}<sup class="page-cite" onclick="openPageImage('${docId}', ${pageNum})" title="View page ${pageNum}">[${pageNum}]</sup>`;
+            return `${suffixStr}<sup class="page-cite" data-doc-id="${docId}" data-page="${pageNum}" title="View page ${pageNum}">[${pageNum}]</sup>`;
         }
         return match;
     });
@@ -670,7 +681,14 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
             const mapped = (citationMap && citationMap[n]) || findDocIdForPage(sources, parseInt(n));
             return mapped ? `%%CITE_${n}%%` : m;
         });
-        htmlContent = DOMPurify.sanitize(marked.parse(safeContent));
+        if (window.DOMPurify) {
+            htmlContent = DOMPurify.sanitize(marked.parse(safeContent));
+        } else {
+            // Fail closed: the vendored sanitizer is unavailable (partial
+            // deploy / corrupted cache). Degrade to plain text — never to
+            // unsanitized HTML injection.
+            htmlContent = '<p>' + escapeHtml(content || '').replace(/\n/g, '<br>') + '</p>';
+        }
         htmlContent = renderLatex(htmlContent);
         // Process page citation badges
         htmlContent = processCitations(htmlContent, citationMap, sources);

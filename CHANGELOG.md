@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Chat rendering is resilient to a missing sanitizer deployment: without
+  the vendored sanitizer the answer degrades to plain text instead of
+  raw HTML (fail closed). Page-citation badges no longer carry inline
+  script attributes — they use data attributes with one delegated click
+  listener.
+- Corrected two garbled checkbox labels on the model-services tab.
 - **Auto-detection language gap.** The LLM classifier emits categories in
   the language of the pack's `taxonomy.yaml` (Chinese for the sample
   semiconductor pack), while `manifest.category_mapping` is English.
