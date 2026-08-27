@@ -1,5 +1,6 @@
 """Configuration parsing: OPENLAD_* environment variables drive core paths."""
 import importlib
+from pathlib import Path
 
 import core.config as config
 
@@ -18,11 +19,16 @@ def test_default_data_dir(monkeypatch):
 
 
 def test_data_dir_from_env(monkeypatch):
-    monkeypatch.setenv("OPENLAD_DATA_DIR", "/tmp/openlad_custom")
+    # Compare parsed Path objects, not the raw string: Path("/tmp/x") keeps
+    # its POSIX spelling on Linux but normalizes to a drive-relative form on
+    # Windows. Both sides go through identical normalization this way.
+    custom = "/tmp/openlad_custom"
+    monkeypatch.setenv("OPENLAD_DATA_DIR", custom)
     importlib.reload(config)
     try:
-        assert str(config.DATA_DIR) == "/tmp/openlad_custom"
-        assert str(config.SYSTEM_DB_PATH) == "/tmp/openlad_custom/system.db"
+        expected = Path(custom)
+        assert config.DATA_DIR == expected
+        assert config.SYSTEM_DB_PATH == expected / "system.db"
     finally:
         monkeypatch.delenv("OPENLAD_DATA_DIR", raising=False)
         importlib.reload(config)
