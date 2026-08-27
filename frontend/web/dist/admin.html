@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -66,33 +66,59 @@
             padding: 0 24px 24px;
         }
 
-        /* Tabs */
-        .tabs {
+        /* Excel-style sheet: tabs and content share ONE card */
+        .sheet {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .sheet .tabs {
             display: flex;
-            gap: 4px;
-            margin: 0 0 16px 0;
+            gap: 2px;
+            margin: 0;
+            padding: 8px 12px 0;
             border-bottom: 1px solid var(--border);
+            background: #f9fafb;
         }
         .tab-btn {
-            padding: 12px 24px;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
+            padding: 10px 22px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
             font-size: 14px;
+            /* Constant weight on every state: an active-only bold widens the
+               label and shoves the neighbouring tabs sideways on each click. */
+            font-weight: 500;
             color: var(--text-secondary);
             cursor: pointer;
             display: flex;
             align-items: center;
             gap: 8px;
+            transition: color 0.15s, background 0.15s;
+            margin-bottom: -1px; /* cover the divider under the active tab */
         }
         .tab-btn:hover { color: var(--text-primary); }
         .tab-btn.active {
             color: var(--primary);
-            border-bottom-color: var(--primary);
-            font-weight: 600;
+            background: white;
+            border-color: var(--border);
+            border-bottom: 1px solid white; /* seamless join with the body */
         }
-        .tab-content { display: none; }
+        .tab-content {
+            display: none;
+            padding: 20px 24px;
+            /* Uniform floor height: short panels must not let the layout
+               collapse to different tops between tab switches. */
+            min-height: 480px;
+        }
         .tab-content.active { display: block; }
+        /* Nested panels become plain sections inside the sheet (no card-in-card) */
+        .sheet .panel { border: none; border-radius: 0; margin-bottom: 16px; box-shadow: none; }
+        .sheet .panel-header { padding: 12px 0; border-bottom: 1px dashed var(--border); }
+        .sheet .panel:last-child { margin-bottom: 0; }
 
         /* Panels */
         .panel {
@@ -327,6 +353,16 @@
         .login-box input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; box-sizing: border-box; }
         .login-box .btn { width: 100%; justify-content: center; }
 
+        /* Model Services form rows */
+        .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .form-row label { font-size: 13px; color: var(--text-secondary); min-width: 80px; text-align: right; }
+        .form-row input[type="text"], .form-row input[type="password"] {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
     </style>
 </head>
 <body>
@@ -341,6 +377,7 @@
                 <span><i class="fas fa-file-alt"></i> <span data-i18n="admin.stats.chunkCount">Pages</span>: <b id="pageCount">-</b></span>
             </div>
             <div class="header-actions">
+                <span id="langToggleSlot" style="display:flex;align-items:center;"></span>
                 <button class="btn-danger" onclick="confirmReset()" data-i18n="admin.resetDb">
                     <i class="fas fa-trash-alt"></i> Reset Database
                 </button>
@@ -348,6 +385,8 @@
         </header>
 
         <div class="admin-content">
+            <!-- Excel-style sheet: tabs live ON the content card -->
+            <div class="sheet">
             <!-- Tabs -->
             <div class="tabs">
                 <button class="tab-btn active" onclick="switchTab('library')" id="tab-library" data-i18n="admin.tab.documents">
@@ -355,6 +394,9 @@
                 </button>
                 <button class="tab-btn" onclick="switchTab('import')" id="tab-import" data-i18n="admin.tab.upload">
                     <i class="fas fa-cloud-upload-alt"></i> Upload
+                </button>
+                <button class="tab-btn" onclick="switchTab('models')" id="tab-models" data-i18n="admin.tab.models">
+                    <i class="fas fa-plug"></i> Model Services
                 </button>
             </div>
 
@@ -369,6 +411,74 @@
                     </div>
                     <div class="doc-list" id="docList">
                         <div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Services Tab -->
+            <div class="tab-content" id="content-models">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-plug"></i> <span data-i18n="admin.models.title">Model Backends</span></h3>
+                        <span id="modelCfgStatus" style="font-size:13px;color:var(--text-muted);"></span>
+                    </div>
+                    <div style="padding:20px;">
+                        <p style="margin:0 0 16px;font-size:13px;color:var(--text-secondary);" data-i18n="admin.models.hint">Any OpenAI-compatible endpoint works 鈥?local (llama.cpp / Ollama) or cloud. Local: leave API Key empty (defaults to 123, never shown). Cloud: paste your key.</p>
+
+                        <!-- LLM group -->
+                        <fieldset style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+                            <legend style="font-size:13px;font-weight:600;padding:0 6px;"><i class="fas fa-brain"></i> <span data-i18n="admin.models.llmTitle">Chat / LLM</span></legend>
+                            <div class="form-row">
+                                <label data-i18n="admin.models.url">API URL</label>
+                                <input type="text" id="mLLMUrl" placeholder="https://api.openai.com/v1 鎴?http://127.0.0.1:8080/v1" style="flex:2;">
+                            </div>
+                            <div class="form-row">
+                                <label data-i18n="admin.models.key">API Key</label>
+                                <input type="password" id="mLLMKey" placeholder="" autocomplete="off" style="flex:1;">
+                                <span id="mLLMKeyHint" style="font-size:12px;color:var(--text-muted);min-width:90px;"></span>
+                                <label style="display:flex;align-items:center;gap:3px;font-size:12px;color:var(--text-secondary);white-space:nowrap;" title="Clear stored key and fall back to the local default">
+                                    <input type="checkbox" id="mLLMKeyClear"> 娓呴櫎
+                                </label>
+                                <button class="doc-action-btn" onclick="testModelEndpoint('llm')" data-i18n="admin.models.test">Test</button>
+                            </div>
+                            <div class="form-row">
+                                <label data-i18n="admin.models.modelName">Model</label>
+                                <input type="text" id="mLLMModel" list="llmModelList" placeholder="qwen3.5-9b" style="flex:1;">
+                                <datalist id="llmModelList"></datalist>
+                            </div>
+                            <div id="mLLMTestResult" style="font-size:12px;margin-top:4px;"></div>
+                        </fieldset>
+
+                        <!-- Embedding group -->
+                        <fieldset style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+                            <legend style="font-size:13px;font-weight:600;padding:0 6px;"><i class="fas fa-vector-square"></i> <span data-i18n="admin.models.embTitle">Embedding</span></legend>
+                            <div class="form-row">
+                                <label>API URL</label>
+                                <input type="text" id="mEmbUrl" placeholder="http://127.0.0.1:8081/v1" style="flex:2;">
+                            </div>
+                            <div class="form-row">
+                                <label>API Key</label>
+                                <input type="password" id="mEmbKey" placeholder="" autocomplete="off" style="flex:1;">
+                                <span id="mEmbKeyHint" style="font-size:12px;color:var(--text-muted);min-width:90px;"></span>
+                                <label style="display:flex;align-items:center;gap:3px;font-size:12px;color:var(--text-secondary);white-space:nowrap;" title="Clear stored key and fall back to the local default">
+                                    <input type="checkbox" id="mEmbKeyClear"> 娓呴櫎
+                                </label>
+                                <button class="doc-action-btn" onclick="testModelEndpoint('emb')" data-i18n="admin.models.test">Test</button>
+                            </div>
+                            <div class="form-row">
+                                <label>Model</label>
+                                <input type="text" id="mEmbModel" list="embModelList" placeholder="qwen3-embedding-0.6b" style="flex:1;">
+                                <datalist id="embModelList"></datalist>
+                            </div>
+                            <div id="mEmbTestResult" style="font-size:12px;margin-top:4px;"></div>
+                        </fieldset>
+
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <button class="btn btn-primary" id="modelSaveBtn" onclick="saveModelConfig()">
+                                <i class="fas fa-save"></i> <span data-i18n="admin.models.save">Save &amp; Apply</span>
+                            </button>
+                            <span style="font-size:12px;color:var(--text-muted);" data-i18n="admin.models.saveHint">Takes effect immediately, no restart needed</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -417,7 +527,7 @@
                     </div>
                     <div class="upload-area">
                         <div style="margin-bottom:12px;padding:10px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
-                            <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px;"><i class="fas fa-industry"></i> Industry Classification Mode</label>
+                            <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px;"><i class="fas fa-industry"></i> <span data-i18n="admin.upload.classifyMode">Industry Classification Mode</span></label>
                             <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
                                 <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
                                     <input type="radio" name="classifyMode" value="auto" checked onchange="toggleIndustrySelect()"> <span data-i18n="industry.auto">Auto Detect</span>
@@ -442,6 +552,7 @@
                     </div>
                 </div>
             </div>
+            </div><!-- /sheet -->
         </div>
     </div>
 
@@ -546,6 +657,117 @@ function getAuthHeaders() {
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         document.getElementById('tab-' + tab).classList.add('active');
         document.getElementById('content-' + tab).classList.add('active');
+        if (tab === 'models') loadModelConfig();
+    }
+
+    // ===== Model Backend Config (runtime, local & cloud unified) =====
+    function renderKeyHint(elId, hintElId, mask) {
+        const hint = document.getElementById(hintElId);
+        if (!hint) return;
+        hint.textContent = mask && mask.set
+            ? '鉁?' + __('admin.models.keySet') + mask.hint
+            : __('admin.models.keyEmpty');
+        const input = document.getElementById(elId);
+        if (input) {
+            input.placeholder = mask && mask.set
+                ? __('admin.models.keyKeepPlaceholder')
+                : __('admin.models.keyPlaceholder');
+        }
+    }
+
+    async function loadModelConfig() {
+        try {
+            const res = await fetch(`${API_BASE}/admin/models/config`, { headers: getAuthHeaders() });
+            if (!res.ok) return;
+            const cfg = await res.json();
+            document.getElementById('mLLMUrl').value = cfg.llm_url || '';
+            document.getElementById('mLLMModel').value = cfg.llm_model || '';
+            document.getElementById('mEmbUrl').value = cfg.emb_url || '';
+            document.getElementById('mEmbModel').value = cfg.emb_model || '';
+            renderKeyHint('mLLMKey', 'mLLMKeyHint', cfg.llm_api_key);
+            renderKeyHint('mEmbKey', 'mEmbKeyHint', cfg.emb_api_key);
+            const st = document.getElementById('modelCfgStatus');
+            if (st) st.textContent = 'LLM: ' + (cfg.llm_url || '-') + '  |  Embedding: ' + (cfg.emb_url || '-');
+        } catch (e) {
+            console.error('loadModelConfig failed:', e);
+        }
+    }
+
+    async function saveModelConfig() {
+        const body = {};
+        const urlLlm = document.getElementById('mLLMUrl').value.trim();
+        const modLlm = document.getElementById('mLLMModel').value.trim();
+        const urlEmb = document.getElementById('mEmbUrl').value.trim();
+        const modEmb = document.getElementById('mEmbModel').value.trim();
+        if (urlLlm) body.llm_url = urlLlm;
+        if (modLlm) body.llm_model = modLlm;
+        if (urlEmb) body.emb_url = urlEmb;
+        if (modEmb) body.emb_model = modEmb;
+        const kLlm = document.getElementById('mLLMKey').value;   // '' -> keep? user intent differs
+        const kEmb = document.getElementById('mEmbKey').value;
+        // Empty key field means "keep current / use default": send null (omit).
+        // To revert a cloud key back to local-default, tick the clear box below.
+        const clearLlmKey = document.getElementById('mLLMKeyClear') && document.getElementById('mLLMKeyClear').checked;
+        const clearEmbKey = document.getElementById('mEmbKeyClear') && document.getElementById('mEmbKeyClear').checked;
+        if (kLlm) body.llm_api_key = kLlm; else if (clearLlmKey) body.llm_api_key = '';
+        if (kEmb) body.emb_api_key = kEmb; else if (clearEmbKey) body.emb_api_key = '';
+
+        const btn = document.getElementById('modelSaveBtn');
+        btn.disabled = true;
+        try {
+            const res = await fetch(`${API_BASE}/admin/models/config`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (!res.ok) { alert(__('misc.error') + ': ' + (data.detail || 'unknown')); return; }
+            document.querySelectorAll('#mLLMKey,#mEmbKey').forEach(i => i.value = '');
+            loadModelConfig();
+            refreshServiceStatusSafe();
+            alert(__('admin.models.saved'));
+        } catch (e) {
+            alert(__('misc.error') + ': ' + e.message);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function refreshServiceStatusSafe() { try { refreshLibrary(); } catch (e) {} }
+
+    async function testModelEndpoint(target) {
+        const out = document.getElementById(target === 'llm' ? 'mLLMTestResult' : 'mEmbTestResult');
+        out.style.color = 'var(--text-muted)';
+        out.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + __('admin.models.testing');
+        const body = { target };
+        const urlInput = document.getElementById(target === 'llm' ? 'mLLMUrl' : 'mEmbUrl');
+        const keyInput = document.getElementById(target === 'llm' ? 'mLLMKey' : 'mEmbKey');
+        if (urlInput.value.trim()) body.url = urlInput.value.trim();     // unsaved value still testable
+        if (keyInput.value) body.api_key = keyInput.value;               // never persisted
+        try {
+            const res = await fetch(`${API_BASE}/admin/models/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (!res.ok) { out.style.color = '#dc2626'; out.textContent = data.detail || 'test failed'; return; }
+            if (data.ok) {
+                out.style.color = '#059669';
+                const ids = (data.models || []).join(', ');
+                out.innerHTML = '鉁?' + __('admin.models.testOk') +
+                    (ids ? '<br><span style="color:var(--text-secondary);">' + __('admin.models.found') + ': ' +
+                        escapeHtml(ids.slice(0, 300)) + '</span>' : '');
+                const dl = document.getElementById(target === 'llm' ? 'llmModelList' : 'embModelList');
+                if (dl) dl.innerHTML = (data.models || []).map(m => `<option value="${escapeHtml(m)}">`).join('');
+            } else {
+                out.style.color = '#dc2626';
+                out.textContent = '鉂?' + (data.error || ('HTTP ' + data.status_code));
+            }
+        } catch (e) {
+            out.style.color = '#dc2626';
+            out.textContent = '鉂?' + e.message;
+        }
     }
 
     // ===== Statistics =====
@@ -865,6 +1087,6 @@ function getAuthHeaders() {
             .replace(/'/g, '&#39;');
     }
     </script>
-<script src="/static/js/i18n.js?v=2"></script>
+<script src="/static/js/i18n.js?v=4"></script>
 </body>
 </html>

@@ -103,6 +103,24 @@ const I18N_DICT = {
     // === Admin Page — Tabs ===
     "admin.tab.documents":       { zh: "文档", en: "Documents" },
     "admin.tab.upload":          { zh: "上传", en: "Upload" },
+    "admin.tab.models":          { zh: "模型服务", en: "Model Services" },
+    "admin.models.title":        { zh: "模型后端配置", en: "Model Backends" },
+    "admin.models.hint":         { zh: "兼容任意 OpenAI 接口——本地（llama.cpp / Ollama）或云端均可。本地：API Key 留空即可（默认 123，不会显示）；云端：粘贴你的 Key。保存后立即生效，无需重启。", en: "Any OpenAI-compatible endpoint works — local (llama.cpp / Ollama) or cloud. Local: leave API Key empty (defaults to 123, never shown). Cloud: paste your key. Saved config applies immediately, no restart." },
+    "admin.models.llmTitle":     { zh: "对话模型 (LLM)", en: "Chat / LLM" },
+    "admin.models.embTitle":     { zh: "向量模型 (Embedding)", en: "Embedding" },
+    "admin.models.url":          { zh: "接口地址", en: "API URL" },
+    "admin.models.key":          { zh: "API 密钥", en: "API Key" },
+    "admin.models.modelName":    { zh: "模型名称", en: "Model" },
+    "admin.models.test":         { zh: "测试", en: "Test" },
+    "admin.models.testing":      { zh: "测试中...", en: "Testing..." },
+    "admin.models.testOk":       { zh: "连接成功", en: "Endpoint reachable" },
+    "admin.models.found":        { zh: "可用模型", en: "Available models" },
+    "admin.models.save":         { zh: "保存并生效", en: "Save & Apply" },
+    "admin.models.saved":        { zh: "已保存，新配置已生效。", en: "Saved. New backends are now active." },
+    "admin.models.keySet":       { zh: "已设置", en: "set" },
+    "admin.models.keyEmpty":     { zh: "未设置（默认 123）", en: "not set (default 123)" },
+    "admin.models.keyPlaceholder": { zh: "留空=本地默认(123)；云端填 sk-...", en: "empty = local default (123); cloud keys like sk-..." },
+    "admin.models.keyKeepPlaceholder": { zh: "已设置——留空保持不变", en: "key is set — leave blank to keep" },
     "admin.tab.scan":            { zh: "目录扫描", en: "Directory Scan" },
     "admin.tab.skills":          { zh: "技能", en: "Skills" },
     "admin.tab.diagnostic":      { zh: "诊断", en: "Diagnostic" },
@@ -127,6 +145,8 @@ const I18N_DICT = {
 
     // === Admin — Upload Tab ===
     "admin.upload.dropzone":     { zh: "点击或拖拽文件到此处上传", en: "Click or drag files here to upload" },
+    "admin.upload.classifyMode": { zh: "行业分类模式", en: "Industry Classification Mode" },
+    "admin.upload.manual":       { zh: "手动选择", en: "Manual Select" },
     "admin.upload.dropzoneIcon": { zh: "支持 PDF、Word、Excel、PPT、图片、TXT", en: "Supports PDF, Word, Excel, PPT, Images, TXT" },
     "admin.upload.btn":          { zh: "选择文件并上传", en: "Select Files and Upload" },
     "admin.upload.uploading":    { zh: "上传中...", en: "Uploading..." },
@@ -252,7 +272,18 @@ function injectLangToggle() {
 
     const container = document.createElement('div');
     container.id = 'langToggle';
-    container.className = 'lang-toggle';
+    // Inline mount: pages may provide #langToggleSlot to place the toggle
+    // inside their own header (avoids the fixed overlay colliding with
+    // page actions, e.g. the admin "Reset Database" button). Fallback:
+    // previous fixed floating pill.
+    const slot = document.getElementById('langToggleSlot');
+    if (slot) {
+        container.className = 'lang-toggle lang-toggle--inline';
+        slot.appendChild(container);
+    } else {
+        container.className = 'lang-toggle';
+        document.body.appendChild(container);
+    }
     container.innerHTML = `
         <span class="lang-toggle-label" id="langToggleLabel">${__("lang.label")}</span>
         <label class="lang-switch">
@@ -260,7 +291,6 @@ function injectLangToggle() {
             <span class="lang-slider"></span>
         </label>
     `;
-    document.body.appendChild(container);
 
     document.getElementById('langCheckbox').addEventListener('change', function() {
         setLang(this.checked ? 'en' : 'zh');
@@ -287,6 +317,15 @@ function injectLangToggle() {
             border-radius: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.12);
             font-size: 13px;
+        }
+        /* Inline variant: hosted inside a page header slot */
+        .lang-toggle--inline {
+            position: static;
+            background: #f9fafb;
+            backdrop-filter: none;
+            box-shadow: none;
+            padding: 5px 10px;
+            border: 1px solid #e5e7eb;
         }
         .lang-toggle-label {
             font-size: 12px;
