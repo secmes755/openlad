@@ -77,10 +77,42 @@ curl http://127.0.0.1:11296/api/v1/health
 
 ### 前置要求
 
-- **Ubuntu 22.04/24.04**（x86_64）或 macOS
+- **Ubuntu 22.04/24.04**（x86_64）、macOS，或 **Windows 10/11 + Python 3.10+**
 - **Python 3.10+**
 - **16+ GB VRAM GPU**（推荐 NVIDIA；8 GB 可运行但需降低上下文 — 见下文）
 - **32+ GB RAM**（纯 CPU 推理最低 16 GB）
+
+### Windows 快速开始
+
+所有 Python 依赖均提供 Windows wheel（`pip install -r requirements.txt`
+直接可用）。`sqlite-vec` 通过标准扩展 API 加载，已在 Windows 上验证。
+
+```powershell
+git clone https://github.com/secmes755/openlad.git
+cd openlad
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 首次启动前设置管理员密码（必填）：
+$env:OPENLAD_ADMIN_PASSWORD = "<你的密码>"
+
+.\start.ps1          # 停止用 .\stop.ps1
+```
+
+说明：
+
+- 模型后端在 Windows 上同样原生可用：llama.cpp 提供预编译 CUDA 二进制
+  （`llama-server.exe`），Ollama 也有原生 Windows 版本 —— 用
+  `OPENLAD_LLM_URL` / `OPENLAD_EMB_URL` 指向它们即可。
+- 两个**可选**原生组件缺失时会优雅降级：
+  [poppler](https://github.com/oschwartz10612/poppler-windows/releases)
+  用于 PDF 页面渲染 / 图表分析 / 页面图片查看；Tesseract
+  （`tesseract.exe` + `chi_sim` 语言包）用于扫描件 OCR。本身可提取文本的
+  PDF 两者都不需要。
+- 数据持久化在 `.\data`（已 gitignore）。`OPENLAD_INDUSTRIES_DIRS` 的
+  多个额外扫描目录在 Windows 上用分号分隔。
 
 ### 1. 克隆与安装
 
@@ -160,6 +192,9 @@ curl http://127.0.0.1:11296/api/v1/health
 ## 演示：两个快速用例
 
 ### 用例 1：上传数据手册并提问
+
+> 注：下面命令中的凭据仅为请求格式占位符。真实管理员密码通过启动时的
+> `OPENLAD_ADMIN_PASSWORD` 环境变量设置 —— 没有默认密码。
 
 ```bash
 # 1. 管理员登录
