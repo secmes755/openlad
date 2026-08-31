@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Query stage progress over SSE.** New `POST /api/v1/query/stream`
+  endpoint emits Server-Sent Events — coarse pipeline stages
+  (`planning` / `retrieving` / `generating`) followed by a terminal
+  `result` frame whose payload is identical to `POST /api/v1/query`.
+  The chat UI shows the current stage under the thinking indicator and
+  falls back to the plain `/query` endpoint automatically when the
+  stream is unavailable, so functionality never depends on streaming.
+- **Chat UX upgrades.** Example-question chips on the welcome screen; a
+  per-conversation search box and relative timestamps in the session
+  list; conversations can be renamed (new `PATCH
+  /api/v1/chat/sessions/{id}`, owner-only, returns 404 for other users'
+  sessions to avoid existence leaks); every message carries a timestamp
+  and a hover copy button that copies the raw markdown.
+- **In-page image lightbox.** Citation page images and related-chart
+  thumbnails now open in an in-page viewer (caption with document and
+  page context, Esc / backdrop click to close) instead of a bare blob
+  in a new tab, keeping the conversation in view.
+- **Shared UI primitives (`ui.js`).** Toast notifications, a
+  Promise-based confirm dialog, and a credentials modal with per-item
+  copy buttons replace all native `alert()`/`confirm()` calls on both
+  pages. Dangerous actions (delete conversation/document, regenerate
+  API key, reset database) now use a consistently styled danger
+  confirm, and newly created user credentials show a save-them-now
+  notice.
 - **Unified local/cloud model backends (OpenAI-compatible), configurable at
   runtime.** The admin panel gains a "Model Services" tab: set URL, API
   key, and model name for the LLM and for embeddings, test the endpoint

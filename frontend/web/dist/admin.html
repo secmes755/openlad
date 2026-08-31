@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenLAD - Database Admin</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
     <link rel="stylesheet" href="/static/vendor/font-awesome.min.css">
     <style>
         /* Admin Page Styles */
@@ -578,11 +578,11 @@
     <!-- Confirmation Dialog -->
     <div class="modal-overlay" id="resetModal">
         <div class="modal">
-            <h3><i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i> Confirm Reset Database</h3>
-            <p>This will delete all documents, pages, chunks, and vector data. This cannot be undone. Chat history will be preserved.</p>
+            <h3><i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i> <span data-i18n="admin.resetModal.title">Confirm Reset Database</span></h3>
+            <p data-i18n="admin.resetModal.body">This will delete all documents, pages, chunks, and vector data. This cannot be undone. Chat history will be preserved.</p>
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="closeModal()" data-i18n="misc.cancel">Cancel</button>
-                <button class="btn btn-danger" onclick="doReset()" data-i18n="admin.rebuildBtn">Confirm Reset</button>
+                <button class="btn btn-danger" onclick="doReset()" data-i18n="admin.resetConfirm">Confirm Reset</button>
             </div>
         </div>
     </div>
@@ -616,7 +616,7 @@ function getAuthHeaders() {
         const username = document.getElementById('usernameInput').value.trim();
         const password = document.getElementById('passwordInput').value.trim();
         if (!username || !password) {
-            alert(__('login.errorEmpty'));
+            showToast(__('login.errorEmpty'), 'error');
             return;
         }
         try {
@@ -627,7 +627,7 @@ function getAuthHeaders() {
             });
             const data = await res.json();
             if (!res.ok) {
-                alert(__('login.errorFailed') + (data.detail || data.error || 'Unknown error'));
+                showToast(__('login.errorFailed') + (data.detail || data.error || 'Unknown error'), 'error');
                 return;
             }
             localStorage.setItem('tenant_id', data.tenant_id);
@@ -636,7 +636,7 @@ function getAuthHeaders() {
             refreshLibrary();
             updateStats();
         } catch (e) {
-            alert(__('login.errorNetwork') + e.message);
+            showToast(__('login.errorNetwork') + e.message, 'error');
         }
     }
 
@@ -721,13 +721,13 @@ function getAuthHeaders() {
                 body: JSON.stringify(body)
             });
             const data = await res.json();
-            if (!res.ok) { alert(__('misc.error') + ': ' + (data.detail || 'unknown')); return; }
+            if (!res.ok) { showToast(__('misc.error') + ': ' + (data.detail || 'unknown'), 'error'); return; }
             document.querySelectorAll('#mLLMKey,#mEmbKey').forEach(i => i.value = '');
             loadModelConfig();
             refreshServiceStatusSafe();
-            alert(__('admin.models.saved'));
+            showToast(__('admin.models.saved'), 'success');
         } catch (e) {
-            alert(__('misc.error') + ': ' + e.message);
+            showToast(__('misc.error') + ': ' + e.message, 'error');
         } finally {
             btn.disabled = false;
         }
@@ -881,28 +881,29 @@ function getAuthHeaders() {
     });
 
     async function deleteDoc(docId, docName) {
-        if (!confirm("Delete document: " + (docName || docId))) return;
+        if (!await uiConfirm(__('admin.docs.delete') + ': ' + (docName || docId), { danger: true })) return;
         try {
             const res = await fetch(`${API_BASE}/documents/${docId}`, { method: 'DELETE', headers: getAuthHeaders() });
             if (res.ok) {
+                showToast(__('admin.docs.delete') + ': ' + (docName || docId), 'success');
                 refreshLibrary();
                 updateStats();
             } else {
                 const err = await res.text();
-                alert(__('misc.error') + ': ' + err);
+                showToast(__('misc.error') + ': ' + err, 'error');
             }
         } catch (e) {
-            alert(__('misc.error') + ': ' + e.message);
+            showToast(__('misc.error') + ': ' + e.message, 'error');
         }
     }
 
     // ===== Scan Directory (not supported in V6)=====
     async function scanDirectory() {
-        alert(__('admin.scan.noFiles'));
+        showToast(__('admin.scan.noFiles'), 'info');
     }
     function toggleSelectAll() {}
     async function importSelected() {
-        alert(__('admin.scan.noFiles'));
+        showToast(__('admin.scan.noFiles'), 'info');
     }
     function startImportMonitor() {}
 
@@ -1059,14 +1060,14 @@ function getAuthHeaders() {
         try {
             const res = await fetch(`${API_BASE}/reset-database`, { method: 'POST', headers: getAuthHeaders() });
             if (res.ok) {
-                alert('Database has been reset');
+                showToast(__('admin.resetDone'), 'success');
                 refreshLibrary();
                 updateStats();
             } else {
-                alert('Reset failed');
+                showToast(__('admin.resetFailed'), 'error');
             }
         } catch (e) {
-            alert('Reset failed: ' + e.message);
+            showToast(__('admin.resetFailed') + ': ' + e.message, 'error');
         }
     }
 
@@ -1087,6 +1088,7 @@ function getAuthHeaders() {
             .replace(/'/g, '&#39;');
     }
     </script>
-<script src="/static/js/i18n.js?v=4"></script>
+<script src="/static/js/i18n.js?v=5"></script>
+<script src="/static/js/ui.js?v=1"></script>
 </body>
 </html>

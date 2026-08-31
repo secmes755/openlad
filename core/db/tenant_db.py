@@ -940,6 +940,16 @@ class TenantMetadataDB:
             conn.commit()
         return session_id
 
+    def rename_chat_session(self, session_id: str, user_id: str, title: str) -> bool:
+        """Rename a chat session owned by user_id. Returns False when the
+        session does not exist or belongs to another user."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE chat_sessions SET title = ? WHERE id = ? AND user_id = ?",
+                (title, session_id, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+
     def get_chat_sessions(self, user_id: str = None, limit: int = 100) -> list[dict]:
         query = """
             SELECT s.id, s.title, s.industry, s.created_at, s.updated_at, COUNT(m.id) as message_count

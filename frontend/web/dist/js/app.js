@@ -64,7 +64,7 @@ async function doLogin() {
     const username = document.getElementById('usernameInput').value.trim();
     const password = document.getElementById('passwordInput').value.trim();
     if (!username || !password) {
-        alert('Please enter username and password');
+        showToast(__('login.errorEmpty'), 'error');
         return;
     }
     try {
@@ -75,7 +75,7 @@ async function doLogin() {
         });
         const data = await res.json();
         if (!res.ok) {
-            alert('Login failed: ' + (data.detail || data.error || 'Unknown error'));
+            showToast(__('login.errorFailed') + (data.detail || data.error || 'Unknown error'), 'error');
             return;
         }
         localStorage.setItem('tenant_id', data.tenant_id);
@@ -87,7 +87,7 @@ async function doLogin() {
         loadIndustries();
         loadSessions();
     } catch (e) {
-        alert('Login error: ' + e.message);
+        showToast(__('login.errorNetwork') + e.message, 'error');
     }
 }
 
@@ -229,10 +229,57 @@ async function loadSessions() {
     try {
         const res = await fetch(`${API_BASE}/chat/sessions`, { headers: getAuthHeaders() });
         const data = await res.json();
-        renderSessionList(data.sessions || []);
+        _allSessions = data.sessions || [];
+        renderSessionList(_allSessions);
     } catch (e) {
         console.error('Load sessions failed:', e);
         renderSessionList([]);
+    }
+}
+
+// ===== Session list rendering, search & rename =====
+let _allSessions = [];
+
+function filterSessions(query) {
+    const q = (query || '').trim().toLowerCase();
+    if (!q) { renderSessionList(_allSessions); return; }
+    renderSessionList(_allSessions.filter(s => (s.title || '').toLowerCase().includes(q)));
+}
+
+// Relative time for recent items, absolute date for older ones.
+function formatTime(isoStr) {
+    if (!isoStr) return '';
+    // SQLite CURRENT_TIMESTAMP is UTC without a zone marker
+    const d = new Date(/Z|[+-]\d{2}:?\d{2}$/.test(isoStr) ? isoStr : isoStr.replace(' ', 'T') + 'Z');
+    if (isNaN(d)) return '';
+    const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+    if (diffMin < 1) return __('time.justNow');
+    if (diffMin < 60) return diffMin + __('time.minAgo');
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return diffHr + __('time.hrAgo');
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return diffDay + __('time.dayAgo');
+    return d.toLocaleDateString();
+}
+
+async function renameSession(sessionId, oldTitle) {
+    const title = prompt(__('chat.renamePrompt'), oldTitle || '');
+    if (title === null) return; // cancelled
+    const trimmed = title.trim();
+    if (!trimmed || trimmed === oldTitle) return;
+    try {
+        const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({ title: trimmed.slice(0, 100) })
+        });
+        if (!res.ok) {
+            showToast(__('misc.error') + ': ' + res.status, 'error');
+            return;
+        }
+        await loadSessions();
+    } catch (e) {
+        showToast(__('misc.error') + ': ' + e.message, 'error');
     }
 }
 
@@ -245,7 +292,13 @@ function renderSessionList(sessions) {
     list.innerHTML = sessions.map(s => `
         <div class="session-item ${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}" onclick="switchSession('${s.id}')">
             <i class="fas fa-comment"></i>
-            <span class="session-title">${escapeHtml(s.title)}</span>
+            <span class="session-body">
+                <span class="session-title">${escapeHtml(s.title)}</span>
+                <span class="session-meta">${formatTime(s.updated_at)}</span>
+            </span>
+            <span class="session-rename" onclick="event.stopPropagation();renameSession('${s.id}', decodeURIComponent('${encodeURIComponent(s.title || '')}'))" title="${__('chat.rename')}">
+                <i class="fas fa-pen"></i>
+            </span>
             <span class="session-delete" onclick="event.stopPropagation();deleteSession('${s.id}')">
                 <i class="fas fa-trash-alt"></i>
             </span>
@@ -297,7 +350,7 @@ async function loadMessages(sessionId) {
             if (typeof sources === 'string') {
                 try { sources = JSON.parse(sources); } catch { sources = null; }
             }
-            appendMessageToDOM(msg.role, msg.content, sources, null, null);
+            appendMessageToDOM(msg.role, msg.content, sources, null, null, msg.created_at);
         });
         
         scrollToBottom();
@@ -308,7 +361,7 @@ async function loadMessages(sessionId) {
 }
 
 async function deleteSession(sessionId) {
-    if (!confirm(__('chat.confirmDelete'))) return;
+    if (!await uiConfirm(__('chat.confirmDelete'), { danger: true })) return;
     try {
         await fetch(`${API_BASE}/chat/sessions/${sessionId}`, { method: 'DELETE', headers: getAuthHeaders() });
         if (currentSessionId === sessionId) {
@@ -319,7 +372,7 @@ async function deleteSession(sessionId) {
         await loadSessions();
     } catch (e) {
         console.error('Delete session failed:', e);
-        alert(__('misc.error'));
+        showToast(__('misc.error'), 'error');
     }
 }
 
@@ -351,7 +404,7 @@ async function sendMessage() {
     document.getElementById('chatMessages').style.display = 'flex';
 
     // Show user message
-    appendMessageToDOM('user', text);
+    appendMessageToDOM('user', text, null, null, null, new Date().toISOString());
     input.value = '';
     input.style.height = 'auto';
     scrollToBottom();
@@ -378,38 +431,21 @@ async function sendMessage() {
         }
 
         const chatHistoryForRequest = sessionMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
-        const res = await fetch(`${API_BASE}/query`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-            body: JSON.stringify({
-                query: text,
-                session_id: currentSessionId,
-                industry: currentIndustry,
-                chat_history: chatHistoryForRequest
-            })
-        });
+        const payload = {
+            query: text,
+            session_id: currentSessionId,
+            industry: currentIndustry,
+            chat_history: chatHistoryForRequest
+        };
+        const data = await runQuery(payload, loadingId);
+
         // Remove loading state
         removeLoadingMessage(loadingId);
-
-        if (!res.ok) {
-            let errDetail = 'HTTP ' + res.status;
-            try {
-                const errData = await res.json();
-                errDetail = errData.detail || errDetail;
-            } catch (e2) {}
-            if (res.status === 401) {
-                clearAuthStorage();
-                const modal = document.getElementById('loginModal');
-                if (modal) modal.classList.add('show');
-            }
-            appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${errDetail}`);
-            return; // finally block still resets isLoading / send button
-        }
-        const data = await res.json();
+        if (!data) return;  // error already rendered / login modal shown
 
         // V6 /query does not return session_id, frontend manages it
         // Show assistant message (V6 has no debug_info / citation_map)
-        appendMessageToDOM('assistant', data.answer, data.sources, null, null);
+        appendMessageToDOM('assistant', data.answer, data.sources, null, null, new Date().toISOString());
 
         // Update local message history
         sessionMessages.push({ role: 'user', content: text });
@@ -422,6 +458,111 @@ async function sendMessage() {
         isLoading = false;
         document.getElementById('sendBtn').disabled = false;
         scrollToBottom();
+    }
+}
+
+function handleAuthExpired() {
+    clearAuthStorage();
+    const modal = document.getElementById('loginModal');
+    if (modal) modal.classList.add('show');
+}
+
+async function readErrorDetail(res) {
+    let detail = 'HTTP ' + res.status;
+    try {
+        const errData = await res.json();
+        detail = errData.detail || detail;
+    } catch (e2) {}
+    return detail;
+}
+
+// ===== Query transport: SSE stream with legacy fallback =====
+// Primary path consumes /query/stream stage events so the user sees the
+// pipeline advancing (planning → retrieving → generating). Falls back to
+// the plain /query endpoint when the stream is unavailable (old backend,
+// proxy buffering), so functionality never depends on streaming working.
+async function runQuery(payload, loadingId) {
+    try {
+        return await runQueryStream(payload, loadingId);
+    } catch (e) {
+        if (e && e.handled) return null;  // error already rendered in the chat
+        console.warn('[query] stream failed, falling back to /query:', e);
+        return await runQueryLegacy(payload);
+    }
+}
+
+async function runQueryStream(payload, loadingId) {
+    const res = await fetch(`${API_BASE}/query/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(payload)
+    });
+    if (res.status === 401) {
+        handleAuthExpired();
+        const err = new Error('401');
+        err.handled = true;
+        throw err;
+    }
+    if (!res.ok) {
+        if (res.status === 404) throw new Error('stream endpoint missing');  // legacy fallback
+        const detail = await readErrorDetail(res);
+        appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
+        const err = new Error(detail);
+        err.handled = true;
+        throw err;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            if (!frame.startsWith('data: ')) continue;  // keep-alive comments
+            let ev;
+            try { ev = JSON.parse(frame.slice(6)); } catch { continue; }
+            if (ev.stage === 'result') {
+                result = ev.result;
+            } else if (ev.stage === 'error') {
+                appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${ev.detail || ''}`);
+                const err = new Error(ev.detail || 'stream error');
+                err.handled = true;
+                throw err;
+            } else if (ev.stage) {
+                updateLoadingStage(loadingId, __('stage.' + ev.stage));
+            }
+        }
+    }
+    if (!result) throw new Error('stream ended without a result frame');  // fallback
+    return result;
+}
+
+async function runQueryLegacy(payload) {
+    try {
+        const res = await fetch(`${API_BASE}/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify(payload)
+        });
+        if (res.status === 401) {
+            handleAuthExpired();
+            return null;
+        }
+        if (!res.ok) {
+            const detail = await readErrorDetail(res);
+            appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
+            return null;
+        }
+        return await res.json();
+    } catch (e) {
+        appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${e.message}`);
+        return null;
     }
 }
 
@@ -448,13 +589,44 @@ async function fetchProtectedImage(url) {
     }
 }
 
-async function openProtectedImage(url) {
+// ===== Image Lightbox =====
+// In-page viewer for tenant-scoped images — keeps reading context instead of
+// opening a bare blob in a new tab. Esc / backdrop click / ✕ closes it.
+function openLightbox(src, caption) {
+    let overlay = document.getElementById('imageLightbox');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'imageLightbox';
+        overlay.className = 'lightbox-overlay';
+        overlay.innerHTML = `
+            <button class="lightbox-close" aria-label="Close"><i class="fas fa-times"></i></button>
+            <div class="lightbox-caption"></div>
+            <img alt="">`;
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay || e.target.closest('.lightbox-close')) closeLightbox();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && overlay.classList.contains('show')) closeLightbox();
+        });
+        document.body.appendChild(overlay);
+    }
+    overlay.querySelector('img').src = src;
+    overlay.querySelector('.lightbox-caption').textContent = caption || '';
+    overlay.classList.add('show');
+}
+
+function closeLightbox() {
+    const overlay = document.getElementById('imageLightbox');
+    if (overlay) overlay.classList.remove('show');
+}
+
+async function openProtectedImage(url, caption) {
     const blobUrl = await fetchProtectedImage(url);
-    if (blobUrl) window.open(blobUrl, '_blank');
+    if (blobUrl) openLightbox(blobUrl, caption || url);
 }
 
 function openPageImage(docId, pageNum) {
-    openProtectedImage(`/images/${docId}_p${pageNum}.png`);
+    openProtectedImage(`/images/${docId}_p${pageNum}.png`, `${docId} · Page ${pageNum}`);
 }
 
 // Delegated citation clicks: processCitations emits data-* attributes (no
@@ -485,15 +657,20 @@ function hydrateProtectedImages(container) {
     for (let i = 0; i < Math.min(CONCURRENCY, imgs.length); i++) worker();
 }
 
-// Delegated handlers for protected images: chart thumbnails open the blob in
-// a new tab; page-image links fetch-then-open
+// Delegated handlers for protected images: chart thumbnails and page-image
+// links open the in-page lightbox (keeps the conversation in context)
 document.addEventListener('click', (e) => {
     const thumb = e.target.closest('img.chart-thumb');
-    if (thumb && thumb.src) { window.open(thumb.src, '_blank'); return; }
+    if (thumb && thumb.src) {
+        const item = thumb.closest('.chart-item');
+        const cap = item && item.querySelector('.chart-caption');
+        openLightbox(thumb.src, (cap && cap.textContent) || thumb.alt || '');
+        return;
+    }
     const link = e.target.closest('a.page-img-link[data-img-url]');
     if (link) {
         e.preventDefault();
-        openProtectedImage(link.dataset.imgUrl);
+        openProtectedImage(link.dataset.imgUrl, link.textContent);
     }
 });
 
@@ -577,7 +754,7 @@ function processCitations(html, citationMap, sources) {
 }
 
 // ===== DOM Operations =====
-function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
+function appendMessageToDOM(role, content, sources, debugInfo, citationMap, createdAt) {
     const container = document.getElementById('chatMessages');
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
@@ -698,8 +875,24 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap) {
 
     msgDiv.innerHTML = `
         <div class="message-avatar"><i class="fas ${avatarIcon}"></i></div>
-        <div class="message-content">${htmlContent}${sourcesHtml}${debugHtml}</div>
+        <div class="message-content">${htmlContent}${sourcesHtml}${debugHtml}
+            <div class="message-meta">
+                <span class="message-time">${createdAt ? formatTime(createdAt) : ''}</span>
+                <button class="message-copy" title="${__('misc.copy')}"><i class="fas fa-copy"></i></button>
+            </div>
+        </div>
     `;
+    // Keep the raw markdown for the copy action (rendered HTML loses structure)
+    if (content) msgDiv.dataset.rawContent = content;
+    const copyBtn = msgDiv.querySelector('.message-copy');
+    copyBtn.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(msgDiv.dataset.rawContent || msgDiv.querySelector('.message-content').textContent);
+            showToast(__('misc.copied'), 'success');
+        } catch (e) {
+            showToast(__('misc.copyManual'), 'info');
+        }
+    });
     container.appendChild(msgDiv);
     hydrateProtectedImages(msgDiv);
     scrollToBottom();
@@ -715,11 +908,17 @@ function appendLoadingMessage() {
         <div class="message-avatar"><i class="fas fa-robot"></i></div>
         <div class="message-content">
             <div class="loading-dots"><span></span><span></span><span></span></div>
+            <div class="loading-stage"></div>
         </div>
     `;
     container.appendChild(div);
     scrollToBottom();
     return id;
+}
+
+function updateLoadingStage(loadingId, stageText) {
+    const el = document.querySelector('#' + loadingId + ' .loading-stage');
+    if (el && stageText) el.textContent = stageText;
 }
 
 function removeLoadingMessage(id) {
@@ -835,12 +1034,12 @@ async function fixService(serviceKey) {
         const data = await res.json();
 
         if (res.ok && data.success) {
-            alert(`✅ ${serviceKey} restarted successfully\nNew PID: ${data.pid}`);
+            showToast(`${serviceKey} ${__('status.restartOk')} (PID: ${data.pid})`, 'success');
         } else {
-            alert(`❌ ${serviceKey} restart failed\n${data.error || data.detail || 'Unknown error'}`);
+            showToast(`${serviceKey} ${__('status.restartFailed')}: ${data.error || data.detail || 'Unknown error'}`, 'error');
         }
     } catch (e) {
-        alert(`❌ ${serviceKey} restart error: ${e.message}`);
+        showToast(`${serviceKey} ${__('status.restartFailed')}: ${e.message}`, 'error');
     } finally {
         // Delayed status refresh
         setTimeout(refreshServiceStatus, 3000);
@@ -1038,7 +1237,7 @@ async function createUser() {
     const role = document.getElementById('newUserRole').value;
     const ttl = parseInt(document.getElementById('newUserTtl').value, 10);
     if (!username) {
-        alert(__('login.errorEmpty'));
+        showToast(__('login.errorEmpty'), 'error');
         return;
     }
     try {
@@ -1049,20 +1248,25 @@ async function createUser() {
         });
         const data = await res.json();
         if (!res.ok) {
-            alert(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'));
+            showToast(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'), 'error');
             return;
         }
-        alert('OK\nUsername: ' + data.username + '\nPassword: ' + data.password + '\nAPI Key: ' + data.api_key + '\n' + __('usermgmt.column.expires') + ': ' + (data.api_key_expires_at || __('usermgmt.never')));
+        showCredentials(__('usermgmt.creds.title'), [
+            { label: __('login.username'), value: data.username },
+            { label: __('login.password'), value: data.password },
+            { label: 'API Key', value: data.api_key },
+            { label: __('usermgmt.column.expires'), value: data.api_key_expires_at || __('usermgmt.never') }
+        ], __('usermgmt.creds.note'));
         document.getElementById('newUserName').value = '';
         document.getElementById('newUserPassword').value = '';
         loadUsers();
     } catch (e) {
-        alert(__('misc.error') + ': ' + e.message);
+        showToast(__('misc.error') + ': ' + e.message, 'error');
     }
 }
 
 async function regenerateKey(userId, username) {
-    if (!confirm(__('usermgmt.confirmRegenerate'))) return;
+    if (!await uiConfirm(__('usermgmt.confirmRegenerate'), { danger: true })) return;
     try {
         const res = await fetch(`${API_BASE}/admin/users/${userId}/regenerate-key`, {
             method: 'POST',
@@ -1071,18 +1275,21 @@ async function regenerateKey(userId, username) {
         });
         const data = await res.json();
         if (!res.ok) {
-            alert(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'));
+            showToast(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'), 'error');
             return;
         }
-        alert(username + '\nNew API Key: ' + data.api_key + '\n' + __('usermgmt.column.expires') + ': ' + (data.api_key_expires_at || __('usermgmt.never')));
+        showCredentials(__('usermgmt.creds.title') + ' — ' + username, [
+            { label: 'API Key', value: data.api_key },
+            { label: __('usermgmt.column.expires'), value: data.api_key_expires_at || __('usermgmt.never') }
+        ], __('usermgmt.creds.note'));
         loadUsers();
     } catch (e) {
-        alert(__('misc.error') + ': ' + e.message);
+        showToast(__('misc.error') + ': ' + e.message, 'error');
     }
 }
 
 async function deleteUser(userId, username) {
-    if (!confirm(__('usermgmt.confirmDelete') + username + '?')) return;
+    if (!await uiConfirm(__('usermgmt.confirmDelete') + username + '?', { danger: true })) return;
     try {
         const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
             method: 'DELETE',
@@ -1090,12 +1297,12 @@ async function deleteUser(userId, username) {
         });
         const data = await res.json();
         if (!res.ok) {
-            alert(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'));
+            showToast(__('misc.error') + ': ' + (data.detail || data.error || 'Unknown error'), 'error');
             return;
         }
-        alert(__('usermgmt.delete') + ': ' + username);
+        showToast(__('usermgmt.delete') + ': ' + username, 'success');
         loadUsers();
     } catch (e) {
-        alert(__('misc.error') + ': ' + e.message);
+        showToast(__('misc.error') + ': ' + e.message, 'error');
     }
 }

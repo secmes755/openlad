@@ -308,11 +308,23 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
     def query(self, query_text: str, tenant_id: str,
               industry_hint: str = None,
-              chat_history: list[dict] = None) -> dict[str, Any]:
+              chat_history: list[dict] = None,
+              progress_cb=None) -> dict[str, Any]:
         start_time = time.time()
+
+        def emit(stage: str, **meta):
+            # Optional coarse-grained progress hook for streaming transports
+            # (SSE). Failures in the consumer must never break the pipeline.
+            if progress_cb:
+                try:
+                    progress_cb(stage, **meta)
+                except Exception:
+                    pass
+
         # OpenLAD: No hardcoded language-specific rewrites in core.
         # Query normalization is handled by the industry pack's preprocess_query hook if needed.
         logger.info(f"[ENGINE] tenant: {tenant_id}, query: {query_text}, industry: {industry_hint}")
+        emit("planning")
 
         chat_history_str = self._format_chat_history(chat_history) if chat_history else None
 
@@ -336,7 +348,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             query_type = "traditional"
 
         if query_type == "deep_research":
-            # Deep research path
+            # Deep research path (retrieval rounds dominate; synthesis inside)
+            emit("retrieving")
             retrieval_result, synthesis_result, router_plan = self._execute_deep_research(
                 query_text, tenant_id, components, chat_history_str, industry_hint
             )
@@ -346,6 +359,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             plan = planner.plan(query_text, chat_history_str)
 
             # Phase 2: Retrieve
+            emit("retrieving")
             retrieval_result = executor.execute(plan, tenant_id=tenant_id, industry_hint=industry_hint, original_query=query_text)
 
             # Phase 2.5: Spec-fact bypass — assertion-level (entity, attribute,
@@ -406,6 +420,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                     routed_category = plugin.manifest.category_mapping[0]
                     logger.info(f"[ENGINE] user-enforced industry: {industry_hint}")
 
+            # Phase 3: Synthesize
+            emit("generating")
             synthesis_result = synthesizer.synthesize(
                 query=rewritten_query,
                 plan=router_plan,

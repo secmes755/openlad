@@ -4,6 +4,7 @@ External mode: Concurrency strategy controlled by OPENLAD_QUERY_CONCURRENCY_MODE
 read by resource_capacity.py's get_query_concurrency_config().
 """
 import asyncio
+import json
 import logging
 import time
 
@@ -69,6 +70,72 @@ async def query(req: QueryRequest, request: Request):
     If current concurrency limit is reached, subsequent requests will automatically queue.
     """
     ctx = get_tenant_context()
+    engine = _validate_query_request(ctx, req, request)
+    chat_history = _hydrate_chat_history(ctx, req)
+    result, elapsed_ms = await _run_engine_query(engine, ctx, req, chat_history)
+    _persist_query_result(ctx, req, result, elapsed_ms)
+    return result
+
+
+@router.post("/query/stream")
+async def query_stream(req: QueryRequest, request: Request):
+    """Same pipeline as /query, delivered as Server-Sent Events.
+
+    Event shapes (one JSON object per `data:` line):
+      {"stage": "planning"|"retrieving"|"generating"}  — coarse progress
+      {"stage": "result", "result": {...}}             — final payload, identical to /query
+      {"stage": "error", "detail": "..."}              — failure
+    """
+    ctx = get_tenant_context()
+    engine = _validate_query_request(ctx, req, request)
+    chat_history = _hydrate_chat_history(ctx, req)
+
+    async def events():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def progress_cb(stage: str, **meta):
+            # engine.query runs in a worker thread; hop back to the event loop
+            loop.call_soon_threadsafe(queue.put_nowait, {"stage": stage, **meta})
+
+        async def run():
+            result, elapsed_ms = await _run_engine_query(
+                engine, ctx, req, chat_history, progress_cb=progress_cb)
+            _persist_query_result(ctx, req, result, elapsed_ms)
+            return result
+
+        task = asyncio.create_task(run())
+        while True:
+            if task.done() and queue.empty():
+                break
+            try:
+                ev = await asyncio.wait_for(queue.get(), timeout=15.0)
+                yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+            except TimeoutError:
+                yield ": keep-alive\n\n"
+        if task.cancelled():
+            yield 'data: {"stage": "error", "detail": "Query cancelled"}\n\n'
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"[QUERY/STREAM] failed: {exc}")
+            yield "data: " + json.dumps(
+                {"stage": "error", "detail": "Query failed, please retry"},
+                ensure_ascii=False) + "\n\n"
+            return
+        yield "data: " + json.dumps(
+            {"stage": "result", "result": task.result()}, ensure_ascii=False) + "\n\n"
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _validate_query_request(ctx, req: QueryRequest, request: Request):
+    """Shared pre-flight checks for /query and /query/stream. Returns the engine."""
     if not ctx:
         raise HTTPException(status_code=400, detail="Tenant context required")
 
@@ -84,11 +151,14 @@ async def query(req: QueryRequest, request: Request):
     engine = getattr(request.app.state, "query_engine", None)
     if not engine:
         raise HTTPException(status_code=503, detail="Search engine not initialized, please try again later")
+    return engine
 
-    # Follow-up support: session history is write-only unless we load it here.
-    # Client-supplied chat_history always takes precedence; otherwise, when a
-    # session_id is provided, hydrate history from the stored session so
-    # follow-up questions ("what are their differences") can be resolved.
+
+def _hydrate_chat_history(ctx, req: QueryRequest) -> list[dict] | None:
+    """Follow-up support: session history is write-only unless we load it here.
+    Client-supplied chat_history always takes precedence; otherwise, when a
+    session_id is provided, hydrate history from the stored session so
+    follow-up questions ("what are their differences") can be resolved."""
     chat_history = req.chat_history
     if req.session_id and not chat_history:
         from ...db.tenant_db import get_tenant_metadata_db
@@ -117,8 +187,11 @@ async def query(req: QueryRequest, request: Request):
                 logger.info(f"[QUERY] Hydrated {len(chat_history)} messages from session {req.session_id[:8]}")
         except Exception as e:
             logger.warning(f"[QUERY] Failed to load session history: {e}")
+    return chat_history
 
-    # Global concurrency lock — waiting time reported to user
+
+async def _run_engine_query(engine, ctx, req: QueryRequest, chat_history, progress_cb=None):
+    """Run engine under the global concurrency lock and annotate timing fields."""
     wait_start = time.time()
     async with _query_lock:
         wait_ms = int((time.time() - wait_start) * 1000)
@@ -129,7 +202,8 @@ async def query(req: QueryRequest, request: Request):
             query_text=req.query,
             tenant_id=ctx.tenant_id,
             industry_hint=req.industry,
-            chat_history=chat_history
+            chat_history=chat_history,
+            progress_cb=progress_cb
         )
         elapsed_ms = int((time.time() - query_start) * 1000)
 
@@ -139,9 +213,12 @@ async def query(req: QueryRequest, request: Request):
         result["wait_ms"] = wait_ms
         if wait_ms > 1000:
             result["queue_notice"] = f"Current query queued for {wait_ms//1000} seconds, system is processing"
+    return result, elapsed_ms
 
-    import json
 
+def _persist_query_result(ctx, req: QueryRequest, result: dict, elapsed_ms: int):
+    """Persist the turn (auto-create session if needed + two messages) and
+    audit-log it. Mutates result with session_id / auto_session_id."""
     from ...db.tenant_db import get_tenant_metadata_db
     db = get_tenant_metadata_db(ctx.tenant_id)
 
@@ -183,8 +260,6 @@ async def query(req: QueryRequest, request: Request):
         )
     except Exception as e:
         logger.warning(f"Failed to record query log: {e}")
-
-    return result
 
 
 @router.post("/chat/sessions")
@@ -234,6 +309,25 @@ async def get_chat_messages(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     messages = db.get_chat_messages(session_id)
     return {"messages": messages}
+
+
+@router.patch("/chat/sessions/{session_id}")
+async def rename_chat_session(session_id: str, body: dict):
+    """Rename a chat session (owner only)"""
+    ctx = get_tenant_context()
+    if not ctx:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+
+    title = (body or {}).get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise HTTPException(status_code=400, detail="title is required")
+    title = title.strip()[:100]
+
+    from ...db.tenant_db import get_tenant_metadata_db
+    db = get_tenant_metadata_db(ctx.tenant_id)
+    if not db.rename_chat_session(session_id, ctx.user_id, title):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"success": True, "id": session_id, "title": title}
 
 
 @router.delete("/chat/sessions/{session_id}")

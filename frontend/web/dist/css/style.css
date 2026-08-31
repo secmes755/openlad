@@ -1332,3 +1332,125 @@ body {
 .user-table tbody tr:hover {
     background: #f9fafb;
 }
+/* ===== Image Lightbox ===== */
+.lightbox-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    background: rgba(0, 0, 0, 0.85);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.lightbox-overlay.show { display: flex; }
+.lightbox-caption {
+    color: #e5e7eb;
+    font-size: 14px;
+    margin-bottom: 12px;
+    max-width: 90vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lightbox-overlay img {
+    max-width: 92vw;
+    max-height: 82vh;
+    border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    background: #fff;
+}
+.lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.lightbox-close:hover { background: rgba(255,255,255,0.25); }
+
+/* ===== Session Search and List Meta ===== */
+.session-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+}
+.session-search i { color: var(--text-secondary); font-size: 12px; }
+.session-search input {
+    border: none;
+    outline: none;
+    flex: 1;
+    font-size: 13px;
+    background: transparent;
+}
+.session-item .session-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.session-item .session-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.session-item .session-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.session-rename {
+    opacity: 0;
+    color: var(--text-secondary);
+    padding: 4px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+.session-item:hover .session-rename { opacity: 1; }
+.session-rename:hover { color: var(--primary); background: rgba(37, 99, 235, 0.08); }
+
+/* ===== Message Meta: timestamp + copy ===== */
+.message-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.message-copy {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.message:hover .message-copy { opacity: 1; }
+.message-copy:hover { color: var(--primary); background: rgba(37, 99, 235, 0.08); }
+
+/* ===== Loading Stage Hint ===== */
+.loading-stage {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-height: 14px;
+}

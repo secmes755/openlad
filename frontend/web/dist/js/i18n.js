@@ -8,6 +8,9 @@ const I18N_DICT = {
     // === App Header & Branding ===
     "app.title":                 { zh: "OpenLAD", en: "OpenLAD" },
     "app.subtitle":              { zh: "智能文档分析助手 — 基于您的知识库回答问题", en: "Intelligent document analysis assistant — Answer questions based on your knowledge base" },
+    "welcome.example1":          { zh: "总结知识库中文档的核心要点", en: "Summarize the key points of the documents in the knowledge base" },
+    "welcome.example2":          { zh: "对比文档之间的关键差异", en: "Compare the key differences between the documents" },
+    "welcome.example3":          { zh: "列出文档中提到的技术规格参数", en: "List the technical specifications mentioned in the documents" },
     "app.newChat":               { zh: "新建对话", en: "New Chat" },
     "app.logout":                { zh: "退出登录", en: "Logout" },
     "app.sidebar.close":         { zh: "关闭侧边栏", en: "Close Sidebar" },
@@ -75,17 +78,31 @@ const I18N_DICT = {
     "usermgmt.expired":          { zh: "已过期", en: "Expired" },
     "usermgmt.daysLeft":         { zh: " 天后到期", en: " days left" },
     "usermgmt.never":            { zh: "永不过期", en: "Never" },
+    "usermgmt.creds.title":      { zh: "用户凭证", en: "User Credentials" },
+    "usermgmt.creds.note":       { zh: "请立即保存——密码仅显示一次。", en: "Save these now — the password is shown only once." },
 
     // === Service Status Bar ===
     "status.label":              { zh: "服务", en: "Service" },
     "status.logs":               { zh: "日志", en: "Logs" },
     "status.logsTitle":          { zh: "服务日志", en: "Service Logs" },
+    "status.restartOk":          { zh: "重启成功", en: "restarted successfully" },
+    "status.restartFailed":      { zh: "重启失败", en: "restart failed" },
 
     // === Chat / Query ===
     "chat.error":                { zh: "请求失败，请重试", en: "Request failed, please retry" },
+    "chat.searchSessions":       { zh: "搜索对话…", en: "Search conversations…" },
+    "chat.rename":               { zh: "重命名", en: "Rename" },
+    "chat.renamePrompt":         { zh: "输入新的对话标题：", en: "Enter a new conversation title:" },
+    "time.justNow":              { zh: "刚刚", en: "just now" },
+    "time.minAgo":               { zh: " 分钟前", en: "m ago" },
+    "time.hrAgo":                { zh: " 小时前", en: "h ago" },
+    "time.dayAgo":               { zh: " 天前", en: "d ago" },
     "chat.thinking":             { zh: "思考中...", en: "Thinking..." },
     "chat.empty":                { zh: "暂无回复内容", en: "No response content" },
     "chat.confirmDelete":        { zh: "确定删除该会话？", en: "Delete this conversation?" },
+    "stage.planning":            { zh: "理解问题…", en: "Understanding the question…" },
+    "stage.retrieving":          { zh: "检索资料…", en: "Searching the knowledge base…" },
+    "stage.generating":          { zh: "生成回答…", en: "Generating the answer…" },
 
     // === Admin Page — Header ===
     "admin.title":               { zh: "数据库管理", en: "Database Admin" },
@@ -143,6 +160,11 @@ const I18N_DICT = {
     "admin.docs.importedTitle":  { zh: "已导入文档", en: "Imported Documents" },
     "admin.docs.uploadHint":     { zh: "请在\"上传\"标签页中上传文件", en: "Please upload files in the Upload tab" },
     "admin.resetDb":             { zh: "重置数据库", en: "Reset Database" },
+    "admin.resetDone":           { zh: "数据库已重置", en: "Database has been reset" },
+    "admin.resetFailed":         { zh: "重置失败", en: "Reset failed" },
+    "admin.resetModal.title":    { zh: "确认重置数据库", en: "Confirm Reset Database" },
+    "admin.resetModal.body":     { zh: "这将删除所有文档、页面、分块和向量数据，且无法撤销。聊天记录会保留。", en: "This will delete all documents, pages, chunks, and vector data. This cannot be undone. Chat history will be preserved." },
+    "admin.resetConfirm":        { zh: "确认重置", en: "Confirm Reset" },
 
     // === Admin — Upload Tab ===
     "admin.upload.dropzone":     { zh: "点击或拖拽文件到此处上传", en: "Click or drag files here to upload" },
@@ -201,6 +223,9 @@ const I18N_DICT = {
     "misc.close":                { zh: "关闭", en: "Close" },
     "misc.refresh":              { zh: "刷新", en: "Refresh" },
     "misc.delete":               { zh: "删除", en: "Delete" },
+    "misc.copy":                 { zh: "复制", en: "Copy" },
+    "misc.copied":               { zh: "已复制到剪贴板", en: "Copied to clipboard" },
+    "misc.copyManual":           { zh: "请手动复制（Ctrl+C）", en: "Please copy manually (Ctrl+C)" },
 
     // === Language Toggle ===
     "lang.label":                { zh: "中文", en: "EN" },
