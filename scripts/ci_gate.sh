@@ -77,13 +77,19 @@ if [ "$self_test" = 1 ]; then
 fi
 
 echo ""
-echo "== [1/2] lint (ruff==0.16.1, matching CI) =="
+echo "== [1/3] lint (ruff==0.16.1, matching CI) =="
 # Prepend the gate venv to PATH so ruff_baseline_check.sh also uses 0.16.1.
 PATH="$VENV/bin:$PATH" "$VENV/bin/ruff" check tests scripts
 PATH="$VENV/bin:$PATH" ./scripts/ruff_baseline_check.sh
 
 echo ""
-echo "== [2/2] unit (minimal-dependency pytest, matching CI unit job) =="
+echo "== [2/3] frontend asset hygiene (encoding / mojibake scan) =="
+# Static pages must be BOM-free UTF-8 and free of GBK-misdecode artifacts
+# (e.g. 鉁? for ✓) — these slip in via editors on other platforms.
+"$VENV/bin/python" scripts/check_frontend_assets.py
+
+echo ""
+echo "== [3/3] unit (minimal-dependency pytest, matching CI unit job) =="
 "$VENV/bin/python" -m pytest -q
 
 echo ""

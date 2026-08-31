@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script attributes — they use data attributes with one delegated click
   listener.
 - Corrected two garbled checkbox labels on the model-services tab.
+- Repaired remaining GBK-misdecode mojibake on the model-services tab
+  (em-dash, "or", and the ✓/✗ test-result markers), stripped stray UTF-8
+  BOMs from the static pages, and added a CI-gate scan
+  (`scripts/check_frontend_assets.py`) that fails on BOM or mojibake in
+  `frontend/web/dist` so the corruption class cannot regress. Login
+  forms on both pages now submit on Enter, and the key-clear checkbox
+  label is localized instead of hardcoded Chinese.
 - **Auto-detection language gap.** The LLM classifier emits categories in
   the language of the pack's `taxonomy.yaml` (Chinese for the sample
   semiconductor pack), while `manifest.category_mapping` is English.

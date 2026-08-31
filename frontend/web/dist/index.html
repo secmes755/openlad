@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -163,11 +163,11 @@
             <p data-i18n="login.subtitle">Please enter username and password</p>
             <div class="form-group">
                 <label data-i18n="login.username">Username</label>
-                <input type="text" id="usernameInput" data-i18n-placeholder="login.usernamePlaceholder" placeholder="e.g. admin">
+                <input type="text" id="usernameInput" data-i18n-placeholder="login.usernamePlaceholder" placeholder="e.g. admin" onkeydown="if(event.key==='Enter')doLogin()">
             </div>
             <div class="form-group">
                 <label data-i18n="login.password">Password</label>
-                <input type="password" id="passwordInput" data-i18n-placeholder="login.passwordPlaceholder" placeholder="Enter your password">
+                <input type="password" id="passwordInput" data-i18n-placeholder="login.passwordPlaceholder" placeholder="Enter your password" onkeydown="if(event.key==='Enter')doLogin()">
             </div>
             <button class="btn" onclick="doLogin()">
                 <i class="fas fa-sign-in-alt"></i> Login

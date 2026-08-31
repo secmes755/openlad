@@ -118,6 +118,7 @@ const I18N_DICT = {
     "admin.models.save":         { zh: "保存并生效", en: "Save & Apply" },
     "admin.models.saved":        { zh: "已保存，新配置已生效。", en: "Saved. New backends are now active." },
     "admin.models.keySet":       { zh: "已设置", en: "set" },
+    "admin.models.keyClear":     { zh: "清除", en: "Clear" },
     "admin.models.keyEmpty":     { zh: "未设置（默认 123）", en: "not set (default 123)" },
     "admin.models.keyPlaceholder": { zh: "留空=本地默认(123)；云端填 sk-...", en: "empty = local default (123); cloud keys like sk-..." },
     "admin.models.keyKeepPlaceholder": { zh: "已设置——留空保持不变", en: "key is set — leave blank to keep" },
