@@ -2063,9 +2063,10 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
         if not pages:
             return
 
-        # Use max_chunk_size as the hard limit for section merging
-        # Must respect embedding model's token limit to avoid 500 errors
-        # llama-server batch size limits tokens per input; use chunk_size as safe upper bound
+        # Use max_chunk_size as the hard limit for section merging.
+        # max_chunk_chars already accounts for both the context window and
+        # the declared physical batch (OPENLAD_EMB_MAX_INPUT_TOKENS), so the
+        # clamp keeps every merged chunk embeddable on small-batch deployments.
         max_chunk_size = min(chunk_size, settings.EMBEDDING_CONFIG.get("max_chunk_chars", chunk_size * 3))
 
         chunks_with_pages = []  # [(chunk_text, [(page_id, page_num)], primary_page_id)]

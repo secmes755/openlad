@@ -70,6 +70,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ingestion chunk limits now respect the embedding server's physical
+  batch.** Chunk sizing previously derived only from the embedding model's
+  context window (8192 tokens), with no notion of llama-server's
+  `--batch-size` cap on a *single* input — on small-batch deployments a
+  dense (e.g. Chinese) chunk could exceed that cap, get rejected with
+  "input is too large to process", and be silently skipped, ingesting the
+  document "hollow" while still reporting success. New
+  `OPENLAD_EMB_MAX_INPUT_TOKENS` (default `2048`, matching llama.cpp's own
+  default so undeclared deployments are unchanged) clamps both
+  `max_chunk_chars` and `max_embed_chars`; with `512` declared, every limit
+  collapses to a 537-char budget that keeps chunks embeddable. The
+  `embed_batch` truncation that used to hide such overflows now logs a
+  warning naming the offending chunk count and the configured limit.
 - Chat rendering is resilient to a missing sanitizer deployment: without
   the vendored sanitizer the answer degrades to plain text instead of
   raw HTML (fail closed). Page-citation badges no longer carry inline

@@ -367,6 +367,12 @@ AGENTIC_CONFIG = {
 _emb_ctx = int(os.environ.get("OPENLAD_EMB_CTX_SIZE", "8192"))
 _emb_char_ratio = float(os.environ.get("OPENLAD_EMB_TOKEN_CHAR_RATIO", "1.5"))
 _emb_safety = float(os.environ.get("OPENLAD_EMB_SAFETY_RATIO", "0.7"))
+# llama-server physical batch: max tokens a single input may contain.
+# Must match the deployed llama-server --batch-size — a single input larger
+# than this is rejected outright ("input (N tokens) is too large to process")
+# and the chunk is silently skipped. Default 2048 matches llama.cpp's own
+# default --batch-size, so an undeclared deployment behaves exactly as before.
+_emb_max_input_tokens = int(os.environ.get("OPENLAD_EMB_MAX_INPUT_TOKENS", "2048"))
 
 EMBEDDING_CONFIG = {
     # Embedding model context window (must match llama-server -c value)
@@ -375,16 +381,27 @@ EMBEDDING_CONFIG = {
     "token_to_char_ratio": _emb_char_ratio,
     # Safety margin: only use this fraction of the context window
     "safety_ratio": _emb_safety,
-    # Hard cap: any single chunk exceeding this will be split (derived)
-    "max_chunk_chars": int(_emb_ctx * _emb_char_ratio * _emb_safety),
+    # Hard cap: any single chunk exceeding this will be split (derived).
+    # Bound by both the context window and the physical batch: whichever is
+    # tighter wins, so chunks stay embeddable on small-batch deployments.
+    "max_chunk_chars": int(min(
+        _emb_ctx * _emb_char_ratio * _emb_safety,
+        _emb_max_input_tokens * _emb_char_ratio * _emb_safety,
+    )),
     # Target chunk size for retrieval granularity (smaller = more precise)
     "chunk_size": int(os.environ.get("OPENLAD_EMB_CHUNK_SIZE", "1600")),
     # Per-document chunk count safety cap
     "max_chunks_per_doc": int(os.environ.get("OPENLAD_EMB_MAX_CHUNKS_PER_DOC", "5000")),
     # Batch size for embedding API calls (more = faster but more memory on server)
     "batch_size": int(os.environ.get("OPENLAD_EMB_BATCH_SIZE", "8")),
-    # Single-embed truncation limit (conservative, for embed() not embed_batch())
-    "max_embed_chars": int(_emb_ctx * _emb_char_ratio * _emb_safety * 0.8),
+    # Single-embed / batch truncation limit, likewise bounded by the
+    # physical batch (chars = tokens × ratio × safety).
+    "max_embed_chars": int(min(
+        _emb_ctx * _emb_char_ratio * _emb_safety * 0.8,
+        _emb_max_input_tokens * _emb_char_ratio * _emb_safety,
+    )),
+    # Declared physical batch (tokens per single input) — for logs/asserts
+    "max_input_tokens": _emb_max_input_tokens,
 }
 
 # =============================================================================

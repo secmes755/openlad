@@ -372,6 +372,14 @@ class ModelClient:
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         max_chars = settings.EMBEDDING_CONFIG["max_embed_chars"]
+        n_long = sum(1 for t in texts if len(t) > max_chars)
+        if n_long:
+            # Was a silent truncation — surface it: exceeding chunks mean the
+            # ingestion chunking did not respect the physical batch budget.
+            logger.warning(
+                f"[EMBED] {n_long}/{len(texts)} chunk(s) exceed {max_chars} chars "
+                f"(physical batch {settings.EMBEDDING_CONFIG['max_input_tokens']} tokens, "
+                f"OPENLAD_EMB_MAX_INPUT_TOKENS) — truncated")
         truncated = [t[:max_chars] for t in texts]
         try:
             response = self.session.post(

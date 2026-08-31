@@ -177,6 +177,22 @@ llama-server \
     --embeddings --pooling mean --batch-size 2048
 ```
 
+> **Batch-size pairing.** The embedding server's `--batch-size` caps the
+> tokens of any *single* input — a chunk larger than that is rejected
+> outright and skipped during ingestion. OpenLAD derives its chunk/truncation
+> limits from `OPENLAD_EMB_MAX_INPUT_TOKENS` (default `2048`, matching
+> llama.cpp's own default). If you run the embedding server with a
+> non-default `--batch-size` (e.g. `512` on a small GPU), set the same value:
+> `OPENLAD_EMB_MAX_INPUT_TOKENS=512 ./start.sh`. A mismatch does not crash —
+> affected chunks are silently skipped and the document ingests "hollow".
+>
+> **Batch-size 配对。** embedding 服务的 `--batch-size` 限制单条输入的 token
+> 上限，超限的 chunk 会被拒收并在入库时静默跳过。OpenLAD 依据
+> `OPENLAD_EMB_MAX_INPUT_TOKENS`（默认 `2048`，与 llama.cpp 默认一致）推导
+> chunk 尺寸与截断上限。若 embedding 服务使用非默认 batch（如小显存上的
+> `512`），请同步设置：`OPENLAD_EMB_MAX_INPUT_TOKENS=512 ./start.sh`。
+> 失配不会报错——受影响的 chunk 被静默跳过，文档会"空心"入库。
+
 ### 3. Start OpenLAD
 
 ```bash
