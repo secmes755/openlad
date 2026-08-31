@@ -4,25 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="app.title">OpenLAD</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=5">
+    <link rel="stylesheet" href="/static/css/style.css?v=6">
     <link rel="stylesheet" href="/static/vendor/font-awesome.min.css">
     <link rel="stylesheet" href="/static/vendor/katex.min.css">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
+    <script>
+        // Apply saved/system theme before first paint (avoids a light flash)
+        document.documentElement.dataset.theme = localStorage.getItem('openlad_theme') ||
+            (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    </script>
     <style>
         .login-overlay {
             display: none;
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.6);
+            background: var(--overlay-bg);
             z-index: 200;
             align-items: center;
             justify-content: center;
         }
         .login-overlay.show { display: flex; }
         .login-box {
-            background: white;
+            background: var(--bg-main);
             border-radius: 12px;
             padding: 32px;
             max-width: 400px;
@@ -30,13 +35,13 @@
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
         }
         .login-box h2 { margin-bottom: 8px; font-size: 20px; }
-        .login-box p { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
+        .login-box p { color: var(--text-secondary); font-size: 14px; margin-bottom: 20px; }
         .login-box .form-group { margin-bottom: 16px; }
-        .login-box label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #111827; }
+        .login-box label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-primary); }
         .login-box input {
             width: 100%;
             padding: 10px 12px;
-            border: 1px solid #e5e7eb;
+            border: 1px solid var(--border);
             border-radius: 8px;
             font-size: 14px;
             box-sizing: border-box;
@@ -48,14 +53,14 @@
             font-size: 14px;
             cursor: pointer;
             border: none;
-            background: #2563eb;
+            background: var(--primary);
             color: white;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
         }
-        .login-box .btn:hover { background: #1d4ed8; }
+        .login-box .btn:hover { background: var(--primary-hover); }
     </style>
 </head>
 <body>
@@ -68,6 +73,7 @@
                 <!-- Dynamically generated -->
             </div>
             <div class="status-actions">
+                <span id="themeToggleSlot" style="display:flex;align-items:center;"></span>
                 <button class="status-btn logs-btn" onclick="openServiceLogs()" title="View service Logs">
                     <i class="fas fa-file-alt"></i> Logs
                 </button>
@@ -127,7 +133,7 @@
         <!-- Main Area: Chat -->
         <main class="main-area">
             <!-- Mobile menu toggle button -->
-            <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()">
+            <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()" data-i18n-aria-label="nav.menuToggle" aria-label="Menu">
                 <i class="fas fa-bars"></i>
             </button>
 
@@ -161,7 +167,7 @@
                     <textarea id="messageInput" data-i18n-placeholder="input.placeholder" placeholder="Enter your question..." rows="1"
                         onkeydown="handleInputKeydown(event)"
                         oninput="autoResize(this)"></textarea>
-                    <button class="send-btn" onclick="sendMessage()" id="sendBtn">
+                    <button class="send-btn" onclick="sendMessage()" id="sendBtn" data-i18n-aria-label="input.send" aria-label="Send">
                         <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>
@@ -171,9 +177,9 @@
     </div>
 
     <!-- Login Modal -->
-    <div class="login-overlay" id="loginModal">
+    <div class="login-overlay" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
         <div class="login-box">
-            <h2 data-i18n="login.title"><i class="fas fa-lock"></i> User Login</h2>
+            <h2 id="loginTitle" data-i18n="login.title"><i class="fas fa-lock"></i> User Login</h2>
             <p data-i18n="login.subtitle">Please enter username and password</p>
             <div class="form-group">
                 <label data-i18n="login.username">Username</label>
@@ -190,19 +196,19 @@
     </div>
 
     <!-- User Management Modal -->
-    <div class="login-overlay" id="userMgmtModal" style="display:none;z-index:250;">
+    <div class="login-overlay" id="userMgmtModal" style="display:none;z-index:250;" role="dialog" aria-modal="true" aria-labelledby="userMgmtTitle">
         <div class="login-box" style="max-width:600px;width:95%;">
-            <h2><i class="fas fa-users-cog"></i> <span data-i18n="usermgmt.title">User Management</span></h2>
+            <h2 id="userMgmtTitle"><i class="fas fa-users-cog"></i> <span data-i18n="usermgmt.title">User Management</span></h2>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
-                <input type="text" id="newUserName" data-i18n-placeholder="usermgmt.newUser" placeholder="Username" style="flex:1;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
-                <input type="password" id="newUserPassword" data-i18n-placeholder="usermgmt.newPassword" placeholder="Password (leave blank for random)" style="flex:1;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
+                <input type="text" id="newUserName" data-i18n-placeholder="usermgmt.newUser" placeholder="Username" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+                <input type="password" id="newUserPassword" data-i18n-placeholder="usermgmt.newPassword" placeholder="Password (leave blank for random)" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
             </div>
             <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
-                <select id="newUserRole" style="flex:1;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
+                <select id="newUserRole" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
                     <option value="user" data-i18n="usermgmt.role.user">Regular User</option>
                     <option value="admin" data-i18n="usermgmt.role.admin">Admin</option>
                 </select>
-                <select id="newUserTtl" title="API Key validity" style="flex:1;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px;">
+                <select id="newUserTtl" title="API Key validity" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
                     <option value="90" data-i18n="usermgmt.ttl.90" selected>90 days</option>
                     <option value="180" data-i18n="usermgmt.ttl.180">180 days</option>
                     <option value="365" data-i18n="usermgmt.ttl.365">365 days</option>
@@ -212,16 +218,16 @@
                     <i class="fas fa-plus"></i> Add
                 </button>
             </div>
-            <div class="user-table-wrap" style="max-height:360px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;">
+            <div class="user-table-wrap" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px;">
                 <table class="user-table" id="userTable" style="width:100%;border-collapse:collapse;font-size:13px;">
                     <thead>
-                        <tr style="background:#f8f9fa;">
-                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.username">Username</th>
-                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.role">Role</th>
-                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.tenant">Tenant</th>
-                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.apiKey">API Key</th>
-                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;" data-i18n="usermgmt.column.expires">Expires</th>
-                            <th style="padding:8px 12px;text-align:center;border-bottom:1px solid #e5e7eb;width:120px;" data-i18n="usermgmt.column.actions">Actions</th>
+                        <tr style="background:var(--bg-subtle);">
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);" data-i18n="usermgmt.column.username">Username</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);" data-i18n="usermgmt.column.role">Role</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);" data-i18n="usermgmt.column.tenant">Tenant</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);" data-i18n="usermgmt.column.apiKey">API Key</th>
+                            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);" data-i18n="usermgmt.column.expires">Expires</th>
+                            <th style="padding:8px 12px;text-align:center;border-bottom:1px solid var(--border);width:120px;" data-i18n="usermgmt.column.actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="userTableBody">
@@ -240,8 +246,9 @@
     <script src="/static/vendor/marked.min.js"></script>
     <script src="/static/vendor/purify.min.js"></script>
     <script src="/static/vendor/katex.min.js"></script>
-    <script src="/static/js/i18n.js?v=5"></script>
-    <script src="/static/js/ui.js?v=1"></script>
-    <script src="/static/js/app.js?v=11"></script>
+    <script src="/static/js/i18n.js?v=6"></script>
+    <script src="/static/js/common.js?v=1"></script>
+    <script src="/static/js/ui.js?v=2"></script>
+    <script src="/static/js/app.js?v=12"></script>
 </body>
 </html>

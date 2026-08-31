@@ -35,41 +35,43 @@
 
         .ui-modal-overlay {
             display: none; position: fixed; inset: 0; z-index: 10001;
-            background: rgba(0,0,0,0.5); align-items: center; justify-content: center;
+            background: var(--overlay-bg, rgba(0,0,0,0.5)); align-items: center; justify-content: center;
         }
         .ui-modal-overlay.show { display: flex; }
         .ui-modal {
-            background: #fff; border-radius: 12px; padding: 24px;
+            background: var(--bg-main, #fff); border-radius: 12px; padding: 24px;
             max-width: 460px; width: 92%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
         }
-        .ui-modal h3 { margin: 0 0 12px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
-        .ui-modal .ui-modal-body { color: #4b5563; font-size: 14px; margin-bottom: 20px; white-space: pre-wrap; word-break: break-word; }
+        .ui-modal h3 { margin: 0 0 12px; font-size: 16px; display: flex; align-items: center; gap: 8px; color: var(--text-primary, #1f2937); }
+        .ui-modal .ui-modal-body { color: var(--text-secondary, #4b5563); font-size: 14px; margin-bottom: 20px; white-space: pre-wrap; word-break: break-word; }
         .ui-modal .ui-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
         .ui-modal .ui-btn {
             padding: 8px 18px; border-radius: 8px; font-size: 13px; cursor: pointer;
             border: none; display: inline-flex; align-items: center; gap: 6px;
         }
-        .ui-modal .ui-btn-primary { background: #2563eb; color: #fff; }
-        .ui-modal .ui-btn-primary:hover { background: #1d4ed8; }
-        .ui-modal .ui-btn-danger { background: #dc2626; color: #fff; }
-        .ui-modal .ui-btn-danger:hover { background: #b91c1c; }
-        .ui-modal .ui-btn-secondary { background: #f3f4f6; color: #1f2937; }
-        .ui-modal .ui-btn-secondary:hover { background: #e5e7eb; }
+        .ui-modal .ui-btn-primary { background: var(--primary, #2563eb); color: #fff; }
+        .ui-modal .ui-btn-primary:hover { background: var(--primary-hover, #1d4ed8); }
+        .ui-modal .ui-btn-danger { background: var(--danger, #dc2626); color: #fff; }
+        .ui-modal .ui-btn-danger:hover { background: var(--danger-hover, #b91c1c); }
+        .ui-modal .ui-btn-secondary { background: var(--bg-subtle, #f3f4f6); color: var(--text-primary, #1f2937); }
+        .ui-modal .ui-btn-secondary:hover { background: var(--border, #e5e7eb); }
 
         .ui-cred-row {
             display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
         }
-        .ui-cred-label { min-width: 90px; font-size: 12px; color: #6b7280; font-weight: 600; }
+        .ui-cred-label { min-width: 90px; font-size: 12px; color: var(--text-secondary, #6b7280); font-weight: 600; }
         .ui-cred-value {
-            flex: 1; font-family: monospace; font-size: 12px; background: #f9fafb;
-            border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px;
+            flex: 1; font-family: monospace; font-size: 12px; background: var(--bg-subtle, #f9fafb);
+            color: var(--text-primary, #1f2937);
+            border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: 6px 8px;
             word-break: break-all; user-select: all;
         }
         .ui-cred-copy {
-            border: 1px solid #e5e7eb; background: #fff; border-radius: 6px;
+            border: 1px solid var(--border, #e5e7eb); background: var(--bg-main, #fff); border-radius: 6px;
+            color: var(--text-secondary, #6b7280);
             padding: 5px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
         }
-        .ui-cred-copy:hover { background: #f3f4f6; }
+        .ui-cred-copy:hover { background: var(--bg-subtle, #f3f4f6); }
     `;
 
     function injectCSS() {
@@ -86,6 +88,9 @@
         if (!stack) {
             stack = document.createElement('div');
             stack.className = 'ui-toast-stack';
+            // Screen readers announce new toasts without moving focus
+            stack.setAttribute('role', 'status');
+            stack.setAttribute('aria-live', 'polite');
             document.body.appendChild(stack);
         }
         return stack;
@@ -98,6 +103,7 @@
         injectCSS();
         const el = document.createElement('div');
         el.className = 'ui-toast ' + type;
+        if (type === 'error') el.setAttribute('role', 'alert'); // errors assert immediately
         el.innerHTML = '<i class="fas ' + (TOAST_ICON[type] || TOAST_ICON.info) + '"></i><span></span>';
         el.querySelector('span').textContent = String(message);
         toastStack().appendChild(el);
@@ -115,9 +121,11 @@
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
             overlay.className = 'ui-modal-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
             const icon = opts.danger
-                ? '<i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i>'
-                : '<i class="fas fa-question-circle" style="color:#2563eb;"></i>';
+                ? '<i class="fas fa-exclamation-triangle" style="color:var(--danger,#dc2626);"></i>'
+                : '<i class="fas fa-question-circle" style="color:var(--primary,#2563eb);"></i>';
             overlay.innerHTML = `
                 <div class="ui-modal">
                     <h3>${icon}<span></span></h3>
@@ -156,10 +164,12 @@
         injectCSS();
         const overlay = document.createElement('div');
         overlay.className = 'ui-modal-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
         overlay.innerHTML = `
             <div class="ui-modal">
-                <h3><i class="fas fa-key" style="color:#2563eb;"></i><span></span></h3>
-                <div class="ui-modal-body"><div class="ui-cred-fields"></div><div class="ui-cred-note" style="font-size:12px;color:#9ca3af;"></div></div>
+                <h3><i class="fas fa-key" style="color:var(--primary,#2563eb);"></i><span></span></h3>
+                <div class="ui-modal-body"><div class="ui-cred-fields"></div><div class="ui-cred-note" style="font-size:12px;color:var(--text-muted,#9ca3af);"></div></div>
                 <div class="ui-modal-actions">
                     <button class="ui-btn ui-btn-primary" data-act="close"></button>
                 </div>

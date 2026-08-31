@@ -1,26 +1,12 @@
-const API_BASE = '/api/v1';
+// Shared helpers (API_BASE, getAuthHeaders, clearAuthStorage, escapeHtml,
+// apiFetch, handleAuthExpired, readErrorDetail, pollers, theme) live in
+// common.js — loaded before this file.
 
 let currentSessionId = null;
 let isLoading = false;
 let currentIndustry = 'auto';
 let availableIndustries = [];
 let sessionMessages = [];
-
-function getAuthHeaders() {
-    const tenantId = localStorage.getItem('tenant_id');
-    const apiKey = localStorage.getItem('api_key');
-    const role = localStorage.getItem('user_role');
-    return {
-        'X-Tenant-ID': tenantId || '',
-        'Authorization': apiKey ? 'Bearer ' + apiKey : '',
-        'X-User-Role': role || ''
-    };
-}
-
-function clearAuthStorage() {
-    // Remove only auth-related keys; preserve user preferences (e.g. openlad_lang)
-    ['tenant_id', 'api_key', 'user_role', 'username'].forEach(k => localStorage.removeItem(k));
-}
 
 async function checkAuth() {
     const tenantId = localStorage.getItem('tenant_id');
@@ -156,7 +142,7 @@ window.addEventListener('langchange', () => {
 async function loadIndustries() {
     console.log('[INDUSTRY] [INDUSTRY] Loading industry list......');
     try {
-        const res = await fetch(`${API_BASE}/industries`, { headers: getAuthHeaders() });
+        const res = await apiFetch('/industries');
         if (!res.ok) {
             console.error('[INDUSTRY] [INDUSTRY] API request failed:', res.status);
             return;
@@ -227,7 +213,7 @@ function closeSidebar() {
 // ===== Session Management =====
 async function loadSessions() {
     try {
-        const res = await fetch(`${API_BASE}/chat/sessions`, { headers: getAuthHeaders() });
+        const res = await apiFetch('/chat/sessions');
         const data = await res.json();
         _allSessions = data.sessions || [];
         renderSessionList(_allSessions);
@@ -268,9 +254,9 @@ async function renameSession(sessionId, oldTitle) {
     const trimmed = title.trim();
     if (!trimmed || trimmed === oldTitle) return;
     try {
-        const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
+        const res = await apiFetch(`/chat/sessions/${sessionId}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: trimmed.slice(0, 100) })
         });
         if (!res.ok) {
@@ -325,7 +311,7 @@ async function switchSession(sessionId) {
 
 async function loadMessages(sessionId) {
     try {
-        const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}/messages`, { headers: getAuthHeaders() });
+        const res = await apiFetch(`/chat/sessions/${sessionId}/messages`);
         if (!res.ok) {
             showWelcome();
             return;
@@ -363,7 +349,7 @@ async function loadMessages(sessionId) {
 async function deleteSession(sessionId) {
     if (!await uiConfirm(__('chat.confirmDelete'), { danger: true })) return;
     try {
-        await fetch(`${API_BASE}/chat/sessions/${sessionId}`, { method: 'DELETE', headers: getAuthHeaders() });
+        await apiFetch(`/chat/sessions/${sessionId}`, { method: 'DELETE' });
         if (currentSessionId === sessionId) {
             currentSessionId = null;
             showWelcome();
@@ -417,9 +403,9 @@ async function sendMessage() {
     try {
         // If no current session, create one first
         if (!currentSessionId) {
-            const sessionRes = await fetch(`${API_BASE}/chat/sessions`, {
+            const sessionRes = await apiFetch('/chat/sessions', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title: __('app.newChat'), industry: currentIndustry })
             });
             const sessionData = await sessionRes.json();
@@ -459,21 +445,6 @@ async function sendMessage() {
         document.getElementById('sendBtn').disabled = false;
         scrollToBottom();
     }
-}
-
-function handleAuthExpired() {
-    clearAuthStorage();
-    const modal = document.getElementById('loginModal');
-    if (modal) modal.classList.add('show');
-}
-
-async function readErrorDetail(res) {
-    let detail = 'HTTP ' + res.status;
-    try {
-        const errData = await res.json();
-        detail = errData.detail || detail;
-    } catch (e2) {}
-    return detail;
 }
 
 // ===== Query transport: SSE stream with legacy fallback =====
@@ -545,15 +516,11 @@ async function runQueryStream(payload, loadingId) {
 
 async function runQueryLegacy(payload) {
     try {
-        const res = await fetch(`${API_BASE}/query`, {
+        const res = await apiFetch('/query', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        if (res.status === 401) {
-            handleAuthExpired();
-            return null;
-        }
         if (!res.ok) {
             const detail = await readErrorDetail(res);
             appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
@@ -561,6 +528,7 @@ async function runQueryLegacy(payload) {
         }
         return await res.json();
     } catch (e) {
+        if (e && e.handled) return null;  // 401: login modal already shown
         appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${e.message}`);
         return null;
     }
@@ -592,16 +560,21 @@ async function fetchProtectedImage(url) {
 // ===== Image Lightbox =====
 // In-page viewer for tenant-scoped images — keeps reading context instead of
 // opening a bare blob in a new tab. Esc / backdrop click / ✕ closes it.
+let _lightboxReturnFocus = null;
+
 function openLightbox(src, caption) {
     let overlay = document.getElementById('imageLightbox');
     if (!overlay) {
         overlay = document.createElement('div');
         overlay.id = 'imageLightbox';
         overlay.className = 'lightbox-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
         overlay.innerHTML = `
-            <button class="lightbox-close" aria-label="Close"><i class="fas fa-times"></i></button>
+            <button class="lightbox-close"><i class="fas fa-times"></i></button>
             <div class="lightbox-caption"></div>
             <img alt="">`;
+        overlay.querySelector('.lightbox-close').setAttribute('aria-label', __('misc.close'));
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay || e.target.closest('.lightbox-close')) closeLightbox();
         });
@@ -613,11 +586,18 @@ function openLightbox(src, caption) {
     overlay.querySelector('img').src = src;
     overlay.querySelector('.lightbox-caption').textContent = caption || '';
     overlay.classList.add('show');
+    // Move focus into the dialog so Esc/screen-reader users land somewhere sane
+    _lightboxReturnFocus = document.activeElement;
+    overlay.querySelector('.lightbox-close').focus();
 }
 
 function closeLightbox() {
     const overlay = document.getElementById('imageLightbox');
     if (overlay) overlay.classList.remove('show');
+    if (_lightboxReturnFocus && _lightboxReturnFocus.focus) {
+        _lightboxReturnFocus.focus();
+        _lightboxReturnFocus = null;
+    }
 }
 
 async function openProtectedImage(url, caption) {
@@ -878,7 +858,7 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap, crea
         <div class="message-content">${htmlContent}${sourcesHtml}${debugHtml}
             <div class="message-meta">
                 <span class="message-time">${createdAt ? formatTime(createdAt) : ''}</span>
-                <button class="message-copy" title="${__('misc.copy')}"><i class="fas fa-copy"></i></button>
+                <button class="message-copy" title="${__('misc.copy')}" aria-label="${__('misc.copy')}"><i class="fas fa-copy"></i></button>
             </div>
         </div>
     `;
@@ -940,24 +920,13 @@ function scrollToBottom() {
     }
 }
 
-function escapeHtml(text) {
-    // Escape all HTML-significant chars including quotes, so the result is
-    // safe both as element text and inside single/double-quoted attributes
-    return String(text ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
 // ===== Service Status Monitoring =====
-let serviceStatusTimer = null;
+const _serviceStatusPoller = createIntervalPoller(refreshServiceStatus, 10000);
 let currentServiceStatus = {};
 
 async function refreshServiceStatus() {
     try {
-        const res = await fetch(`${API_BASE}/services/status`, { headers: getAuthHeaders() });
+        const res = await apiFetch('/services/status');
         if (!res.ok) return;
         const data = await res.json();
         currentServiceStatus = data.services || {};
@@ -1027,9 +996,8 @@ async function fixService(serviceKey) {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/services/${serviceKey}/restart`, {
+        const res = await apiFetch(`/services/${serviceKey}/restart`, {
             method: 'POST',
-            headers: getAuthHeaders(),
         });
         const data = await res.json();
 
@@ -1094,9 +1062,7 @@ async function loadServiceLogs(serviceKey) {
     try {
         // /services/events is the real endpoint (admin-gated server-side);
         // it returns {events: [...]} with datetime/event_type/message fields
-        const res = await fetch(`${API_BASE}/services/events?service=${serviceKey}&limit=200`, {
-            headers: getAuthHeaders(),
-        });
+        const res = await apiFetch(`/services/events?service=${serviceKey}&limit=200`);
         if (!res.ok) {
             preEl.textContent = __('misc.error') + ': HTTP ' + res.status;
             return;
@@ -1150,8 +1116,7 @@ function initServiceStatusBar() {
     // Show service status bar for all authenticated users
     if (bar) {
         bar.style.display = 'flex';
-        refreshServiceStatus();
-        serviceStatusTimer = setInterval(refreshServiceStatus, 10000);
+        _serviceStatusPoller.start();
     }
 }
 
@@ -1200,7 +1165,7 @@ async function loadUsers() {
     const tbody = document.getElementById('userTableBody');
     tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#9ca3af;">Loading...</td></tr>';
     try {
-        const res = await fetch(`${API_BASE}/admin/users`, { headers: getAuthHeaders() });
+        const res = await apiFetch('/admin/users');
         if (!res.ok) {
             tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:#dc2626;">Load failed</td></tr>';
             return;
@@ -1241,9 +1206,9 @@ async function createUser() {
         return;
     }
     try {
-        const res = await fetch(`${API_BASE}/admin/users`, {
+        const res = await apiFetch('/admin/users', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password: password || undefined, role, api_key_ttl_days: ttl })
         });
         const data = await res.json();
@@ -1268,9 +1233,9 @@ async function createUser() {
 async function regenerateKey(userId, username) {
     if (!await uiConfirm(__('usermgmt.confirmRegenerate'), { danger: true })) return;
     try {
-        const res = await fetch(`${API_BASE}/admin/users/${userId}/regenerate-key`, {
+        const res = await apiFetch(`/admin/users/${userId}/regenerate-key`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({})
         });
         const data = await res.json();
@@ -1291,9 +1256,8 @@ async function regenerateKey(userId, username) {
 async function deleteUser(userId, username) {
     if (!await uiConfirm(__('usermgmt.confirmDelete') + username + '?', { danger: true })) return;
     try {
-        const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
-            method: 'DELETE',
-            headers: getAuthHeaders()
+        const res = await apiFetch(`/admin/users/${userId}`, {
+            method: 'DELETE'
         });
         const data = await res.json();
         if (!res.ok) {

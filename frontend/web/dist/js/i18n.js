@@ -33,6 +33,7 @@ const I18N_DICT = {
     "nav.userMgmt":              { zh: "用户管理", en: "User Management" },
     "nav.logout":                { zh: "登出", en: "Logout" },
     "nav.newChat":               { zh: "新对话", en: "New Chat" },
+    "nav.menuToggle":            { zh: "打开/收起侧边栏", en: "Toggle sidebar" },
     "nav.noSessions":            { zh: "暂无对话", en: "No conversations yet" },
 
     // === Login Modal ===
@@ -215,6 +216,8 @@ const I18N_DICT = {
 
     // === Misc ===
     "misc.loading":              { zh: "加载中...", en: "Loading..." },
+    "theme.toDark":              { zh: "切换到暗色模式", en: "Switch to dark mode" },
+    "theme.toLight":             { zh: "切换到亮色模式", en: "Switch to light mode" },
     "misc.error":                { zh: "加载失败", en: "Load failed" },
     "misc.empty":                { zh: "暂无数据", en: "No data" },
     "misc.cancel":               { zh: "取消", en: "Cancel" },
@@ -279,6 +282,11 @@ function applyI18n() {
     // 2. Translate elements with data-i18n-placeholder
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         el.placeholder = __(el.getAttribute('data-i18n-placeholder'));
+    });
+
+    // 2b. Translate aria-labels (icon-only buttons etc.)
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+        el.setAttribute('aria-label', __(el.getAttribute('data-i18n-aria-label')));
     });
 
     // 3. Update language toggle label
@@ -394,14 +402,12 @@ function injectLangToggle() {
         input:checked + .lang-slider::before {
             transform: translateX(18px);
         }
-        /* Dark mode support */
-        @media (prefers-color-scheme: dark) {
-            .lang-toggle {
-                background: rgba(30,30,30,0.95);
-                color: #e5e7eb;
-            }
-            .lang-toggle-label { color: #e5e7eb; }
+        /* Dark theme follows data-theme on <html> (js/common.js) */
+        [data-theme="dark"] .lang-toggle {
+            background: rgba(30,30,30,0.95);
+            color: #e5e7eb;
         }
+        [data-theme="dark"] .lang-toggle-label { color: #e5e7eb; }
     `;
     document.head.appendChild(style);
 })();

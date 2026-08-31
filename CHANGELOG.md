@@ -56,6 +56,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Optional native components (poppler for page rendering, tesseract for
   OCR) degrade gracefully when absent; text-extractable PDFs are
   unaffected.
+- **Dark mode and accessibility.** A theme toggle on both pages switches
+  between light and dark palettes, persisted in `localStorage` and
+  following the OS preference until the user chooses; the saved theme is
+  applied before first paint to avoid a light flash. Both pages share a
+  new `common.js` (auth headers, 401 handling, `apiFetch`, HTML
+  escaping, visibility-aware polling) and the admin page's inline script
+  moved to `admin.js`. Polling (service status, import progress) now
+  pauses while the tab is hidden and resumes immediately on return.
+  Toasts are announced to screen readers via a live region, dialogs
+  carry `role="dialog"`/`aria-modal`, and icon-only buttons have
+  localized `aria-label`s (`data-i18n-aria-label`).
 
 ### Fixed
 
