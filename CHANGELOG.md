@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Embedding failures are no longer silent.** A batch whose embedding
+  call fails was previously dropped with a single `warning` ("skipping"),
+  and when *every* chunk failed the document logged nothing at all — a
+  hollow document looked like a healthy one. Now the per-document summary
+  always prints: full success stays `info`; any loss escalates to `error`
+  with exact counts (`stored X, LOST Y`) bucketed by cause
+  (`rejected` / `timeout` / `other` / `store`). `EmbeddingError` carries
+  the upstream HTTP status and a failure kind; deterministic rejections —
+  HTTP 4xx, plus llama-server's physical-batch overflow (HTTP 500 with
+  the stable "too large to process" message) — fail fast instead of
+  burning three pointless retries.
 - **Ingestion chunk limits now respect the embedding server's physical
   batch.** Chunk sizing previously derived only from the embedding model's
   context window (8192 tokens), with no notion of llama-server's

@@ -15,8 +15,35 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingError(Exception):
-    """Embedding generation failure exception"""
-    pass
+    """Embedding generation failure exception.
+
+    Carries classification so callers can distinguish deterministic
+    rejections (HTTP 4xx, e.g. input exceeds the server physical batch —
+    retrying the same payload can never succeed) from transient failures.
+    """
+
+    def __init__(self, message, status_code=None, kind="other"):
+        super().__init__(message)
+        self.status_code = status_code
+        # "rejected" (HTTP 4xx) | "timeout" | "other"
+        self.kind = kind
+
+
+def _classify_embedding_error(e: Exception) -> tuple[int | None, str]:
+    """Extract HTTP status and failure kind from an embedding call error."""
+    status = getattr(getattr(e, "response", None), "status_code", None)
+    if isinstance(e, requests.exceptions.Timeout):
+        return status, "timeout"
+    if status is not None and 400 <= status < 500:
+        return status, "rejected"
+    if status == 500:
+        # llama-server reports deterministic payload rejections as HTTP 500
+        # with a stable message ("input (N tokens) is too large to process"
+        # when exceeding --batch-size) — retrying cannot help.
+        body = getattr(getattr(e, "response", None), "text", "") or ""
+        if "too large to process" in body:
+            return status, "rejected"
+    return status, "other"
 
 
 class ModelClient:
@@ -368,7 +395,8 @@ class ModelClient:
             result = response.json()
             return result["data"][0]["embedding"]
         except Exception as e:
-            raise EmbeddingError(f"Embedding call failed: {e}") from e
+            status, kind = _classify_embedding_error(e)
+            raise EmbeddingError(f"Embedding call failed: {e}", status_code=status, kind=kind) from e
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         max_chars = settings.EMBEDDING_CONFIG["max_embed_chars"]
@@ -392,7 +420,8 @@ class ModelClient:
             result = response.json()
             return [d["embedding"] for d in result["data"]]
         except Exception as e:
-            raise EmbeddingError(f"Embedding batch call failed: {e}") from e
+            status, kind = _classify_embedding_error(e)
+            raise EmbeddingError(f"Embedding batch call failed: {e}", status_code=status, kind=kind) from e
 
     def health_check(self) -> bool:
         try:

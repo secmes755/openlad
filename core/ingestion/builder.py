@@ -2215,16 +2215,25 @@ FIX3: dynamically adjust per-section chunk limit
 
             # Step 4: batch embedding and store
             total_stored = 0
+            fail_counts = {"rejected": 0, "timeout": 0, "other": 0, "store": 0}
             for batch_start in range(0, len(chunk_items), BATCH_SIZE):
                 batch = chunk_items[batch_start:batch_start + BATCH_SIZE]
                 texts = [item[5] for item in batch]
 
                 embeddings = None
+                batch_fail_kind = "other"
                 for attempt in range(3):
                     try:
                         embeddings = self.model_client.embed_batch(texts)
                         break
                     except Exception as e:
+                        batch_fail_kind = getattr(e, "kind", "other")
+                        if batch_fail_kind == "rejected":
+                            # Deterministic rejection (e.g. input exceeds the
+                            # server physical batch): retrying the identical
+                            # payload can never succeed — fail fast instead.
+                            logger.error(f"[EMBED] Batch embedding rejected, not retrying: {e}")
+                            break
                         if attempt < 2:
                             import time
                             time.sleep(2 ** attempt)
@@ -2233,6 +2242,7 @@ FIX3: dynamically adjust per-section chunk limit
                             logger.error(f"[EMBED] Batch embedding final failure: {e}")
 
                 if not embeddings or len(embeddings) != len(batch):
+                    fail_counts[batch_fail_kind] += len(batch)
                     logger.warning(f"[EMBED] Batch {batch_start}-{batch_start+len(batch)} embedding failed, skipping")
                     continue
 
@@ -2259,12 +2269,25 @@ FIX3: dynamically adjust per-section chunk limit
                         )
                         total_stored += 1
                     except Exception as e:
+                        fail_counts["store"] += 1
                         logger.warning(f"[EMBED] store chunk failed page={page_id} idx={chunk_idx}: {e}")
 
-            if total_stored > 0:
+            # Always report the outcome — a document that lost chunks must be
+            # loudly visible, not "successfully stored 32" with 272 silently gone.
+            if total_stored == len(chunk_items):
                 logger.info(
                     f"[EMBED] Document {doc_id}: "
                     f"{len(chunk_items)} chunks, successfully stored {total_stored}"
+                )
+            else:
+                lost = len(chunk_items) - total_stored
+                logger.error(
+                    f"[EMBED] Document {doc_id}: {len(chunk_items)} chunks, "
+                    f"stored {total_stored}, LOST {lost} "
+                    f"(rejected={fail_counts['rejected']} timeout={fail_counts['timeout']} "
+                    f"other={fail_counts['other']} store={fail_counts['store']}) — "
+                    f"document ingested INCOMPLETE; check embedding service limits "
+                    f"(OPENLAD_EMB_MAX_INPUT_TOKENS vs llama-server --batch-size)"
                 )
         except Exception as e:
             logger.error(f"Failed to build embeddings: {e}")
