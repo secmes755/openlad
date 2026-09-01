@@ -197,6 +197,15 @@ class RetrievalPlugin(ABC):
         Core falls back to the plain title/filename when empty."""
         return []
 
+    def get_entity_stopwords(self) -> list[str]:
+        """Vocabulary too generic in this industry's documents to identify
+        a document in a query (e.g. "营业收入" in annual reports). The
+        planner's entity-coverage check filters these out of extracted
+        query entities so they cannot force-merge unrelated documents into
+        the doc_filter. Core keeps its own domain-neutral question/meta
+        words; these pack words are additive. Default: []."""
+        return []
+
     def get_spec_extraction_config(self) -> dict[str, Any]:
         """Industry vocabulary for the rule-based spec-fact extractor:
           {spec_headers: [..], compute_units: [..], compute_attribute: str,
@@ -377,6 +386,13 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
     def get_entity_patterns(self) -> list[str]:
         # Document-entity regex patterns from rules.yaml (default empty).
         return self.config.rules.get("entity_patterns", []) or []
+
+    def get_entity_stopwords(self) -> list[str]:
+        # Query-side entity stopwords from rules.yaml `entity_stopwords`
+        # (default empty): vocabulary too generic in this industry's
+        # documents to identify a document (e.g. "营业收入" in annual
+        # reports). Merged into the planner's entity filter.
+        return self.config.rules.get("entity_stopwords", []) or []
 
     def get_spec_extraction_config(self) -> dict[str, Any]:
         # Extractor vocabulary from rules.yaml `spec_extraction` (default
@@ -618,6 +634,10 @@ class ComposedRetrievalPlugin(RetrievalPlugin):
         # Overlay patterns first: industry claims are more specific.
         return _union_list(self._overlay.get_entity_patterns(),
                            self._base.get_entity_patterns())
+
+    def get_entity_stopwords(self) -> list[str]:
+        return _union_list(self._base.get_entity_stopwords(),
+                           self._overlay.get_entity_stopwords())
 
     def get_spec_extraction_config(self) -> dict[str, Any]:
         return _merge_hook_dicts(self._base.get_spec_extraction_config(),

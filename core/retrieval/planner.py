@@ -212,21 +212,42 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             logger.error(f"[PHASE-1] Coarse filter failed: {e}")
             return [], {}
 
-    # Generic Chinese query-noise words that are never document entities.
-    # Filtering these prevents generic terms ("公司", "营业收入", "多少")
-    # extracted from the query from force-merging unrelated documents into
-    # the doc_filter — a cross-document contamination variant where any
-    # report titled "...股份有限公司..." matches the entity "公司".
+    # Domain-neutral Chinese question/meta words that are never document
+    # entities in ANY field ("多少", "是什么", "情况"...). Filtering these
+    # prevents generic query noise from force-merging unrelated documents
+    # into the doc_filter. Industry-specific generics ("营业收入" in annual
+    # reports, "公司" in corporate filings) do NOT belong here — they are
+    # injected by industry packs via RetrievalPlugin.get_entity_stopwords()
+    # and merged in _all_entity_stopwords().
     _CN_ENTITY_STOPWORDS = frozenset({
-        "公司", "集团", "股份", "有限", "责任", "公司名称", "股票代码",
-        "报告", "年度", "季度", "年报", "季报", "年度报告", "季度报告",
-        "营业", "收入", "利润", "资产", "负债", "权益", "现金流",
-        "营业收入", "净利润", "总资产", "净资产", "每股收益",
-        "财务", "指标", "数据", "金额", "数值", "总额", "合计",
         "多少", "什么", "如何", "是否", "哪些", "怎样", "为何", "原因",
         "是多少", "是什么", "怎么样", "有哪些", "为什么", "什么原因",
         "情况", "介绍", "信息", "内容", "问题", "答案", "主要", "业务",
+        "数据", "指标", "数值", "报告", "年度", "季度",
     })
+
+    @staticmethod
+    def _all_entity_stopwords() -> frozenset:
+        """Core stopwords plus the union of all loaded packs'
+        `entity_stopwords` (executor-style: merge every pack, filter-side
+        union is always safe — a stopword only ever suppresses a spurious
+        entity). Cached; the pack set is fixed at process start."""
+        if QueryPlanner._STOPWORDS_CACHE is None:
+            words = set(QueryPlanner._CN_ENTITY_STOPWORDS)
+            try:
+                from ..plugins import get_plugin_registry
+                registry = get_plugin_registry()
+                for pack_id in (registry.list_plugins()
+                                if hasattr(registry, "list_plugins") else []):
+                    plugin = registry.get_plugin(pack_id)
+                    if plugin and hasattr(plugin.retrieval, "get_entity_stopwords"):
+                        words.update(plugin.retrieval.get_entity_stopwords())
+            except Exception as e:
+                logger.warning(f"[PLANNER] pack entity stopwords unavailable (non-fatal): {e}")
+            QueryPlanner._STOPWORDS_CACHE = frozenset(words)
+        return QueryPlanner._STOPWORDS_CACHE
+
+    _STOPWORDS_CACHE: frozenset | None = None
 
     def _ensure_entity_coverage(self, query: str, candidate_ids: list[str], docs: list[dict], chat_history: str = None) -> list[str]:
         """
@@ -256,8 +277,9 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
 
             # FIX: Also extract Chinese entities (company names, product names, etc.)
             cn_pattern = re.findall(r'[\u4e00-\u9fff]{2,12}', source_text)
+            stopwords = self._all_entity_stopwords()
             for w in cn_pattern:
-                if w not in entities and w not in self._CN_ENTITY_STOPWORDS:
+                if w not in entities and w not in stopwords:
                     entities.append(w)
 
         if not entities:

@@ -73,22 +73,50 @@ _KV_RE = re.compile(
 # Pattern 2: Support sentences, e.g.
 #   "Support ten UART interfaces"  "Supports up to 4 display interfaces"
 #   "Support 2 channels"  "Support 8K bits Size"
-_SUPPORT_RE = re.compile(
-    r'\bSupports?\s+(?:up to\s+)?'
-    r'(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|single|dual|quad|\d+)\s+'
-    r'([\w][\w\s/\-]{0,28}?)'
-    r'\s+(interfaces?|channels?|ports?|lanes|bits|cores?|displays?|cameras?|screens?|controllers?)\b',
-    re.I,
-)
+# The countable-object list comes from the industry pack via
+# `extraction.support_objects` — VERBATIM word forms, no automatic
+# pluralization (the pack lists exactly the forms it wants, e.g.
+# ["interface", "interfaces", "ports"]; keeping "bits" plural-only is
+# deliberate: "Support 16 to 31 bit audio data" is a width declaration,
+# not a count). Core supplies only the "Support <number> <feature>
+# <object>" sentence mechanism and the (domain-neutral) English number
+# words. Disabled without a pack vocabulary.
+def _build_support_re(objects: list[str] | None) -> re.Pattern | None:
+    if not objects:
+        return None
+    alternation = "|".join(
+        re.escape(o.strip()) for o in sorted(objects, key=len, reverse=True)
+        if o.strip())
+    if not alternation:
+        return None
+    return re.compile(
+        r'\bSupports?\s+(?:up to\s+)?'
+        r'(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|single|dual|quad|\d+)\s+'
+        r'([\w][\w\s/\-]{0,28}?)'
+        rf'\s+({alternation})\b',
+        re.I,
+    )
 
 # Pattern 3: resolution / fps declarations, e.g.
 #   "H.264 BP/MP/HP, up to 3840x2160@25fps"  "Support 4K@30fps"
-_RESOLUTION_RE = re.compile(
-    r'\b(H\.26[45]|HEVC|VP\d|AV\d|MPEG-?\d|JPEG)[\w\s/(),.\-]{0,30}?'
-    r'(?:up to|max(?:imum)?)\s+'
-    r'(\d{3,5}\s*[x×]\s*\d{3,5}(?:\s*@\s*\d+\s*fps)?|[48]K(?:\s*@\s*\d+\s*fps)?)',
-    re.I,
-)
+# The codec list (e.g. ["H.264", "HEVC", "VP9"]) comes from the industry
+# pack via `extraction.resolution_codecs` (verbatim literals, longest first);
+# core supplies only the "<codec> ... up to <WxH[@fps] / 4K|8K>" mechanism.
+# Disabled without a pack vocabulary.
+def _build_resolution_re(codecs: list[str] | None) -> re.Pattern | None:
+    if not codecs:
+        return None
+    alternation = "|".join(
+        re.escape(c.strip()) for c in sorted(codecs, key=len, reverse=True)
+        if c.strip())
+    if not alternation:
+        return None
+    return re.compile(
+        rf'\b({alternation})[\w\s/(),.\-]{{0,30}}?'
+        r'(?:up to|max(?:imum)?)\s+'
+        r'(\d{3,5}\s*[x×]\s*\d{3,5}(?:\s*@\s*\d+\s*fps)?|[48]K(?:\s*@\s*\d+\s*fps)?)',
+        re.I,
+    )
 
 # Pattern 4: compute-power declarations, e.g. "NPU: 1 TOPS" "up to 3 TOPS".
 # The unit list (e.g. ["TOPS"]) and attribute name come from the industry
@@ -126,9 +154,13 @@ def _build_freq_re(terms: list[str]) -> re.Pattern | None:
 #   "Support PCIe3.1(8Gbps) protocol and backward compatible with the PCIe2.1
 #    and PCIe1.1 protocol"
 #   "Supports USB3.0 standard"  "Support HDMI2.1 interface"
-# Generic across protocol families (PCIe/USB/HDMI/SATA/DDR/MIPI/NVMe...):
-# the lead token must be letters + version digits. All same-family version
-# tokens in the sentence (incl. backward-compatible lists) are collected.
+# DOMAIN-AGNOSTIC BY CONSTRUCTION: no protocol family is named here — the
+# lead token is any letters+version-digits token, and the sentence anchor
+# words (protocol/standard/interface/revision/version) are plain technical
+# English. The family stem is harvested from the matched text at runtime.
+# It fires only on English version-support sentences; other languages simply
+# get no matches (recall gap, never a false positive). This pattern
+# intentionally stays in core.
 _PROTOCOL_SUPPORT_RE = re.compile(
     r'\bSupports?\s+(?:up to\s+)?'
     r'([A-Za-z][A-Za-z\-]*\s?\d+(?:\.\d+)?)(\([^)]{1,20}\))?'
@@ -204,7 +236,7 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
 
     `extraction` carries the industry-pack vocabulary (see module docstring):
       {spec_headers: [..], compute_units: [..], compute_attribute: str,
-       frequency_terms: [..]}
+       frequency_terms: [..], support_objects: [..], resolution_codecs: [..]}
     Core keeps only the mechanisms; when a list is missing/empty the
     corresponding pattern is disabled (no pack = structural patterns only).
 
@@ -218,6 +250,10 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
     compute_attribute = (extraction.get("compute_attribute") or "").strip()
     freq_re = _build_freq_re(
         [t for t in (extraction.get("frequency_terms") or []) if t])
+    support_re = _build_support_re(
+        [o for o in (extraction.get("support_objects") or []) if o])
+    resolution_re = _build_resolution_re(
+        [c for c in (extraction.get("resolution_codecs") or []) if c])
 
     # The assertion layer is industry-vocabulary driven. Without a pack
     # providing spec vocabulary there are no meaningful assertions to
@@ -225,7 +261,8 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
     # documents (annual reports, legal filings...), which then gets
     # injected into queries via the spec-fact bypass. A pack-less or
     # vocabulary-less document must not populate the assertion table.
-    if not (spec_headers or compute_re or freq_re):
+    if not (spec_headers or compute_re or freq_re
+            or support_re or resolution_re):
         return []
 
     text = strip_vlm_blocks(raw_text)
@@ -295,21 +332,26 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         if len(line) < 6:
             continue
 
-        # Pattern 3 (resolution) first: most specific.
-        for m in _RESOLUTION_RE.finditer(line):
-            codec = _clean(m.group(1))
-            res = _clean(m.group(2))
-            add(f"{codec} max resolution", res, ext)
+        # Pattern 3 (resolution) first: most specific. Codec list comes from
+        # the pack's resolution_codecs; disabled without a pack vocabulary.
+        if resolution_re:
+            for m in resolution_re.finditer(line):
+                codec = _clean(m.group(1))
+                res = _clean(m.group(2))
+                add(f"{codec} max resolution", res, ext)
 
-        # Pattern 2 (Support sentences). verify_against keeps the original
-        # number word so "Support ten UART" -> value "10" still verifies.
-        for m in _SUPPORT_RE.finditer(line):
-            num = _num_word_to_int(m.group(1))
-            feature = _clean(m.group(2))
-            unit_word = _clean(m.group(3))
-            if num is not None and feature:
-                add(f"{feature} {unit_word} count", str(num), ext,
-                    verify_against=m.group(1))
+        # Pattern 2 (Support sentences). Object stems come from the pack's
+        # support_objects; disabled without a pack vocabulary.
+        # verify_against keeps the original number word so
+        # "Support ten UART" -> value "10" still verifies.
+        if support_re:
+            for m in support_re.finditer(line):
+                num = _num_word_to_int(m.group(1))
+                feature = _clean(m.group(2))
+                unit_word = _clean(m.group(3))
+                if num is not None and feature:
+                    add(f"{feature} {unit_word} count", str(num), ext,
+                        verify_against=m.group(1))
 
         # Pattern 4 (compute power). Unit comes from the pack's
         # compute_units (e.g. "TOPS"); attribute name likewise. Disabled

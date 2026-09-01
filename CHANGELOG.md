@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Domain vocabulary moved out of core into industry packs.** Two
+  spec-fact extraction patterns previously carried hardcoded datasheet
+  vocabulary in core: the "Support &lt;num&gt; &lt;feature&gt; &lt;object&gt;"
+  pattern (interfaces/channels/ports/... word list) and the codec-resolution
+  pattern (H.264/HEVC/VP-family enumeration). Both are now pack-gated like
+  the compute/frequency patterns already were: packs supply
+  `spec_extraction.support_objects` (verbatim word forms — the mechanism
+  deliberately does not auto-pluralize, so plural-only "bits" keeps
+  bit-width declarations like "16 to 31 bit" from being misread as counts)
+  and `spec_extraction.resolution_codecs` (verbatim literals, matched
+  longest-first). Without a pack vocabulary the patterns are inert, so a
+  bare or generic-only deployment no longer runs datasheet-specific
+  matchers. The planner's entity stopwords are split the same way: core
+  keeps only domain-neutral question/meta words ("多少", "是什么"), while
+  corporate-filing vocabulary ("公司", "营业收入", ...) moves to the new
+  `entity_stopwords` list in the generic base pack, injected through the
+  new `RetrievalPlugin.get_entity_stopwords()` hook (merged across all
+  loaded packs, filter-side union). Extraction output on the RK3588
+  datasheet fixture is byte-identical before/after (79 facts, zero lost,
+  zero gained).
 - **Internal housekeeping (no behavior change).** The planner's
   "retrievable documents" lookup (`verified`/`degraded`, with legacy
   `completed` fallback) is consolidated into a single

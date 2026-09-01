@@ -80,11 +80,18 @@ def test_infer_doc_entity_falls_back_to_cleaned_title():
 
 # ---- rule extraction ----
 # Industry-pack vocabulary for the extractor (core keeps only mechanisms).
+# Mirrors industries/sample_semiconductor/retrieval/rules.yaml; the
+# support_objects list is verbatim word forms (the mechanism does not
+# auto-pluralize; "bits" is plural-only by design).
 SEMICON_EXTRACTION = {
     "spec_headers": ["gpu", "cpu", "npu", "package", "process", "memory"],
     "compute_units": ["TOPS"],
     "compute_attribute": "compute power",
     "frequency_terms": ["frequency", "clock"],
+    "support_objects": ["interface", "interfaces", "channel", "channels",
+                        "ports", "lanes", "bits", "core", "cores", "display",
+                        "displays", "camera", "cameras", "screen", "screens",
+                        "controller", "controllers"],
 }
 
 

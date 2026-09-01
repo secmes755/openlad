@@ -206,6 +206,13 @@ class SemiconductorRetrievalPlugin:
         retrieval/rules.yaml (explicit lookarounds, see rules.yaml comments)."""
         return _retrieval_rules.get("entity_patterns", []) or []
 
+    def get_entity_stopwords(self) -> List[str]:
+        """Query-side entity stopwords from retrieval/rules.yaml
+        `entity_stopwords` (default []). Vocabulary too generic in datasheets
+        to identify a document (e.g. "规格书", "参数") — filtered out of the
+        planner's extracted query entities."""
+        return _retrieval_rules.get("entity_stopwords", []) or []
+
     def get_spec_extraction_config(self) -> Dict[str, Any]:
         """Extractor vocabulary (spec_headers / compute_units /
         compute_attribute / frequency_terms) loaded from retrieval/rules.yaml.

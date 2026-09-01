@@ -354,9 +354,46 @@ entity_patterns:
 #     "算力: [tops, compute power]" 保持一致，保证查询关键词能命中）
 #   - frequency_terms: 频率/时钟计量词（构造 "Max CPU frequency ... 2 GHz"
 #     模式；TBD/NA 无数字不会匹配）
+#   - support_objects: "Support <数量> <特性> <宾语>" 句式的可数宾语
+#     【逐字词形，机制不做复数变形——需要哪些形态就列哪些】。
+#     注意 bits 刻意只列复数："Support 16 to 31 bit audio data" 是位宽
+#     声明而非数量声明，单数 bit 不匹配可避免误抽。
+#     （英文数词 one..twelve/single/dual/quad 由 core 提供）
+#   - resolution_codecs: 编解码器字面量（构造 "<codec> ... up to 3840x2160@25fps"
+#     模式；逐字匹配，机制侧按长度降序防止前缀抢占）
 # 词表为空时对应模式禁用（无行业包 = 仅结构模式）。
 # =============================================================================
 spec_extraction:
+  support_objects:
+    - interface
+    - interfaces
+    - channel
+    - channels
+    - ports
+    - lanes
+    - bits
+    - core
+    - cores
+    - display
+    - displays
+    - camera
+    - cameras
+    - screen
+    - screens
+    - controller
+    - controllers
+  resolution_codecs:
+    - "H.264"
+    - "H.265"
+    - HEVC
+    - VP8
+    - VP9
+    - AV1
+    - MPEG2
+    - "MPEG-2"
+    - MPEG4
+    - "MPEG-4"
+    - JPEG
   spec_headers:
     - gpu
     - cpu
