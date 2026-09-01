@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Re-ingesting a degraded document cleanly restores `verified` and clears
   the warnings. `GET /api/v1/documents?status=degraded` filters affected
   documents for analysis and targeted re-ingest.
+
+### Changed
+
+- **Internal housekeeping (no behavior change).** The planner's
+  "retrievable documents" lookup (`verified`/`degraded`, with legacy
+  `completed` fallback) is consolidated into a single
+  `_list_retrievable_documents()` helper instead of being duplicated at
+  four call sites — new retrievable states now have one place to extend.
+  The spec-fact bypass path documents its degraded-document premise in
+  code (safe today because spec facts index from page text, not
+  embeddings). Retry backoff `import time` moved to module top.
 - **Query stage progress over SSE.** New `POST /api/v1/query/stream`
   endpoint emits Server-Sent Events — coarse pipeline stages
   (`planning` / `retrieving` / `generating`) followed by a terminal

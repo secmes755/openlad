@@ -5,6 +5,7 @@ Multi-tenant + industry plugin system adapter
 import gc
 import hashlib
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -2246,7 +2247,6 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
                             logger.error(f"[EMBED] Batch embedding rejected, not retrying: {e}")
                             break
                         if attempt < 2:
-                            import time
                             time.sleep(2 ** attempt)
                             logger.warning(f"[EMBED] Batch embedding retry {attempt+1}/3: {e}")
                         else:

@@ -5,6 +5,7 @@ Directly inherits mature implementation from predecessor, fully generalized, no 
 import json
 import logging
 import threading
+import time
 from typing import Any
 
 import requests
@@ -257,7 +258,6 @@ class ModelClient:
                 if attempt < max_retries - 1:
                     wait = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
                     logger.warning(f"LLM call failed (attempt {attempt + 1}/{max_retries}): {e}, retrying in {wait}s...")
-                    import time
                     time.sleep(wait)
                 else:
                     logger.error(f"LLM call failed ({target_url}): {e}")

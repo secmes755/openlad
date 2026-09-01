@@ -58,6 +58,19 @@ Available retrieval tools:
         # taxonomy functionality temporarily simplified
         self.taxonomy_text = ""
 
+    def _list_retrievable_documents(self) -> list[dict]:
+        """Documents eligible for retrieval.
+
+        Includes both `verified` and `degraded`: degraded documents still
+        participate (informed, not excluded — SegmentMerger flags them in
+        the LLM context and on citations). Single place to extend when the
+        ingest state machine gains new retrievable states.
+        """
+        docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
+        if not docs:
+            docs = self.metadata_db.get_all_documents(status="completed") or []
+        return docs
+
     def plan(self, query: str, chat_history: str = None) -> dict[str, Any]:
         logger.info("[PHASE-1] ===== Three-tier routing started =====")
         raw_query = query
@@ -120,11 +133,7 @@ Available retrieval tools:
         rule-based matching on existing category_level1 and industry_package_id values.
         """
         try:
-            all_docs = []
-            docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
-            if not docs:
-                docs = self.metadata_db.get_all_documents(status="completed") or []
-            all_docs.extend(docs)
+            all_docs = self._list_retrievable_documents()
 
             # Count category distribution
             categories = {}
@@ -151,11 +160,7 @@ Available retrieval tools:
         today = datetime.now().strftime("%Y-%m-%d")
         history_section = f"\n## Conversation History\n{chat_history}\n" if chat_history else ""
         # Get document list directly from tenant database, independent of taxonomy
-        all_docs = []
-        docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
-        if not docs:
-            docs = self.metadata_db.get_all_documents(status="completed") or []
-        all_docs.extend(docs)
+        all_docs = self._list_retrievable_documents()
 
         if not all_docs:
             return [], {}
@@ -294,11 +299,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
     def _resolve_short_ids(self, short_ids: list[str]) -> list[str]:
         if not short_ids:
             return []
-        all_docs = []
-        docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
-        if not docs:
-            docs = self.metadata_db.get_all_documents(status="completed") or []
-        all_docs.extend(docs)
+        all_docs = self._list_retrievable_documents()
 
         full_ids = []
         for short_id in short_ids:
@@ -483,11 +484,7 @@ Rewritten query:"""
         if entities:
             # Try to match entities to documents
             try:
-                all_docs = []
-                docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
-                if not docs:
-                    docs = self.metadata_db.get_all_documents(status="completed") or []
-                all_docs.extend(docs)
+                all_docs = self._list_retrievable_documents()
 
                 for entity in (entities or []):
                     entity_upper = entity.upper()

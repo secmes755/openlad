@@ -368,6 +368,15 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             # authoritative evidence. This is the missing assertion abstraction
             # that page/chapter-level patches (vector-hybrid, VLM penalty,
             # chapter-scope widening) were compensating for.
+            # DEGRADED-DOC PREMISE: this path bypasses SegmentMerger, so
+            # `degraded` documents get no incompleteness warning here. That is
+            # currently safe-by-construction: the only degraded cause today is
+            # embedding-vector loss, while spec facts are indexed from page
+            # text directly (no embedding involved) and stay complete. If a
+            # future degraded cause damages page text itself (e.g. OCR
+            # failure), this path MUST gain degraded awareness — extend
+            # ingest_warnings with a loss category and warn here only for
+            # text-affecting categories.
             spec_facts = self._lookup_spec_facts(query_text, tenant_id, metadata_db, plan,
                                                  industry_hint=industry_hint)
             if spec_facts:
