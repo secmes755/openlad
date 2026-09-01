@@ -121,7 +121,7 @@ Available retrieval tools:
         """
         try:
             all_docs = []
-            docs = self.metadata_db.get_all_documents(status="verified") or []
+            docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
             if not docs:
                 docs = self.metadata_db.get_all_documents(status="completed") or []
             all_docs.extend(docs)
@@ -152,7 +152,7 @@ Available retrieval tools:
         history_section = f"\n## Conversation History\n{chat_history}\n" if chat_history else ""
         # Get document list directly from tenant database, independent of taxonomy
         all_docs = []
-        docs = self.metadata_db.get_all_documents(status="verified") or []
+        docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
         if not docs:
             docs = self.metadata_db.get_all_documents(status="completed") or []
         all_docs.extend(docs)
@@ -295,7 +295,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
         if not short_ids:
             return []
         all_docs = []
-        docs = self.metadata_db.get_all_documents(status="verified") or []
+        docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
         if not docs:
             docs = self.metadata_db.get_all_documents(status="completed") or []
         all_docs.extend(docs)
@@ -484,7 +484,7 @@ Rewritten query:"""
             # Try to match entities to documents
             try:
                 all_docs = []
-                docs = self.metadata_db.get_all_documents(status="verified") or []
+                docs = self.metadata_db.get_all_documents(status=["verified", "degraded"]) or []
                 if not docs:
                     docs = self.metadata_db.get_all_documents(status="completed") or []
                 all_docs.extend(docs)

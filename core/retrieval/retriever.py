@@ -1474,7 +1474,17 @@ class SegmentMerger:
 
             doc = self.metadata_db.get_document(doc_id)
             doc_title = doc.get("title", doc_results[0].filename) if doc else doc_results[0].filename
+            doc_degraded = bool(doc and doc.get("status") == "degraded")
+            doc_warnings = []
+            if doc_degraded:
+                doc_warnings = (doc.get("metadata") or {}).get("ingest_warnings") or []
             doc_header = f"\n\n===== Document: {doc_title} =====\n"
+            if doc_degraded:
+                detail = "; ".join(doc_warnings) if doc_warnings else "some content failed to ingest"
+                doc_header += (
+                    f"[NOTE: this document was incompletely ingested ({detail}); "
+                    f"parts of it are missing. Flag this when it affects the answer.]\n"
+                )
             if current_chars + len(doc_header) > max_context_chars:
                 break
             merged_parts.append(doc_header)
@@ -1550,12 +1560,16 @@ class SegmentMerger:
             if len(source_content) > max_source_content:
                 source_content = source_content[:max_source_content] + "\n...[content truncated]"
 
-            sources.append({
+            source_entry = {
                 "doc_id": doc_id, "title": doc_title,
                 "filename": doc_results[0].filename,
                 "pages": list(set(p for p in included_pages if p)),
                 "content": source_content,
-            })
+            }
+            if doc_degraded:
+                source_entry["degraded"] = True
+                source_entry["ingest_warnings"] = doc_warnings
+            sources.append(source_entry)
 
         result = "".join(merged_parts)
         # FIX: Final safety truncation to ensure returned context does not exceed max_context_chars

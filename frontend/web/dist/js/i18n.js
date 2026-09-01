@@ -153,6 +153,7 @@ const I18N_DICT = {
     "admin.docs.pages":          { zh: "页", en: "pages" },
     "admin.docs.chunks":         { zh: "块", en: "chunks" },
     "admin.docs.status.done":    { zh: "已完成", en: "Done" },
+    "admin.docs.status.degraded": { zh: "有瑕疵", en: "Degraded" },
     "admin.docs.status.processing": { zh: "处理中", en: "Processing" },
     "admin.docs.status.pending": { zh: "等待中", en: "Pending" },
     "admin.docs.status.error":   { zh: "错误", en: "Error" },

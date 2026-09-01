@@ -185,7 +185,7 @@ def test_partial_failure_summary_buckets_losses(monkeypatch, caplog):
 
     b, metadata_db, vector_db = _make_builder(10, flaky)
     with caplog.at_level(logging.WARNING):
-        b._build_embeddings("doc1", [], "t1")
+        warnings = b._build_embeddings("doc1", [], "t1")
     stored = vector_db.store_l2_chunk.call_count
     assert stored == 8  # only the first batch made it
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -193,3 +193,12 @@ def test_partial_failure_summary_buckets_losses(monkeypatch, caplog):
     assert summary, "partial loss must escalate to ERROR summary"
     msg = summary[0].getMessage()
     assert "stored 8" in msg and "LOST 2" in msg and "rejected=2" in msg
+    # returned warnings feed document-level ingest_warnings / degraded status
+    assert warnings == ["2/10 chunks not embedded (rejected=2)"]
+
+
+def test_full_success_returns_no_warnings(caplog):
+    b, _, _ = _make_builder(3, _ok_embeddings)
+    with caplog.at_level(logging.INFO):
+        warnings = b._build_embeddings("doc1", [], "t1")
+    assert warnings == []

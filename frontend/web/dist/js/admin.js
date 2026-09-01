@@ -215,7 +215,7 @@ async function refreshLibrary() {
                             <span><i class="fas fa-industry"></i> ${escapeHtml(d.industry_package_id || 'auto')}</span>
                         </div>
                     </div>
-                    <div class="doc-status ${getDocStatusClass(d.status)}">${getDocStatus(d.status)}</div>
+                    <div class="doc-status ${getDocStatusClass(d.status)}"${d.status === 'degraded' ? ' title="' + escapeHtml(((d.metadata && d.metadata.ingest_warnings) || []).join('\n')) + '"' : ''}>${getDocStatus(d.status)}</div>
                     <div class="doc-actions">
                         <button class="doc-action-btn delete" data-doc-id="${escapeHtml(d.id)}" data-doc-name="${escapeHtml(title)}">
                             <i class="fas fa-trash-alt"></i>${__('misc.delete')}</button>
@@ -231,6 +231,7 @@ async function refreshLibrary() {
 function getDocStatus(status) {
     const map = {
         'verified': '<i class="fas fa-check"></i> ' + __('admin.docs.status.done'),
+        'degraded': '<i class="fas fa-exclamation-triangle"></i> ' + __('admin.docs.status.degraded'),
         'processing': '<i class="fas fa-spinner fa-spin"></i> ' + __('admin.docs.status.processing'),
         'pending_meta': '<i class="fas fa-hourglass-half"></i> ' + __('admin.docs.status.pending'),
         'pending_processing': '<i class="fas fa-hourglass-half"></i> ' + __('admin.docs.status.pending'),
@@ -243,6 +244,7 @@ function getDocStatus(status) {
 function getDocStatusClass(status) {
     const map = {
         'verified': 'status-done',
+        'degraded': 'status-degraded',
         'processing': 'status-processing',
         'pending_meta': 'status-pending',
         'pending_processing': 'status-pending',

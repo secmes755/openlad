@@ -232,7 +232,7 @@ class DocumentIndexBuilder:
 
         # Generate L2 page vector embeddings
         _report(75, "Generating L2 vector embeddings")
-        self._build_embeddings(doc_id, l2_results, tid)
+        embed_warnings = self._build_embeddings(doc_id, l2_results, tid) or []
 
         # Update document status
         _report(95, "Saving index results")
@@ -250,14 +250,21 @@ class DocumentIndexBuilder:
         #   3. filename-derived title (existing behavior, unchanged fallback)
         doc_title = self._derive_title(parsed_doc.filename, doc_summary, classification, title)
         logger.info(f"[TITLE] doc={doc_id[:8]} final_title={doc_title!r}")
+        # verified = ingested with zero anomalies; degraded = pipeline
+        # completed but some chunks were lost (details in ingest_warnings,
+        # consumed by retrieval so answers can flag incomplete sources).
+        doc_status = "degraded" if embed_warnings else "verified"
+        doc_metadata = dict(parsed_doc.metadata or {})
+        if embed_warnings:
+            doc_metadata["ingest_warnings"] = embed_warnings
         metadata_db.save_document(
             doc_id=doc_id,
             filename=parsed_doc.filename,
             original_path=parsed_doc.original_path,
             title=doc_title,
             doc_type=doc_type,
-            metadata=parsed_doc.metadata,
-            status="verified",
+            metadata=doc_metadata,
+            status=doc_status,
             file_hash=final_hash,
             text_source=text_source,
             category_level1=classification["category_level1"],
@@ -286,7 +293,7 @@ class DocumentIndexBuilder:
 
         return {
             "doc_id": doc_id,
-            "status": "verified",
+            "status": doc_status,
             "l2_page_count": len(l2_results),
             "text_source": text_source
         }
@@ -2149,7 +2156,11 @@ FIX: Correctly handle hierarchy, assign the most appropriate chapter to each pag
 FIX: aggregate text across pages by section before chunking to avoid scattering consecutive sections
 FIX2: batch embedding + limit chunk count
 FIX3: dynamically adjust per-section chunk limit
+
+Returns a list of human-readable ingest warnings (empty when every chunk
+embedded cleanly) — callers persist them as document-level ingest_warnings.
         """
+        warnings: list[str] = []
         metadata_db, vector_db = self._get_dbs(tid)
         emb = settings.EMBEDDING_CONFIG
         MAX_CHUNKS_PER_DOC = emb["max_chunks_per_doc"]
@@ -2281,16 +2292,19 @@ FIX3: dynamically adjust per-section chunk limit
                 )
             else:
                 lost = len(chunk_items) - total_stored
+                buckets = ", ".join(f"{k}={v}" for k, v in fail_counts.items() if v)
                 logger.error(
                     f"[EMBED] Document {doc_id}: {len(chunk_items)} chunks, "
-                    f"stored {total_stored}, LOST {lost} "
-                    f"(rejected={fail_counts['rejected']} timeout={fail_counts['timeout']} "
-                    f"other={fail_counts['other']} store={fail_counts['store']}) — "
+                    f"stored {total_stored}, LOST {lost} ({buckets}) — "
                     f"document ingested INCOMPLETE; check embedding service limits "
                     f"(OPENLAD_EMB_MAX_INPUT_TOKENS vs llama-server --batch-size)"
                 )
+                warnings.append(
+                    f"{lost}/{len(chunk_items)} chunks not embedded ({buckets})"
+                )
         except Exception as e:
             logger.error(f"Failed to build embeddings: {e}")
+        return warnings
 
     def _get_content_sample_for_doc(self, doc_id: str, parsed_doc: ParsedDocument) -> str:
         return self._get_content_sample_from_pages(parsed_doc.pages)

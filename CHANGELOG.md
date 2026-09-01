@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ingest quality states: `verified` vs `degraded`.** A document that
+  completes ingestion with zero anomalies is `verified`; one that lost
+  chunks (e.g. embedding rejections) or hits any future non-fatal ingest
+  issue is marked `degraded`, with human- and machine-readable
+  `ingest_warnings` in its metadata. Degraded documents still participate
+  in retrieval — informed, not excluded: the LLM context header warns
+  that the document was incompletely ingested (with the loss detail),
+  citations carry `degraded` + `ingest_warnings`, and the admin document
+  list shows a "Degraded" badge whose tooltip lists the warnings.
+  Re-ingesting a degraded document cleanly restores `verified` and clears
+  the warnings. `GET /api/v1/documents?status=degraded` filters affected
+  documents for analysis and targeted re-ingest.
 - **Query stage progress over SSE.** New `POST /api/v1/query/stream`
   endpoint emits Server-Sent Events — coarse pipeline stages
   (`planning` / `retrieving` / `generating`) followed by a terminal

@@ -745,7 +745,10 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap, crea
     if (sources && sources.length > 0) {
         const sourceLinks = sources.map(s => {
             const pages = s.pages ? s.pages.join(',') : '';
-            return `<a href="#" title="${escapeHtml(s.filename)} Page ${pages}">${escapeHtml(s.title || s.filename)}</a>`;
+            const warnTip = s.degraded && s.ingest_warnings && s.ingest_warnings.length
+                ? ' ⚠ ' + s.ingest_warnings.join('; ') : '';
+            const badge = s.degraded ? ' <i class="fas fa-exclamation-triangle source-degraded"></i>' : '';
+            return `<a href="#" title="${escapeHtml(s.filename)} Page ${pages}${escapeHtml(warnTip)}">${escapeHtml(s.title || s.filename)}</a>${badge}`;
         }).join('');
 
         // V4: Collect all charts and page images

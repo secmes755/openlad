@@ -462,6 +462,7 @@ body {
     font-weight: 500;
 }
 .message-sources a:hover { text-decoration: underline; }
+.source-degraded { color: #d97706; margin-left: 2px; }
 
 /* Input Area */
 .input-area {

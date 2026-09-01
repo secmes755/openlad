@@ -376,13 +376,22 @@ class TenantMetadataDB:
         with self.get_connection() as conn:
             return [_doc_from_row(r) for r in conn.execute(query, params).fetchall()]
 
-    def get_all_documents(self, status: str = None) -> list[dict]:
-        """Get all documents (for internal components like Planner, no pagination)"""
+    def get_all_documents(self, status=None) -> list[dict]:
+        """Get all documents (for internal components like Planner, no pagination).
+
+        status accepts a single value or a list (matched with IN), so callers
+        can include multiple ingestion states (e.g. verified + degraded).
+        """
         query = "SELECT * FROM documents WHERE 1=1"
         params = []
         if status:
-            query += " AND status = ?"
-            params.append(status)
+            if isinstance(status, (list, tuple)):
+                ph = ", ".join("?" * len(status))
+                query += f" AND status IN ({ph})"
+                params.extend(status)
+            else:
+                query += " AND status = ?"
+                params.append(status)
         query += " ORDER BY created_at DESC"
         with self.get_connection() as conn:
             return [_doc_from_row(r) for r in conn.execute(query, params).fetchall()]
