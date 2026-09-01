@@ -119,6 +119,7 @@ def test_entity_stopwords_filter_generic_terms():
     the planner via RetrievalPlugin.get_entity_stopwords(); core meta-words
     ('多少'...) are always active."""
     import re
+
     import core.plugins as plugins_mod
     from core.retrieval.planner import QueryPlanner
 

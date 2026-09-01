@@ -10,7 +10,6 @@ inert without it, (c) verbatim-form semantics (no auto-pluralization —
 "bits" plural-only excludes bit-width declarations), (d) the planner's
 entity stopwords merge core meta-words with pack-injected words.
 """
-import pytest
 
 from core.ingestion.spec_facts_extractor import (
     _build_resolution_re,
