@@ -255,7 +255,7 @@ async def list_all_documents(
                     # Get chunk count
                     try:
                         meta_cursor.execute(
-                            "SELECT COUNT(*) FROM doc_chunks WHERE document_id = ?",
+                            "SELECT COUNT(*) FROM doc_chunks WHERE doc_id = ?",
                             (row["id"],)
                         )
                         chunk_count = meta_cursor.fetchone()[0]
@@ -455,7 +455,7 @@ async def get_document_detail(doc_id: str, tenant_id: str):
         page_count = cursor.fetchone()[0]
 
         # Get chunk statistics
-        cursor.execute("SELECT COUNT(*) FROM doc_chunks WHERE document_id = ?", (doc_id,))
+        cursor.execute("SELECT COUNT(*) FROM doc_chunks WHERE doc_id = ?", (doc_id,))
         chunk_count = cursor.fetchone()[0]
 
         # Get page type distribution
