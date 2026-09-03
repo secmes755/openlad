@@ -88,10 +88,13 @@ async function loadModelConfig() {
         document.getElementById('mLLMModel').value = cfg.llm_model || '';
         document.getElementById('mEmbUrl').value = cfg.emb_url || '';
         document.getElementById('mEmbModel').value = cfg.emb_model || '';
+        document.getElementById('mOcrUrl').value = cfg.ocr_url || '';
+        document.getElementById('mOcrModel').value = cfg.ocr_model || '';
         renderKeyHint('mLLMKey', 'mLLMKeyHint', cfg.llm_api_key);
         renderKeyHint('mEmbKey', 'mEmbKeyHint', cfg.emb_api_key);
+        renderKeyHint('mOcrKey', 'mOcrKeyHint', cfg.ocr_api_key);
         const st = document.getElementById('modelCfgStatus');
-        if (st) st.textContent = 'LLM: ' + (cfg.llm_url || '-') + '  |  Embedding: ' + (cfg.emb_url || '-');
+        if (st) st.textContent = 'LLM: ' + (cfg.llm_url || '-') + '  |  Embedding: ' + (cfg.emb_url || '-') + '  |  OCR: ' + (cfg.ocr_url || __('admin.models.ocrDisabled'));
     } catch (e) {
         console.error('loadModelConfig failed:', e);
     }
@@ -103,18 +106,25 @@ async function saveModelConfig() {
     const modLlm = document.getElementById('mLLMModel').value.trim();
     const urlEmb = document.getElementById('mEmbUrl').value.trim();
     const modEmb = document.getElementById('mEmbModel').value.trim();
+    const urlOcr = document.getElementById('mOcrUrl').value.trim();
+    const modOcr = document.getElementById('mOcrModel').value.trim();
     if (urlLlm) body.llm_url = urlLlm;
     if (modLlm) body.llm_model = modLlm;
     if (urlEmb) body.emb_url = urlEmb;
     if (modEmb) body.emb_model = modEmb;
+    if (urlOcr) body.ocr_url = urlOcr;
+    if (modOcr) body.ocr_model = modOcr;
     const kLlm = document.getElementById('mLLMKey').value;   // '' -> keep? user intent differs
     const kEmb = document.getElementById('mEmbKey').value;
+    const kOcr = document.getElementById('mOcrKey').value;
     // Empty key field means "keep current / use default": send null (omit).
     // To revert a cloud key back to local-default, tick the clear box below.
     const clearLlmKey = document.getElementById('mLLMKeyClear') && document.getElementById('mLLMKeyClear').checked;
     const clearEmbKey = document.getElementById('mEmbKeyClear') && document.getElementById('mEmbKeyClear').checked;
+    const clearOcrKey = document.getElementById('mOcrKeyClear') && document.getElementById('mOcrKeyClear').checked;
     if (kLlm) body.llm_api_key = kLlm; else if (clearLlmKey) body.llm_api_key = '';
     if (kEmb) body.emb_api_key = kEmb; else if (clearEmbKey) body.emb_api_key = '';
+    if (kOcr) body.ocr_api_key = kOcr; else if (clearOcrKey) body.ocr_api_key = '';
 
     const btn = document.getElementById('modelSaveBtn');
     btn.disabled = true;
@@ -126,7 +136,7 @@ async function saveModelConfig() {
         });
         const data = await res.json();
         if (!res.ok) { showToast(__('misc.error') + ': ' + (data.detail || 'unknown'), 'error'); return; }
-        document.querySelectorAll('#mLLMKey,#mEmbKey').forEach(i => i.value = '');
+        document.querySelectorAll('#mLLMKey,#mEmbKey,#mOcrKey').forEach(i => i.value = '');
         loadModelConfig();
         refreshServiceStatusSafe();
         showToast(__('admin.models.saved'), 'success');
@@ -141,12 +151,18 @@ async function saveModelConfig() {
 function refreshServiceStatusSafe() { try { refreshLibrary(); } catch (e) {} }
 
 async function testModelEndpoint(target) {
-    const out = document.getElementById(target === 'llm' ? 'mLLMTestResult' : 'mEmbTestResult');
+    const ids = {
+        llm: { out: 'mLLMTestResult', url: 'mLLMUrl', key: 'mLLMKey', dl: 'llmModelList' },
+        emb: { out: 'mEmbTestResult', url: 'mEmbUrl', key: 'mEmbKey', dl: 'embModelList' },
+        ocr: { out: 'mOcrTestResult', url: 'mOcrUrl', key: 'mOcrKey', dl: 'ocrModelList' },
+    }[target];
+    if (!ids) return;
+    const out = document.getElementById(ids.out);
     out.style.color = 'var(--text-muted)';
     out.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + __('admin.models.testing');
     const body = { target };
-    const urlInput = document.getElementById(target === 'llm' ? 'mLLMUrl' : 'mEmbUrl');
-    const keyInput = document.getElementById(target === 'llm' ? 'mLLMKey' : 'mEmbKey');
+    const urlInput = document.getElementById(ids.url);
+    const keyInput = document.getElementById(ids.key);
     if (urlInput.value.trim()) body.url = urlInput.value.trim();     // unsaved value still testable
     if (keyInput.value) body.api_key = keyInput.value;               // never persisted
     try {
@@ -159,11 +175,11 @@ async function testModelEndpoint(target) {
         if (!res.ok) { out.style.color = 'var(--danger)'; out.textContent = data.detail || 'test failed'; return; }
         if (data.ok) {
             out.style.color = 'var(--success)';
-            const ids = (data.models || []).join(', ');
+            const mids = (data.models || []).join(', ');
             out.innerHTML = '✓ ' + __('admin.models.testOk') +
-                (ids ? '<br><span style="color:var(--text-secondary);">' + __('admin.models.found') + ': ' +
-                    escapeHtml(ids.slice(0, 300)) + '</span>' : '');
-            const dl = document.getElementById(target === 'llm' ? 'llmModelList' : 'embModelList');
+                (mids ? '<br><span style="color:var(--text-secondary);">' + __('admin.models.found') + ': ' +
+                    escapeHtml(mids.slice(0, 300)) + '</span>' : '');
+            const dl = document.getElementById(ids.dl);
             if (dl) dl.innerHTML = (data.models || []).map(m => `<option value="${escapeHtml(m)}">`).join('');
         } else {
             out.style.color = 'var(--danger)';

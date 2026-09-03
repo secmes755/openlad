@@ -365,10 +365,13 @@ class ModelConfigRequest(BaseModel):
     emb_url: str | None = None
     emb_api_key: str | None = None
     emb_model: str | None = None
+    ocr_url: str | None = None
+    ocr_api_key: str | None = None
+    ocr_model: str | None = None
 
 
 class ModelTestRequest(BaseModel):
-    target: str = "llm"                    # "llm" | "emb"
+    target: str = "llm"                    # "llm" | "emb" | "ocr"
     url: str | None = None                 # optional unsaved values to test first
     api_key: str | None = None             # never persisted; test-only
     model: str | None = None               # informational echo in response
@@ -409,8 +412,13 @@ async def test_model_endpoint(req: ModelTestRequest):
     elif req.target == "emb":
         url = req.url if req.url is not None else resolved["emb_url"]
         key = req.api_key if req.api_key is not None else resolved["emb_api_key"]
+    elif req.target == "ocr":
+        url = req.url if req.url is not None else resolved["ocr_url"]
+        key = req.api_key if req.api_key is not None else resolved["ocr_api_key"]
+        if not url:
+            raise HTTPException(status_code=400, detail="OCR endpoint is not configured")
     else:
-        raise HTTPException(status_code=400, detail="target must be 'llm' or 'emb'")
+        raise HTTPException(status_code=400, detail="target must be 'llm', 'emb' or 'ocr'")
     result = model_config.probe_endpoint(url, api_key=key)
     result["target"] = req.target
     result["url_tested"] = url.rstrip("/")

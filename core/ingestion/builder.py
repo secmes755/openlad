@@ -254,10 +254,14 @@ class DocumentIndexBuilder:
         # verified = ingested with zero anomalies; degraded = pipeline
         # completed but some chunks were lost (details in ingest_warnings,
         # consumed by retrieval so answers can flag incomplete sources).
-        doc_status = "degraded" if embed_warnings else "verified"
+        # Page-level visual transcription failures (OCR/VLM) also degrade:
+        # a scanned page that produced no text is missing content.
+        all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata)
+        doc_status = "degraded" if all_warnings else "verified"
         doc_metadata = dict(parsed_doc.metadata or {})
-        if embed_warnings:
-            doc_metadata["ingest_warnings"] = embed_warnings
+        doc_metadata.pop("visual_transcription_warnings", None)
+        if all_warnings:
+            doc_metadata["ingest_warnings"] = all_warnings
         metadata_db.save_document(
             doc_id=doc_id,
             filename=parsed_doc.filename,
@@ -2321,6 +2325,14 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         for i, page in enumerate(parsed_doc.pages[:3]):
             content += f":{page.raw_text[:500]}"
         return hashlib.md5(content.encode()).hexdigest()
+
+    @staticmethod
+    def _collect_ingest_warnings(embed_warnings: list | None, parsed_metadata: dict | None) -> list:
+        """Merge embedding-loss warnings with page-level visual transcription
+        warnings (OCR/VLM) reported by the parser. Any non-empty result marks
+        the document degraded so retrieval can flag incomplete sources."""
+        visual = list((parsed_metadata or {}).get("visual_transcription_warnings") or [])
+        return list(embed_warnings or []) + visual
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]

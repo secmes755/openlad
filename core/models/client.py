@@ -61,8 +61,15 @@ class ModelClient:
         self.embedding_base_url = cfg["emb_url"]
         self.embedding_api_key = cfg["emb_api_key"]
         self.embedding_model = cfg["emb_model"]
+        # Dedicated OCR/vision endpoint (small OCR model, e.g. OvisOCR2 via
+        # llama.cpp). Empty ocr_base_url = not configured; vision calls then
+        # use the main LLM endpoint (VLM path).
+        self.ocr_base_url = cfg.get("ocr_url", "")
+        self.ocr_api_key = cfg.get("ocr_api_key", "")
+        self.ocr_model = cfg.get("ocr_model", "")
         self._session = None
         self._lock = threading.Lock()
+        self.last_finish_reason = None
 
     @property
     def session(self):
@@ -87,10 +94,19 @@ class ModelClient:
         return self._chat_completion(messages, max_tokens, temperature, json_mode,
                                      json_array_mode=json_array_mode)
 
+    @property
+    def ocr_endpoint_available(self) -> bool:
+        """A dedicated OCR/vision endpoint is configured."""
+        return bool(self.ocr_base_url)
+
     def generate_with_image(self, prompt: str, image_path: str,
                             system_prompt: str = None,
                             max_tokens: int = 2048, temperature: float = 0.3,
-                            max_image_size: int = 1024) -> str:
+                            max_image_size: int = 1024,
+                            endpoint: str = "auto") -> str:
+        """Vision call. endpoint="auto": route to the dedicated OCR endpoint
+        when configured, else the main LLM endpoint. endpoint="llm"|"ocr"
+        force a specific backend ("ocr" falls back to LLM when unset)."""
         import base64 as b64
         from io import BytesIO as Bio
 
@@ -146,6 +162,12 @@ class ModelClient:
                     }}
                 ]
             })
+            use_ocr = endpoint == "ocr" or (endpoint == "auto" and self.ocr_endpoint_available)
+            if use_ocr and self.ocr_endpoint_available:
+                return self._chat_completion(
+                    messages, max_tokens, temperature,
+                    base_url=self.ocr_base_url, model=self.ocr_model or None,
+                    api_key=self.ocr_api_key)
             return self._chat_completion(messages, max_tokens, temperature)
         except Exception as e:
             logger.error(f"Image parsing failed {image_path}: {e}")
@@ -154,7 +176,8 @@ class ModelClient:
     def _chat_completion(self, messages: list, max_tokens: int = 2048,
                          temperature: float = 0.7, json_mode: bool = False,
                          json_array_mode: bool = False,
-                         base_url: str = None, model: str = None) -> str:
+                         base_url: str | None = None, model: str | None = None,
+                         api_key: str | None = None) -> str:
         # === Prompt length guard: prevent oversized prompts from crashing llama-server ===
         llm_max_tokens = settings.CONTEXT_CONFIG.get("llm_max_tokens", 131072)
         ratio = settings.CONTEXT_CONFIG.get("token_to_char_ratio", 0.7)
@@ -214,7 +237,7 @@ class ModelClient:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         target_url = (base_url or self.llm_base_url) + "/chat/completions"
-        req_headers = self._auth_headers(self.llm_api_key)
+        req_headers = self._auth_headers(api_key if api_key is not None else self.llm_api_key)
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -248,6 +271,9 @@ class ModelClient:
                 data = response.json()
                 msg = data["choices"][0]["message"]
                 content = msg.get("content", "") or ""
+                # Expose the finish_reason of the most recent call so callers
+                # (e.g. OCR transcription) can detect truncation.
+                self.last_finish_reason = data["choices"][0].get("finish_reason")
                 # Qwen3.5 thinking mode — if content is empty, model likely exhausted
                 # tokens during thinking. Do NOT fall back to reasoning_content.
                 if not content.strip() and msg.get("reasoning_content"):
@@ -262,6 +288,7 @@ class ModelClient:
                 else:
                     logger.error(f"LLM call failed ({target_url}): {e}")
                     return ""
+        return ""
 
     def generate_json(self, prompt: str, system_prompt: str = None,
                       max_tokens: int = 4096, temperature: float = 0.3) -> dict[str, Any]:
@@ -470,8 +497,12 @@ def reload_model_client() -> bool:
         c.embedding_base_url = cfg["emb_url"]
         c.embedding_api_key = cfg["emb_api_key"]
         c.embedding_model = cfg["emb_model"]
+        c.ocr_base_url = cfg["ocr_url"]
+        c.ocr_api_key = cfg["ocr_api_key"]
+        c.ocr_model = cfg["ocr_model"]
     logger.info(
-        "[MODEL] client hot-reloaded: llm=%s/%r emb=%s/%r",
+        "[MODEL] client hot-reloaded: llm=%s/%r emb=%s/%r ocr=%s/%r",
         cfg["llm_url"], cfg["llm_model"], cfg["emb_url"], cfg["emb_model"],
+        cfg["ocr_url"] or "(disabled)", cfg["ocr_model"],
     )
     return True

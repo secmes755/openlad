@@ -463,6 +463,15 @@ CHART_CONFIG = {
     # Cost guard for deep VLM analysis of CHART pages.
     # 0 = unlimited (analyze every classified CHART page). Set >0 to cap cost on large schematics.
     "vlm_max_chart_pages_per_doc": int(os.environ.get("OPENLAD_VLM_MAX_CHART_PAGES", "0")),
+    # Dedicated OCR endpoint transcription (used when model_config ocr_url is
+    # set): visual candidate pages are transcribed directly instead of the
+    # VLM classify -> CHART/IMAGE split.
+    # Max tokens for OCR page transcription. OvisOCR2 (0.8B) official
+    # inference uses max_tokens=16384; short budgets force the model into
+    # over-generation once the real content is exhausted, so keep parity
+    # with the reference config (llama-server ctx must be >= this value).
+    "ocr_transcription_max_tokens": 16384,
+    "ocr_transcription_temperature": 0.0,
 }
 
 # =============================================================================

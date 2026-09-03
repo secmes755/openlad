@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 _FIELDS = (
     "llm_url", "llm_api_key", "llm_model",
     "emb_url", "emb_api_key", "emb_model",
+    # Dedicated OCR/vision-transcription endpoint (e.g. a small OCR model
+    # served by llama.cpp). Empty ocr_url means "not configured": visual
+    # page transcription falls back to the main LLM endpoint (VLM path).
+    "ocr_url", "ocr_api_key", "ocr_model",
 )
 _DB_PREFIX = "model_"
 _DEFAULT_KEY = "123"
@@ -43,6 +47,9 @@ def _env_fallbacks() -> dict:
         "emb_url": (os.environ.get("OPENLAD_EMB_URL"), settings.EMBEDDING_API_BASE),
         "emb_api_key": (os.environ.get("OPENLAD_EMB_API_KEY"), _DEFAULT_KEY),
         "emb_model": (os.environ.get("OPENLAD_EMB_MODEL"), ""),
+        "ocr_url": (os.environ.get("OPENLAD_OCR_URL"), ""),
+        "ocr_api_key": (os.environ.get("OPENLAD_OCR_API_KEY"), _DEFAULT_KEY),
+        "ocr_model": (os.environ.get("OPENLAD_OCR_MODEL"), ""),
     }
 
 
@@ -82,6 +89,9 @@ def public_view(resolved: dict) -> dict:
         "emb_url": resolved["emb_url"],
         "emb_model": resolved["emb_model"],
         "emb_api_key": mask_key(resolved["emb_api_key"]),
+        "ocr_url": resolved["ocr_url"],
+        "ocr_model": resolved["ocr_model"],
+        "ocr_api_key": mask_key(resolved["ocr_api_key"]),
     }
 
 
@@ -114,11 +124,13 @@ def update_model_settings(updates: dict) -> dict:
     from ..models.client import reload_model_client
     reload_model_client()
     logger.info(
-        "[MODEL_CFG] updated: llm=%s model=%r emb=%s model=%r (keys %s/%s)",
+        "[MODEL_CFG] updated: llm=%s model=%r emb=%s model=%r ocr=%s model=%r (keys %s/%s/%s)",
         resolved["llm_url"], resolved["llm_model"],
         resolved["emb_url"], resolved["emb_model"],
+        resolved["ocr_url"] or "(disabled)", resolved["ocr_model"],
         "set" if clean.get("llm_api_key") else "kept",
         "set" if clean.get("emb_api_key") else "kept",
+        "set" if clean.get("ocr_api_key") else "kept",
     )
     return public_view(resolved)
 

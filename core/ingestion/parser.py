@@ -62,6 +62,94 @@ from ..config import GRID_RECONSTRUCTION_ENABLED, INGEST_MAX_WORKERS, settings
 from ..models import get_model_client
 
 
+def _trim_exact_period_repeats(text: str, min_text_len: int = 1500,
+                               max_period: int = 200, min_repeat_chars: int = 100,
+                               min_repeat_times: int = 5) -> str:
+    """Trim a tail of exact periodic repetition (official OvisOCR2 recipe).
+
+    Small OCR models can degenerate into a repeating loop once the real page
+    content is exhausted. The upstream README ships this exact-period scan as
+    its standard post-processing; thresholds are relaxed slightly (1500 chars
+    instead of 8000) because page transcriptions are usually shorter than the
+    upstream benchmark inputs.
+    """
+    n = len(text)
+    if n < min_text_len:
+        return text
+    max_period = min(max_period, n - 1)
+    for unit_len in range(1, max_period + 1):
+        if text[n - 1] != text[n - 1 - unit_len]:
+            continue
+        match_len = 1
+        idx = n - 2
+        while idx >= unit_len and text[idx] == text[idx - unit_len]:
+            match_len += 1
+            idx -= 1
+        total_len = match_len + unit_len
+        repeat_times = total_len // unit_len
+        tail_len = total_len % unit_len
+        if repeat_times >= min_repeat_times and total_len >= min_repeat_chars:
+            return text[: n - total_len + unit_len] + text[n - tail_len:]
+    return text
+
+
+def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
+                                  min_content_len: int = 40,
+                                  similarity: float = 0.85) -> str:
+    """Trim a tail of numbered pseudo-repetition ('107. ... 108. ... 109. ...').
+
+    Degeneration frequently emits a numbered list whose body is the same
+    sentence re-typed with an incrementing index. Exact-period scans miss it
+    because the index breaks the period. Heuristic: walk numbered lines at the
+    tail; if one body appears >= min_repeat_lines times (bodies drift slightly
+    between repeats, so a SequenceMatcher similarity gate is used instead of
+    equality), cut at its first occurrence. The final line is often a truncated
+    remnant, which similarity tolerates naturally.
+    """
+    import re
+    from difflib import SequenceMatcher
+    lines = text.split("\n")
+    strip = re.compile(r"^\s*(\d{1,4})[.、．]\s*(.*)$")
+    numbered = []  # (line_index, body)
+    for i in range(len(lines) - 1, -1, -1):
+        if not lines[i].strip():
+            continue
+        m = strip.match(lines[i])
+        if not m:
+            break
+        numbered.append((i, m.group(2).strip()))
+    if len(numbered) < min_repeat_lines:
+        return text
+    numbered.reverse()
+    bodies = [b for _, b in numbered]
+    if len(max(bodies, key=len)) < min_content_len:
+        return text
+    dominant = max(bodies, key=len)
+    compatible = [b for b in bodies
+                  if SequenceMatcher(None, dominant, b).ratio() >= similarity]
+    if len(compatible) < min_repeat_lines:
+        return text
+    # When the majority of the numbered tail is one drifting repeat, the whole
+    # numbered segment is the degeneration loop (including leading drift
+    # variants) — cut the entire segment. Sparse similarity (e.g. a legitimate
+    # how-to list) never reaches the majority gate.
+    if len(compatible) >= 0.5 * len(numbered):
+        first = numbered[0][0]
+    else:
+        first = min(i for i, b in numbered
+                    if SequenceMatcher(None, dominant, b).ratio() >= similarity)
+    return "\n".join(lines[:first]).rstrip() + "\n"
+
+
+def _clean_ocr_transcription(text: str) -> str:
+    """Apply degeneration cleanup to an OCR page transcription."""
+    if not text:
+        return text
+    cleaned = _trim_exact_period_repeats(text)
+    cleaned = _trim_numbered_pseudo_repeats(cleaned)
+    return cleaned
+
+
 class ParsedPage:
     """Parsed page"""
     def __init__(self, page_num: int, raw_text: str = "",
@@ -246,14 +334,27 @@ class DocumentParser:
             except Exception:
                 pass
 
+        # Dedicated OCR endpoint mode: when a separate OCR/vision endpoint is
+        # configured, candidate pages (images + minimal text) are transcribed
+        # directly by the OCR model — no VLM page classification needed, and
+        # no vision load on the main LLM. Pages are rendered at 150 DPI for
+        # transcription quality (VLM classification only needs 72 DPI).
+        ocr_mode = False
+        try:
+            ocr_mode = get_model_client().ocr_endpoint_available
+        except Exception:
+            pass
+        candidate_set = set(vlm_candidate_pages)
+        visual_warnings: list[str] = []
+
         # Pass 2: VLM classification only for candidate pages (with images + minimal text)
         page_images = {}
         if vlm_candidate_pages:
-            page_images = self._render_pdf_pages(str(path), dpi=72)
+            page_images = self._render_pdf_pages(str(path), dpi=150 if ocr_mode else 72)
             candidate_images = {
                 pn: page_images[pn] for pn in vlm_candidate_pages if pn in page_images
             }
-            if candidate_images:
+            if candidate_images and not ocr_mode:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 max_workers = max(1, min(INGEST_MAX_WORKERS, len(candidate_images)))
                 logger.info(
@@ -278,6 +379,11 @@ class DocumentParser:
                     f"(chart={stats['chart']}, image={stats['image']}, text={stats['text']}, blank={stats['blank']})"
                 )
                 self.page_classifier.reset_stats()
+            elif ocr_mode:
+                logger.info(
+                    f"OCR endpoint mode: {len(candidate_images)} candidate pages "
+                    f"(of {total_pages} total) -> direct transcription, no VLM classification"
+                )
             else:
                 # No renderable candidate pages -> all TEXT
                 for pn in vlm_candidate_pages:
@@ -369,7 +475,37 @@ class DocumentParser:
 
                 page_class = page_classes.get(pdf_page_num, "TEXT")
 
-                if page_class == "BLANK":
+                if ocr_mode and pdf_page_num in candidate_set and page_image is not None:
+                    # Dedicated OCR endpoint: transcribe visual pages directly.
+                    # The OCR model already returns structured text (tables,
+                    # figure labels) — no chart/image classification split.
+                    from .layout.page_classifier import is_blank_image
+                    if is_blank_image(page_image):
+                        logger.info(f"PDF p{pdf_page_num}: blank page (OCR mode) -> skip")
+                        page_class = "BLANK"
+                        full_text = ""
+                    else:
+                        logger.info(f"PDF p{pdf_page_num}: OCR endpoint transcription")
+                        page_class = "IMAGE"
+                        transcription = self._transcribe_pdf_page_with_ocr(
+                            page_image, pdf_page_num
+                        )
+                        if transcription:
+                            full_text += (
+                                f"\n\n---\n\n### Page Transcription (OCR)\n\n{transcription}\n"
+                            )
+                            vlm_needed = True
+                            client = get_model_client()
+                            if getattr(client, "last_finish_reason", None) == "length":
+                                visual_warnings.append(
+                                    f"page {pdf_page_num}: OCR transcription truncated (max_tokens)"
+                                )
+                        else:
+                            visual_warnings.append(
+                                f"page {pdf_page_num}: OCR transcription empty or failed"
+                            )
+
+                elif page_class == "BLANK":
                     # Blank page: no visual content, keep text empty and do not run VLM
                     logger.info(f"PDF p{pdf_page_num}: page_class=BLANK -> skip VLM and chunking")
                     full_text = ""
@@ -461,6 +597,12 @@ class DocumentParser:
                         ))
                 else:
                     doc.pages.append(ParsedPage(page_num=1, raw_text=f"PDF parsing failed: {e}"))
+
+        # Page-level visual transcription issues (OCR mode) — surfaced to the
+        # builder so they become document-level ingest_warnings / degraded
+        # instead of silently shipping hollow pages.
+        if visual_warnings:
+            doc.metadata["visual_transcription_warnings"] = visual_warnings
 
         return doc
 
@@ -659,6 +801,51 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 os.unlink(tmp_path)
         except Exception as e:
             logger.warning(f"PDF page {page_num} VLM image description failed: {e}")
+            return ""
+
+    def _transcribe_pdf_page_with_ocr(self, page_image, page_num: int) -> str:
+        """Transcribe a visual page via the dedicated OCR endpoint.
+
+        Used when an OCR endpoint is configured (see model_config ocr_*).
+        The OCR model (e.g. OvisOCR2) returns the full page text with
+        structure intact (tables as markup, figure labels, captions), so no
+        chart/image classification split is needed. Returns "" on failure —
+        the caller records an ingest warning so hollow pages never ship
+        silently.
+        """
+        try:
+            import os
+            import tempfile
+
+            client = get_model_client()
+            img_cfg = settings.CHART_CONFIG
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                page_image.save(tmp.name, 'PNG')
+                tmp_path = tmp.name
+
+            try:
+                prompt = (
+                    "Transcribe ALL text content from this document page image "
+                    "exactly as it appears. Preserve structure: tables as "
+                    "markup, headings, lists, figure labels and captions. "
+                    "Output only the transcribed content, no commentary."
+                )
+                max_tokens = img_cfg.get("ocr_transcription_max_tokens", 4096)
+                text = client.generate_with_image(
+                    prompt=prompt,
+                    image_path=tmp_path,
+                    max_tokens=max_tokens,
+                    temperature=img_cfg.get("ocr_transcription_temperature", 0.0),
+                    endpoint="ocr",
+                )
+                if text:
+                    text = _clean_ocr_transcription(text)
+                return text.strip() if text else ""
+            finally:
+                os.unlink(tmp_path)
+        except Exception as e:
+            logger.warning(f"PDF page {page_num} OCR transcription failed: {e}")
             return ""
 
     # ========================================================================

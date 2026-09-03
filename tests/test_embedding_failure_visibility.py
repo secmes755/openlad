@@ -17,14 +17,24 @@ import requests
 # builder.py top-level imports PIL/numpy (via layout), which the CI venv
 # intentionally lacks. Stub them before importing, as test_ingestion_logic
 # does for fitz — only annotations/attributes are touched at import time.
-_pil_image = types.ModuleType("PIL.Image")
-_pil_image.Image = type("Image", (), {})
-_pil = types.ModuleType("PIL")
-_pil.Image = _pil_image
-_np = types.ModuleType("numpy")
-_np.ndarray = type("ndarray", (), {})
-for _name, _mod in (("PIL", _pil), ("PIL.Image", _pil_image), ("numpy", _np)):
-    sys.modules.setdefault(_name, _mod)
+# When PIL/numpy ARE installed (dev machines), import the real modules so
+# the stubs don't shadow them for tests collected later in the run.
+try:
+    import PIL  # noqa: F401
+    import PIL.Image  # noqa: F401
+except ImportError:
+    _pil_image = types.ModuleType("PIL.Image")
+    _pil_image.Image = type("Image", (), {})
+    _pil = types.ModuleType("PIL")
+    _pil.Image = _pil_image
+    for _name, _mod in (("PIL", _pil), ("PIL.Image", _pil_image)):
+        sys.modules.setdefault(_name, _mod)
+try:
+    import numpy  # noqa: F401
+except ImportError:
+    _np = types.ModuleType("numpy")
+    _np.ndarray = type("ndarray", (), {})
+    sys.modules.setdefault("numpy", _np)
 
 from core.ingestion.builder import DocumentIndexBuilder  # noqa: E402
 from core.models.client import (  # noqa: E402
