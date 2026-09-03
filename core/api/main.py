@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("OpenLAD service starting...")
+    # Environment self-check runs BEFORE the try block: a missing dependency
+    # must abort startup, not be swallowed by the catch-all below.
+    from ..services.env_check import check_environment
+    check_environment()
     try:
         # Initialize system database
         system_db = get_system_db()
