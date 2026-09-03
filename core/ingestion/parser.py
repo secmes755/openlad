@@ -747,7 +747,8 @@ Please output in English."""
                     prompt=prompt,
                     image_path=tmp_path,
                     max_tokens=2048,
-                    temperature=0.2
+                    temperature=0.2,
+                    endpoint="llm"  # semantic page analysis, not OCR transcription
                 )
                 return analysis.strip() if analysis else ""
             finally:
@@ -794,7 +795,8 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     prompt=prompt,
                     image_path=tmp_path,
                     max_tokens=max_tokens,
-                    temperature=temperature
+                    temperature=temperature,
+                    endpoint="llm"  # image description is a semantic-VLM task
                 )
                 return analysis.strip() if analysis else ""
             finally:
@@ -1110,7 +1112,8 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 prompt=prompt,
                 image_path=image_path,
                 max_tokens=512,
-                temperature=0.2
+                temperature=0.2,
+                endpoint="llm"  # semantic description, not OCR transcription
             )
             return desc.strip() if desc else ""
         except Exception as e:

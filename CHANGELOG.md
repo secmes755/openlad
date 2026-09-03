@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages only. `OPENLAD_CHART_ANALYSIS=off` disables chart description
   entirely for operators who prefer deterministic chunk counts over the
   semantic enrichment.
+- **All semantic vision calls pinned to the main LLM.** Page-level VLM
+  analysis, image description and formula recognition now pass
+  `endpoint="llm"` explicitly, so a configured OCR endpoint only ever
+  handles transcription work (OCR page transcription and image-file
+  transcription), never semantic description/analysis.
 
 ## [0.4.7] - 2026-09-01
 

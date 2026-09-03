@@ -87,7 +87,8 @@ Output only the LaTeX code, no other explanations."""
                 prompt=prompt,
                 image_path=image_path,
                 max_tokens=512,
-                temperature=0.1
+                temperature=0.1,
+                endpoint="llm"  # formula -> LaTeX is a semantic task, not page OCR
             )
 
             if not response or response.strip() == "NO_FORMULA":
