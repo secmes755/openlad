@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of silently degrading ingestion (e.g. unparsed PDFs stored as
   verified). Escapable with `OPENLAD_ENV_CHECK=off` for operators who know
   what they are doing.
+- **Chart description pinned to the main LLM; analysis master switch.**
+  Chart-region semantic description is a main-LLM vision task and is no
+  longer routed to a configured OCR endpoint (`endpoint="llm"`), keeping
+  ingestion deterministic: the page-OCR model transcribes visual candidate
+  pages only. `OPENLAD_CHART_ANALYSIS=off` disables chart description
+  entirely for operators who prefer deterministic chunk counts over the
+  semantic enrichment.
 
 ## [0.4.7] - 2026-09-01
 

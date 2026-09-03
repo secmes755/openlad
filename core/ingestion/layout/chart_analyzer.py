@@ -477,13 +477,19 @@ class ChartAnalyzer:
             # Build prompt
             prompt = self._build_vlm_prompt(caption, page_text)
 
-            # Call multimodal LLM
+            # Call multimodal LLM — chart description is a semantic-VLM task
+            # on the main LLM path, NOT page-level OCR transcription. Pin
+            # endpoint="llm" so a configured OCR endpoint can never hijack
+            # chart crops (endpoint="auto" would route here when ocr_url is
+            # set). Without a vision-capable main LLM the call returns empty
+            # and no description is injected — deterministic by design.
             response = self.model_client.generate_with_image(
                 prompt=prompt,
                 image_path=str(chart_path),
                 max_tokens=self.vlm_max_tokens,
                 temperature=self.vlm_temperature,
-                max_image_size=self.max_image_size
+                max_image_size=self.max_image_size,
+                endpoint="llm"
             )
 
             if not response or not response.strip():

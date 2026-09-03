@@ -444,7 +444,9 @@ FORMULA_CONFIG = {
 # Chart Analysis Configuration
 # =============================================================================
 CHART_CONFIG = {
-    "enabled": True,
+    # Master switch: OPENLAD_CHART_ANALYSIS=off disables chart-region semantic
+    # description entirely (builder gates on this key). Default on.
+    "enabled": os.environ.get("OPENLAD_CHART_ANALYSIS", "1") != "0",
     "min_region_area": 15000,
     "max_regions_per_page": 4,
     "min_region_wh": 120,
