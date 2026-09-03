@@ -19,7 +19,7 @@
 
 <table>
 <tr><td><b>🔒 完全离线</b></td><td>所有处理 — LLM 推理、Embedding、OCR、文档解析 — 均在本地完成。支持物理隔离网络。</td></tr>
-<tr><td><b>📄 多格式入库</b></td><td>PDF、Word、Excel、PowerPoint、图片、Markdown、HTML、TXT。扫描件通过 OCR 识别（多模态 VLM / Tesseract）。</td></tr>
+<tr><td><b>📄 多格式入库</b></td><td>PDF、Word、Excel、PowerPoint、图片、Markdown、HTML、TXT。扫描件/纯图像页面经专用 OCR 端点转写（任意 OpenAI 兼容视觉模型，如 OvisOCR2），可选 Tesseract 离线兜底。</td></tr>
 <tr><td><b>🧠 混合检索</b></td><td>全文检索（FTS5）+ 向量检索（sqlite-vec）+ LLM 驱动规划。三阶段流水线：规划 → 检索 → 合成。</td></tr>
 <tr><td><b>🏭 行业插件</b></td><td>可扩展的插件系统。1 个完整示例包（半导体）+ 3 个空模板（法律、金融、通用）供定制。可为任意领域定制行业包。</td></tr>
 <tr><td><b>👥 多租户</b></td><td>每租户独立数据库和向量空间。管理面板支持用户和文档管理。</td></tr>
@@ -109,8 +109,8 @@ $env:OPENLAD_ADMIN_PASSWORD = "<你的密码>"
 - 两个**可选**原生组件缺失时会优雅降级：
   [poppler](https://github.com/oschwartz10612/poppler-windows/releases)
   用于 PDF 页面渲染 / 图表分析 / 页面图片查看；Tesseract
-  （`tesseract.exe` + `chi_sim` 语言包）用于扫描件 OCR。本身可提取文本的
-  PDF 两者都不需要。
+  （`tesseract.exe` + `chi_sim` 语言包）在未配置专用 OCR 端点时充当离线
+  OCR 兜底（见 § 2b）。本身可提取文本的 PDF 两者都不需要。
 - 数据持久化在 `.\data`（已 gitignore）。`OPENLAD_INDUSTRIES_DIRS` 的
   多个额外扫描目录在 Windows 上用分号分隔。
 
@@ -169,6 +169,33 @@ llama-server \
     --n-gpu-layers 999 --ctx-size 8192 \
     --embeddings --pooling mean --batch-size 2048
 ```
+
+### 2b.（可选）专用 OCR 视觉模型
+
+扫描件或纯图像页面由专用 OCR 端点转写 —— 任意 OpenAI 兼容视觉模型均可，
+通过 `OPENLAD_OCR_URL` / `OPENLAD_OCR_MODEL` 接入。紧凑型整页 OCR VLM
+显存占用小；例如 OvisOCR2（Apache-2.0，0.8B）在文档解析上表现优异，可与
+LLM 和 Embedding 模型共存于 16 GB 显卡：
+
+```bash
+# 终端 3（可选）：整页 OCR 视觉模型（端口 8082）
+# 先从 GGUF 镜像下载 OvisOCR2 及其 mmproj，然后：
+llama-server \
+    --model ~/models/ovisocr2-q8_0.gguf \
+    --mmproj ~/models/mmproj-f16.gguf \
+    --host 127.0.0.1 --port 8082 --alias ovisocr2 \
+    --n-gpu-layers 999 --ctx-size 32768
+```
+
+将 OpenLAD 指向该端点（环境变量，或管理面板 → 模型服务）：
+
+```bash
+export OPENLAD_OCR_URL=http://127.0.0.1:8082/v1
+export OPENLAD_OCR_MODEL=ovisocr2
+```
+
+仍无法转写的页面会记录入库警告，文档标记为 `degraded`，不会静默缺失内容。
+未配置 OCR 端点时，纯图片文件回退到 Tesseract（如已安装）。
 
 ### 3. 启动 OpenLAD
 

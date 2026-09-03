@@ -5,6 +5,31 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Dedicated OCR endpoint for scanned / image-only pages.** Visual pages
+  are transcribed page-by-page by any OpenAI-compatible vision model
+  configured as an OCR backend (`OPENLAD_OCR_URL` / `OPENLAD_OCR_MODEL`,
+  or admin panel → Model Services). This replaces the previous
+  classify-then-describe split for full-page transcription and keeps the
+  main LLM free of image work. Pages that still cannot be transcribed
+  surface as page-level visual transcription warnings and mark the
+  document `degraded` (extending the existing verified/degraded model to
+  OCR failures). Image-only uploads keep Tesseract as an offline fallback
+  when no OCR endpoint is configured.
+- **OCR transcription tail-degeneration cleanup.** Small OCR models can
+  loop on tail repetition once the real page content is exhausted. Two
+  cleanup passes trim exact periodic repeats (digit/word runs) and
+  numbered pseudo-repeats (the same sentence re-typed with an incrementing
+  index), so degenerate tails never enter the index.
+- **Fail-fast startup environment self-check.** On boot the API verifies
+  every declared runtime dependency is importable and aborts startup
+  instead of silently degrading ingestion (e.g. unparsed PDFs stored as
+  verified). Escapable with `OPENLAD_ENV_CHECK=off` for operators who know
+  what they are doing.
+
 ## [0.4.7] - 2026-09-01
 
 ### Added

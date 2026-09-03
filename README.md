@@ -20,7 +20,7 @@ hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
 
 <table>
 <tr><td><b>🔒 Fully Offline</b></td><td>All processing — LLM inference, embeddings, OCR, document parsing — happens locally. Works on air-gapped networks.</td></tr>
-<tr><td><b>📄 Multi-Format Ingestion</b></td><td>PDF, Word, Excel, PowerPoint, images, Markdown, HTML, TXT. Scanned documents handled via OCR (multimodal VLM / Tesseract).</td></tr>
+<tr><td><b>📄 Multi-Format Ingestion</b></td><td>PDF, Word, Excel, PowerPoint, images, Markdown, HTML, TXT. Scanned/image-only pages are transcribed via a dedicated OCR endpoint (any OpenAI-compatible vision model, e.g. OvisOCR2), with Tesseract as an optional offline fallback.</td></tr>
 <tr><td><b>🧠 Hybrid Retrieval</b></td><td>Full-text search (FTS5) + vector search (sqlite-vec) + LLM-driven planning. Three-phase pipeline: Plan → Retrieve → Synthesize.</td></tr>
 <tr><td><b>🏭 Industry Plugins</b></td><td>Extensible plugin system. 1 complete sample pack (Semiconductor) + 3 empty templates (Legal, Financial, Generic) for customization. Custom packs can be built for any domain.</td></tr>
 <tr><td><b>👥 Multi-Tenant</b></td><td>Isolated databases and vector spaces per tenant. Admin panel for user and document management.</td></tr>
@@ -115,9 +115,10 @@ Notes:
   Windows build — point `OPENLAD_LLM_URL` / `OPENLAD_EMB_URL` at them.
 - Two **optional** native components degrade gracefully when absent:
   [poppler](https://github.com/oschwartz10612/poppler-windows/releases)
-  enables PDF page rendering / chart analysis / page-image viewing, and
-  Tesseract (`tesseract.exe` + `chi_sim` language pack) enables OCR of
-  scanned documents. Text-extractable PDFs need neither.
+  enables PDF page rendering / chart analysis / page-image viewing; and
+  Tesseract (`tesseract.exe` + `chi_sim` language pack) serves as the offline
+  OCR fallback when no dedicated OCR endpoint is configured (see § 2b).
+  Text-extractable PDFs need neither.
 - Data persists in `.\data` (gitignored). Multiple extra scan dirs in
   `OPENLAD_INDUSTRIES_DIRS` are semicolon-separated on Windows.
 
@@ -192,6 +193,36 @@ llama-server \
 > chunk 尺寸与截断上限。若 embedding 服务使用非默认 batch（如小显存上的
 > `512`），请同步设置：`OPENLAD_EMB_MAX_INPUT_TOKENS=512 ./start.sh`。
 > 失配不会报错——受影响的 chunk 被静默跳过，文档会"空心"入库。
+
+### 2b. (Optional) Dedicated OCR Vision Model
+
+Scanned or image-only pages are transcribed by a dedicated OCR endpoint —
+any OpenAI-compatible vision model advertised as a chat backend via
+`OPENLAD_OCR_URL` / `OPENLAD_OCR_MODEL`. A compact page-OCR VLM keeps the GPU
+footprint small; e.g. OvisOCR2 (Apache-2.0, 0.8B) scores well on document
+parsing while fitting alongside the LLM and embedding models on a 16 GB GPU:
+
+```bash
+# Terminal 3 (optional): page-OCR vision model (port 8082)
+# Download OvisOCR2 + its mmproj from a GGUF mirror, then:
+llama-server \
+    --model ~/models/ovisocr2-q8_0.gguf \
+    --mmproj ~/models/mmproj-f16.gguf \
+    --host 127.0.0.1 --port 8082 --alias ovisocr2 \
+    --n-gpu-layers 999 --ctx-size 32768
+```
+
+Point OpenLAD at it (environment variables, or admin panel → Model Services):
+
+```bash
+export OPENLAD_OCR_URL=http://127.0.0.1:8082/v1
+export OPENLAD_OCR_MODEL=ovisocr2
+```
+
+Pages that still cannot be transcribed are flagged with ingest warnings and
+the document is marked `degraded` instead of silently missing content. When
+no OCR endpoint is configured, image-only files fall back to Tesseract (if
+installed).
 
 ### 3. Start OpenLAD
 
