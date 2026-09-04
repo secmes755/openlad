@@ -5,13 +5,10 @@
 All settings are environment variables with the `OPENLAD_*` prefix. There are
 three ways to supply them, depending on how you run OpenLAD:
 
-- **Source install (`./start.sh`)** — the API process reads `.env` from the
-  repository root on startup (via python-dotenv). **Caveat:** `start.sh`
-  exports its own defaults for the endpoint/model-name variables listed under
-  "Model backends" below, which shadow `.env`. For those variables, either
-  export them before launching or load `.env` into the shell first:
-  `set -a; . ./.env; set +a`. Variables that `start.sh` does not touch (OCR,
-  security, ingestion tuning, …) are picked up from `.env` normally.
+- **Source install (`./start.sh`)** — `start.sh` sources `.env` from the
+  repository root on launch; variables left unset fall back to the built-in
+  defaults shown below. Environment variables already exported in the shell
+  take precedence over `.env`.
 - **Docker** — the compose file loads `.env` (next to `docker-compose.yml`)
   via `env_file`; see `docker/.env.example`.
 - **Admin panel** — model endpoints can also be set at runtime under

@@ -60,13 +60,8 @@ cp .env.example .env
 # 以及与你环境不一致的模型名称/地址
 ```
 
-`.env` 由 API 进程在启动时读取。注意：`start.sh` 会为模型端点/模型名称
-变量导出内置默认值，会遮蔽 `.env` —— 因此请在启动前 export 你的取值，
-或把 `.env` 加载进当前 shell：
-
-```bash
-set -a; . ./.env; set +a
-```
+`start.sh` 启动时会自动加载 `.env`；未设置的变量回落到内置默认值。
+全部变量说明见[配置参考](docs/zh-CN/configuration.md)。
 
 ### 3. 启动模型服务
 

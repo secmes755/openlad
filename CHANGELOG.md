@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`start.sh` now sources `.env`.** Previously the script exported its own
+  defaults for endpoint/model variables, which silently shadowed `.env` —
+  edits to `.env` alone had no effect. Values from `.env` now take effect
+  directly; unset variables still fall back to built-in defaults.
+- **Rewrote root `.env.example`** to match what the current code actually
+  reads (dropped legacy managed-mode variables such as `LLM_MODEL_PATH`),
+  with per-variable comments and a pointer to `docs/configuration.md`.
+
 ### Changed
 
 - **Docs restructure.** Slimmed the bilingual READMEs down to the essentials

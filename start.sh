@@ -12,6 +12,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── Load .env (values below are fallbacks for anything unset) ──
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a; . "$SCRIPT_DIR/.env"; set +a
+fi
+
 # ── Environment variables (can be overridden in .env) ──
 # Model service URLs (default to common ports)
 : ${OPENLAD_LLM_URL:="http://127.0.0.1:8080/v1"}

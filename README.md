@@ -62,13 +62,9 @@ cp .env.example .env
 # and the model names/URLs if they differ from the defaults
 ```
 
-`.env` is read by the API process on startup. Note: `start.sh` exports its own
-defaults for the model endpoint/model-name variables, which shadow `.env` —
-so either export your values before launching, or load `.env` into the shell:
-
-```bash
-set -a; . ./.env; set +a
-```
+`start.sh` sources `.env` automatically on launch; anything left unset falls
+back to a built-in default. Full variable reference:
+[configuration](docs/configuration.md).
 
 ### 3. Start Model Services
 

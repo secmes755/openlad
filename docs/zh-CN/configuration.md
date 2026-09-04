@@ -4,11 +4,9 @@
 
 所有配置均为 `OPENLAD_*` 前缀的环境变量。按运行方式有三种提供途径：
 
-- **源码安装（`./start.sh`）** — API 进程启动时读取仓库根目录的 `.env`
-  （python-dotenv）。**注意：** `start.sh` 会为下方"模型后端"列出的
-  端点/模型名称变量导出内置默认值，会遮蔽 `.env`。这些变量请在启动前
-  export，或先把 `.env` 加载进 shell：`set -a; . ./.env; set +a`。
-  `start.sh` 不涉及的变量（OCR、安全、入库调优等）可正常经 `.env` 生效。
+- **源码安装（`./start.sh`）** — `start.sh` 启动时自动加载仓库根目录的
+  `.env`；未设置的变量回落到下表的内置默认值。已在 shell 中 export 的
+  环境变量优先于 `.env`。
 - **Docker** — compose 通过 `env_file` 加载 `docker-compose.yml` 旁的
   `.env`；模板见 `docker/.env.example`。
 - **管理面板** — 模型端点也可在运行时经 管理面板 → 模型服务 设置。
