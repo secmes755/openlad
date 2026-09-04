@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-09-07
+
 ### Fixed
 
 - **`start.sh` now sources `.env`.** Previously the script exported its own
