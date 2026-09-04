@@ -1010,7 +1010,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 prompt=prompt,
                 image_path=str(path),
                 max_tokens=2048,
-                temperature=0.2
+                temperature=0.2,
+                # Intentional "auto": transcribing an uploaded image IS the
+                # OCR job — use the OCR endpoint when configured, else the
+                # main LLM (with Tesseract fallback below).
+                endpoint="auto"
             )
             if image_text and image_text.strip():
                 logger.info(f"LLM image parsing succeeded: {path.name} ({len(image_text.strip())} chars)")

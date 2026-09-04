@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `endpoint="llm"` explicitly, so a configured OCR endpoint only ever
   handles transcription work (OCR page transcription and image-file
   transcription), never semantic description/analysis.
+- **`generate_with_image` endpoint is now required.** The parameter lost
+  its `"auto"` default: every vision call site must declare its intent
+  (`llm` / `ocr` / deliberately `auto` for image-file transcription), so a
+  future call that forgets the endpoint fails loudly instead of silently
+  routing to the OCR model.
+- **`OPENLAD_CHART_ANALYSIS` accepts any of `0|off|false|no`.** The master
+  switch now matches its documentation (previously only the literal `"0"`
+  was honoured, so `=off` silently did nothing).
 
 ## [0.4.7] - 2026-09-01
 

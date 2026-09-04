@@ -100,13 +100,18 @@ class ModelClient:
         return bool(self.ocr_base_url)
 
     def generate_with_image(self, prompt: str, image_path: str,
+                            endpoint: str,
                             system_prompt: str = None,
                             max_tokens: int = 2048, temperature: float = 0.3,
-                            max_image_size: int = 1024,
-                            endpoint: str = "auto") -> str:
-        """Vision call. endpoint="auto": route to the dedicated OCR endpoint
-        when configured, else the main LLM endpoint. endpoint="llm"|"ocr"
-        force a specific backend ("ocr" falls back to LLM when unset)."""
+                            max_image_size: int = 1024) -> str:
+        """Vision call. endpoint is REQUIRED — callers must declare intent.
+
+        endpoint="auto": route to the dedicated OCR endpoint when
+        configured, else the main LLM endpoint (only transcription-like
+        callers should use this). endpoint="llm"|"ocr" force a specific
+        backend ("ocr" falls back to LLM when unset). No default: a new
+        call site without an explicit endpoint fails loudly at import time
+        instead of silently being routed to the OCR model."""
         import base64 as b64
         from io import BytesIO as Bio
 

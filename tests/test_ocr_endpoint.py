@@ -112,7 +112,7 @@ class TestVisionEndpointRouting:
         # by letting it fail gracefully is not acceptable — provide real PNG.
         Image = _real_pil_image()
         Image.new("RGB", (8, 8), "white").save(img)
-        assert client.generate_with_image("p", str(img)) == "ok"
+        assert client.generate_with_image("p", str(img), endpoint="auto") == "ok"
         assert rec.calls == [{"base_url": None, "model": None, "api_key": None}]
 
     def test_auto_routes_to_ocr_when_configured(self, monkeypatch, tmp_path):
@@ -124,7 +124,7 @@ class TestVisionEndpointRouting:
         Image = _real_pil_image()
         img = tmp_path / "p.png"
         Image.new("RGB", (8, 8), "white").save(img)
-        assert client.generate_with_image("p", str(img)) == "ok"
+        assert client.generate_with_image("p", str(img), endpoint="auto") == "ok"
         assert rec.calls == [{"base_url": "http://ocr/v1", "model": "ovisocr2",
                               "api_key": "ocr-key"}]
 
