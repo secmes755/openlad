@@ -16,6 +16,9 @@ Thank you for your interest in contributing to OpenLAD!
 - **No hardcoding in core/**: All industry-specific logic belongs in `industries/`
 - **Environment variables**: Use `OPENLAD_*` prefix for all configurable parameters
 - **Code style**: Follow PEP 8, use type hints where practical
+- **Bilingual docs**: `README.md` and every `docs/*.md` file have a Chinese
+  counterpart (`README_zh-CN.md`, `docs/zh-CN/*.md`). Any documentation change
+  must update both languages in the same commit.
 
 ## Submitting Changes
 

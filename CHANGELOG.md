@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs restructure.** Slimmed the bilingual READMEs down to the essentials
+  (intro, demo GIF, feature table, canonical quickstart) and moved reference
+  material into `docs/`: deployment & hardware, configuration reference,
+  API quickstart, architecture, and troubleshooting — each in English and
+  Chinese (`docs/zh-CN/`). Added UI demo GIFs under `docs/assets/`.
+  Troubleshooting now also covers field-observed operational issues
+  (silent llama-server degradation, hollow ingestion from batch-size
+  mismatch).
+
 ### Added
 
 - **Dedicated OCR endpoint for scanned / image-only pages.** Visual pages
