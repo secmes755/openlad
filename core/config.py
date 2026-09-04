@@ -441,14 +441,21 @@ FORMULA_CONFIG = {
 }
 
 # =============================================================================
-# Chart Analysis Configuration
+# Chart / Semantic-Vision Analysis Configuration
 # =============================================================================
+# Semantic vision enrichment (chart-region description, PDF-page VLM
+# analysis, image description) runs on the MAIN LLM and therefore requires
+# a vision-capable main LLM (mmproj loaded). The reference deployment has a
+# text-only main LLM and a dedicated OCR endpoint for transcription, so
+# these semantic features are OFF by default. Deployments whose main LLM
+# carries vision enable them explicitly:
+#   OPENLAD_CHART_ANALYSIS=1        chart-region semantic description
+#   OPENLAD_IMAGE_DESCRIPTION=1     PDF-page image description (non-OCR mode)
+# Accepts 1/on/true (enable) or 0/off/false/no/empty (disable).
 CHART_CONFIG = {
-    # Master switch: OPENLAD_CHART_ANALYSIS=0|off|false|no disables chart-region
-    # semantic description entirely (builder gates on this key). Default on;
-    # empty string counts as off (explicitly setting it to nothing = disable).
-    "enabled": os.environ.get("OPENLAD_CHART_ANALYSIS", "1").strip().lower()
-               not in ("0", "off", "false", "no", ""),
+    # Chart-region semantic description master switch (builder gates on it).
+    "enabled": os.environ.get("OPENLAD_CHART_ANALYSIS", "0").strip().lower()
+               in ("1", "on", "true"),
     "min_region_area": 15000,
     "max_regions_per_page": 4,
     "min_region_wh": 120,
@@ -461,7 +468,8 @@ CHART_CONFIG = {
     # Page classification / image description guards
     "vlm_blank_image_threshold": 0.005,   # ratio of non-white pixels; below this is blank
     "vlm_min_text_len_for_candidate": 1000,  # pages with more text are not VLM candidates
-    "vlm_image_description_enabled": True,
+    "vlm_image_description_enabled": os.environ.get("OPENLAD_IMAGE_DESCRIPTION", "0").strip().lower()
+                                     in ("1", "on", "true"),
     "vlm_image_description_max_tokens": 1024,
     "vlm_image_description_temperature": 0.2,
     # Cost guard for deep VLM analysis of CHART pages.

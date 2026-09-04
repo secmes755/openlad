@@ -510,8 +510,9 @@ class DocumentParser:
                     logger.info(f"PDF p{pdf_page_num}: page_class=BLANK -> skip VLM and chunking")
                     full_text = ""
 
-                elif page_class == "CHART":
-                    # Chart page -> high DPI VLM deep analysis
+                elif page_class == "CHART" and settings.CHART_CONFIG.get("enabled", False):
+                    # Chart page -> high DPI VLM deep analysis (semantic
+                    # vision; off by default when the main LLM has no mmproj)
                     logger.info(f"PDF p{pdf_page_num}: page_class=CHART -> high DPI deep analysis")
                     hi_res_img = self._render_single_page(str(path), pdf_page_num, dpi=150)
                     if hi_res_img:

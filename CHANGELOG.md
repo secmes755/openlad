@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`OPENLAD_CHART_ANALYSIS` accepts any of `0|off|false|no`.** The master
   switch now matches its documentation (previously only the literal `"0"`
   was honoured, so `=off` silently did nothing).
+- **Semantic-vision enrichment is off by default.** Chart-region
+  description, page-level VLM analysis, formula→LaTeX and PDF-page image
+  description all run on the MAIN LLM and require a vision-capable model
+  (mmproj). The reference deployment is text-only-main-LLM + dedicated OCR
+  endpoint, so these features now default to OFF and no longer make
+  no-op vision calls against a text-only LLM. Deployments whose main LLM
+  carries vision enable them explicitly with `OPENLAD_CHART_ANALYSIS=1`
+  and/or `OPENLAD_IMAGE_DESCRIPTION=1`. OCR page transcription is
+  unaffected (it never used the main LLM).
 
 ## [0.4.7] - 2026-09-01
 

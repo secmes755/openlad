@@ -520,10 +520,16 @@ class DocumentIndexBuilder:
             if page_class == 'BLANK':
                 layout_result.page_type = 'blank'
 
-            formulas = self._extract_formulas(layout_result, doc_id)
+            # Semantic-vision enrichment (formula->LaTeX, chart-region
+            # description) runs on the MAIN LLM and is off by default
+            # (text-only main LLM); OPENLAD_CHART_ANALYSIS=1 enables it on
+            # deployments whose main LLM carries vision (mmproj).
+            semantic_vision = page_class != 'BLANK' and settings.CHART_CONFIG.get("enabled", False)
+
+            formulas = self._extract_formulas(layout_result, doc_id) if semantic_vision else []
 
             charts = []
-            if page_class != 'BLANK' and settings.CHART_CONFIG.get("enabled", True):
+            if semantic_vision:
                 try:
                     vlm_analysis = getattr(page, 'content_dict', {}).get("vlm_analysis")
                     if not (vlm_analysis and len(str(vlm_analysis).strip()) > 10):
