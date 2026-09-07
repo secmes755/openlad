@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Source citations are now clickable and deduplicated.** The answer footer's
+  source links were `href="#"` placeholders that did nothing when clicked and
+  repeated the same document once per cited chunk. Sources are now merged per
+  document (union of cited pages), and clicking a source opens the cited page
+  renders in the in-page lightbox — all cited pages of that document are
+  navigable via ‹ › buttons or ArrowLeft/ArrowRight, as are inline page
+  citations. Image fetch failures surface a toast instead of failing silently.
+- **Copy button works on non-secure origins.** `navigator.clipboard` requires
+  a secure context, so over `http://<lan-ip>:port` the copy button silently
+  failed. A legacy textarea fallback now handles that case.
+- **Page renders now land in the tenant-scoped images dir.** Ingestion wrote
+  page renders (`{doc_id}_p{N}.png`) to the legacy global `data/images/`, while
+  the authenticated `/images/{filename}` endpoint serves only from
+  `data/tenants/<tenant>/images/` — so citation images always 404'd. Ingestion
+  now writes to the tenant dir; `scripts/migrate_page_images_to_tenants.py`
+  migrates existing files (idempotent, `--dry-run` supported, ownership
+  resolved via each tenant's metadata.db).
+
 ## [0.4.8] - 2026-09-07
 
 ### Fixed

@@ -89,7 +89,9 @@ class DocumentIndexBuilder:
 
         # 4. Preprocess
         logger.info(f"OpenLAD: Preprocessing document: {path.name}")
-        preprocessed_pages = self._preprocess_document(parsed_doc, doc_id)
+        preprocessed_pages = self._preprocess_document(
+            parsed_doc, doc_id, images_dir=settings.get_tenant_images_dir(tid)
+        )
 
         # 5. Save preliminary info
         text_source = self._determine_text_source(preprocessed_pages)
@@ -167,7 +169,9 @@ class DocumentIndexBuilder:
 
         _report(20, "Preprocessing pages")
         if preprocessed_pages is None:
-            preprocessed_pages = self._preprocess_document(parsed_doc, doc_id)
+            preprocessed_pages = self._preprocess_document(
+                parsed_doc, doc_id, images_dir=settings.get_tenant_images_dir(tid)
+            )
 
         # Load industry plugin
         plugin = None
@@ -304,16 +308,23 @@ class DocumentIndexBuilder:
         }
 
     def _preprocess_document(self, parsed_doc: ParsedDocument,
-                            doc_id: str) -> list[Any]:
+                            doc_id: str, images_dir=None) -> list[Any]:
         """Concurrently preprocess all pages of the document"""
         import threading
         from concurrent.futures import ThreadPoolExecutor
+
+        # Page renders are tenant-scoped: the authenticated /images/{filename}
+        # endpoint serves only from the tenant images dir, so writes must land
+        # there too (fall back to the legacy global dir when unset).
+        img_dir = Path(images_dir) if images_dir else settings.IMAGES_DIR
+        img_dir.mkdir(parents=True, exist_ok=True)
 
         _thread_local = threading.local()
 
         def _get_preprocessor():
             if not hasattr(_thread_local, 'preprocessor'):
                 _thread_local.preprocessor = DocumentPreprocessor()
+            _thread_local.preprocessor.images_dir = img_dir
             return _thread_local.preprocessor
 
         def _process_page(idx: int):
@@ -332,7 +343,7 @@ class DocumentIndexBuilder:
                 if page_image is None:
                     page_image = Image.new('RGB', (800, 1000), color='white')
                 image_filename = f"{doc_id}_p{page.page_num}.png" if doc_id else f"page_{page.page_num}.png"
-                image_path = settings.IMAGES_DIR / image_filename
+                image_path = img_dir / image_filename
                 page_image.save(image_path, "PNG")
                 result.page_image_path = str(image_path)
                 return page.page_num, result

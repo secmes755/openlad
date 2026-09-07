@@ -560,32 +560,90 @@ async function fetchProtectedImage(url) {
 // ===== Image Lightbox =====
 // In-page viewer for tenant-scoped images — keeps reading context instead of
 // opening a bare blob in a new tab. Esc / backdrop click / ✕ closes it.
+// Supports multi-page navigation: when opened with a list of cited pages,
+// ‹ › buttons and ArrowLeft/ArrowRight cycle through them.
 let _lightboxReturnFocus = null;
+let _lightboxNav = null;  // {docId, pages: [int], idx, label}
+
+function _ensureLightbox() {
+    let overlay = document.getElementById('imageLightbox');
+    if (overlay) return overlay;
+    overlay = document.createElement('div');
+    overlay.id = 'imageLightbox';
+    overlay.className = 'lightbox-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.innerHTML = `
+        <button class="lightbox-close"><i class="fas fa-times"></i></button>
+        <button class="lightbox-nav lightbox-prev"><i class="fas fa-chevron-left"></i></button>
+        <button class="lightbox-nav lightbox-next"><i class="fas fa-chevron-right"></i></button>
+        <div class="lightbox-caption"></div>
+        <img alt="">`;
+    overlay.querySelector('.lightbox-close').setAttribute('aria-label', __('misc.close'));
+    overlay.querySelector('.lightbox-prev').setAttribute('aria-label', __('misc.prevPage'));
+    overlay.querySelector('.lightbox-next').setAttribute('aria-label', __('misc.nextPage'));
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.closest('.lightbox-close')) closeLightbox();
+        else if (e.target.closest('.lightbox-prev')) _lightboxNavStep(-1);
+        else if (e.target.closest('.lightbox-next')) _lightboxNavStep(1);
+    });
+    document.addEventListener('keydown', (e) => {
+        if (!overlay.classList.contains('show')) return;
+        if (e.key === 'Escape') closeLightbox();
+        else if (e.key === 'ArrowLeft') _lightboxNavStep(-1);
+        else if (e.key === 'ArrowRight') _lightboxNavStep(1);
+    });
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function _updateLightboxNav() {
+    const overlay = document.getElementById('imageLightbox');
+    if (!overlay) return;
+    const multi = _lightboxNav && _lightboxNav.pages.length > 1;
+    overlay.querySelector('.lightbox-prev').style.display = multi ? '' : 'none';
+    overlay.querySelector('.lightbox-next').style.display = multi ? '' : 'none';
+}
+
+function _lightboxNavStep(delta) {
+    if (!_lightboxNav || _lightboxNav.pages.length < 2) return;
+    const n = _lightboxNav.pages.length;
+    _lightboxNav.idx = (_lightboxNav.idx + delta + n) % n;
+    _showLightboxPage();
+}
+
+async function _showLightboxPage() {
+    const nav = _lightboxNav;
+    if (!nav) return;
+    const page = nav.pages[nav.idx];
+    const blobUrl = await fetchProtectedImage(`/images/${nav.docId}_p${page}.png`);
+    if (!blobUrl) {
+        showToast(__('chat.pageImageUnavailable'), 'info');
+        return;
+    }
+    const overlay = _ensureLightbox();
+    const img = overlay.querySelector('img');
+    // Blob URLs are owned by _imageBlobCache and shared with inline image
+    // hydration — never revoke here. On a cache hit the "new" URL IS the
+    // current img.src, so revoking would kill the image we're about to show.
+    img.src = blobUrl;
+    overlay.querySelector('.lightbox-caption').textContent =
+        `${nav.label} · Page ${page} (${nav.idx + 1}/${nav.pages.length})`;
+    overlay.classList.add('show');
+    _updateLightboxNav();
+    if (!_lightboxReturnFocus) {
+        _lightboxReturnFocus = document.activeElement;
+        overlay.querySelector('.lightbox-close').focus();
+    }
+}
 
 function openLightbox(src, caption) {
-    let overlay = document.getElementById('imageLightbox');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'imageLightbox';
-        overlay.className = 'lightbox-overlay';
-        overlay.setAttribute('role', 'dialog');
-        overlay.setAttribute('aria-modal', 'true');
-        overlay.innerHTML = `
-            <button class="lightbox-close"><i class="fas fa-times"></i></button>
-            <div class="lightbox-caption"></div>
-            <img alt="">`;
-        overlay.querySelector('.lightbox-close').setAttribute('aria-label', __('misc.close'));
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay || e.target.closest('.lightbox-close')) closeLightbox();
-        });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && overlay.classList.contains('show')) closeLightbox();
-        });
-        document.body.appendChild(overlay);
-    }
+    _lightboxNav = null;  // plain single-image view, no page navigation
+    const overlay = _ensureLightbox();
     overlay.querySelector('img').src = src;
     overlay.querySelector('.lightbox-caption').textContent = caption || '';
     overlay.classList.add('show');
+    _updateLightboxNav();
     // Move focus into the dialog so Esc/screen-reader users land somewhere sane
     _lightboxReturnFocus = document.activeElement;
     overlay.querySelector('.lightbox-close').focus();
@@ -603,21 +661,52 @@ function closeLightbox() {
 async function openProtectedImage(url, caption) {
     const blobUrl = await fetchProtectedImage(url);
     if (blobUrl) openLightbox(blobUrl, caption || url);
+    else showToast(__('chat.pageImageUnavailable'), 'info');
+}
+
+function openPageImages(docId, pages, startPage, label) {
+    const sorted = [...new Set(pages)].filter(n => n > 0).sort((a, b) => a - b);
+    if (!sorted.length) return;
+    let idx = sorted.indexOf(startPage);
+    if (idx < 0) idx = 0;
+    _lightboxNav = { docId, pages: sorted, idx, label: label || docId };
+    _showLightboxPage();
 }
 
 function openPageImage(docId, pageNum) {
-    openProtectedImage(`/images/${docId}_p${pageNum}.png`, `${docId} · Page ${pageNum}`);
+    openPageImages(docId, [pageNum], pageNum, docId);
 }
 
 // Delegated citation clicks: processCitations emits data-* attributes (no
 // inline JS), and a single document-level listener routes them to the
-// tenant-scoped image viewer.
+// tenant-scoped image viewer. When the message's source list is available,
+// the lightbox opens with all cited pages of that doc for navigation,
+// starting at the cited page.
 document.addEventListener('click', function(e) {
     const el = e.target && e.target.closest ? e.target.closest('sup.page-cite[data-doc-id]') : null;
     if (!el) return;
     const page = parseInt(el.getAttribute('data-page'), 10);
     if (!page || page < 1) return;
-    openPageImage(el.getAttribute('data-doc-id'), page);
+    const docId = el.getAttribute('data-doc-id');
+    const msg = el.closest('.message');
+    const src = msg && msg._sources ? msg._sources.find(s => s.doc_id === docId) : null;
+    const pages = src && src._pages && src._pages.length ? src._pages : [page];
+    openPageImages(docId, pages, page, src ? (src.title || src.filename) : docId);
+});
+
+// Source links in the message footer open the cited page renders (all cited
+// pages of that doc, navigable). preventDefault unconditionally so the "#"
+// placeholder never pollutes the URL.
+document.addEventListener('click', function(e) {
+    const el = e.target && e.target.closest ? e.target.closest('a.source-link') : null;
+    if (!el) return;
+    e.preventDefault();
+    const docId = el.getAttribute('data-doc-id');
+    const page = parseInt(el.getAttribute('data-page'), 10);
+    if (!docId || !page || page < 1) return;
+    const pages = (el.getAttribute('data-pages') || '')
+        .split(',').map(s => parseInt(s, 10)).filter(n => n > 0);
+    openPageImages(docId, pages.length ? pages : [page], page, el.textContent.trim());
 });
 
 // Resolve data-img-url placeholders inside a freshly rendered message
@@ -733,6 +822,67 @@ function processCitations(html, citationMap, sources) {
     return html;
 }
 
+// Normalize source pages: API emits either a list of page numbers or a
+// range string like "8-15" depending on the retrieval path.
+function normalizeSourcePages(pages) {
+    if (!pages) return [];
+    if (Array.isArray(pages)) {
+        return pages.map(p => parseInt(p, 10)).filter(n => !isNaN(n) && n > 0);
+    }
+    const m = String(pages).match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!m) return [];
+    const start = parseInt(m[1], 10);
+    const end = m[2] ? parseInt(m[2], 10) : start;
+    const out = [];
+    for (let i = start; i <= Math.min(end, start + 199); i++) out.push(i);
+    return out;
+}
+
+// Merge duplicate sources for the same document (one entry per cited chunk
+// would otherwise repeat the doc N times in the footer).
+function dedupeSources(sources) {
+    const byKey = new Map();
+    for (const s of (sources || [])) {
+        const key = s.doc_id || s.title || s.filename || JSON.stringify(s);
+        const pages = normalizeSourcePages(s.pages);
+        const existing = byKey.get(key);
+        if (existing) {
+            existing._pages = [...new Set([...existing._pages, ...pages])].sort((a, b) => a - b);
+            existing.degraded = existing.degraded || s.degraded;
+            if (s.ingest_warnings) {
+                existing._warnings = [...new Set([...existing._warnings, ...s.ingest_warnings])];
+            }
+        } else {
+            byKey.set(key, Object.assign({}, s, {
+                _pages: pages,
+                _warnings: s.ingest_warnings ? [...s.ingest_warnings] : []
+            }));
+        }
+    }
+    return [...byKey.values()];
+}
+
+// Copy with fallback: navigator.clipboard requires a secure context, which
+// http://<lan-ip>:port is NOT — there the API is undefined or rejects, so
+// fall back to the legacy textarea + execCommand path.
+async function copyTextToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) { /* permission denied etc. — try the legacy path */ }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+    return ok;
+}
+
 // ===== DOM Operations =====
 function appendMessageToDOM(role, content, sources, debugInfo, citationMap, createdAt) {
     const container = document.getElementById('chatMessages');
@@ -743,12 +893,18 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap, crea
 
     let sourcesHtml = '';
     if (sources && sources.length > 0) {
-        const sourceLinks = sources.map(s => {
-            const pages = s.pages ? s.pages.join(',') : '';
-            const warnTip = s.degraded && s.ingest_warnings && s.ingest_warnings.length
-                ? ' ⚠ ' + s.ingest_warnings.join('; ') : '';
+        const sourceLinks = dedupeSources(sources).map(s => {
+            const pages = s._pages;
+            const pagesStr = pages.length ? ' Page ' + pages.join(',') : '';
+            const warnTip = s.degraded && s._warnings.length
+                ? ' ⚠ ' + s._warnings.join('; ') : '';
             const badge = s.degraded ? ' <i class="fas fa-exclamation-triangle source-degraded"></i>' : '';
-            return `<a href="#" title="${escapeHtml(s.filename)} Page ${pages}${escapeHtml(warnTip)}">${escapeHtml(s.title || s.filename)}</a>${badge}`;
+            const tip = `${escapeHtml(s.filename)}${escapeHtml(pagesStr)}${escapeHtml(warnTip)}`;
+            const label = escapeHtml(s.title || s.filename);
+            if (s.doc_id && pages.length) {
+                return `<a href="#" class="source-link" data-doc-id="${escapeHtml(s.doc_id)}" data-page="${pages[0]}" data-pages="${pages.join(',')}" title="${tip}">${label}</a>${badge}`;
+            }
+            return `<a href="#" class="source-link" title="${tip}">${label}</a>${badge}`;
         }).join('');
 
         // V4: Collect all charts and page images
@@ -867,14 +1023,13 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap, crea
     `;
     // Keep the raw markdown for the copy action (rendered HTML loses structure)
     if (content) msgDiv.dataset.rawContent = content;
+    // Attach deduped sources so inline citation clicks can offer page navigation
+    if (sources && sources.length) msgDiv._sources = dedupeSources(sources);
     const copyBtn = msgDiv.querySelector('.message-copy');
     copyBtn.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(msgDiv.dataset.rawContent || msgDiv.querySelector('.message-content').textContent);
-            showToast(__('misc.copied'), 'success');
-        } catch (e) {
-            showToast(__('misc.copyManual'), 'info');
-        }
+        const ok = await copyTextToClipboard(
+            msgDiv.dataset.rawContent || msgDiv.querySelector('.message-content').textContent);
+        showToast(__(ok ? 'misc.copied' : 'misc.copyManual'), ok ? 'success' : 'info');
     });
     container.appendChild(msgDiv);
     hydrateProtectedImages(msgDiv);
