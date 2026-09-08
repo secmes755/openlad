@@ -112,10 +112,18 @@ def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
     strip = re.compile(r"^\s*(\d{1,4})[.、．]\s*(.*)$")
     numbered = []  # (line_index, body)
     for i in range(len(lines) - 1, -1, -1):
-        if not lines[i].strip():
+        line = lines[i].strip()
+        if not line:
             continue
-        m = strip.match(lines[i])
+        m = strip.match(line)
         if not m:
+            # Degeneration can switch shape mid-tail (numbered loop -> digit
+            # run); after the exact-period pass a one-unit stub may remain
+            # below the numbered block. Tolerate short tail stubs — shorter
+            # than any content body worth analysing — so the scan still
+            # reaches the numbered lines above them.
+            if not numbered and len(line) < min_content_len:
+                continue
             break
         numbered.append((i, m.group(2).strip()))
     if len(numbered) < min_repeat_lines:
@@ -1017,6 +1025,12 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 # main LLM (with Tesseract fallback below).
                 endpoint="auto"
             )
+            # The auto route transcribes via the dedicated OCR endpoint when
+            # configured (client.py routing), and that output carries the OCR
+            # model's known degeneration modes (tail repetition) — apply the
+            # same cleanup the endpoint="ocr" PDF page path gets.
+            if image_text and client.ocr_endpoint_available:
+                image_text = _clean_ocr_transcription(image_text)
             if image_text and image_text.strip():
                 logger.info(f"LLM image parsing succeeded: {path.name} ({len(image_text.strip())} chars)")
             else:

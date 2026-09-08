@@ -78,3 +78,31 @@ class TestCleanOCRTranscription:
         out = _clean_ocr_transcription(text)
         assert len(out) < 500
         assert "正文部分" in out
+
+    def test_numbered_loop_followed_by_digit_tail(self):
+        # Regression: degeneration switching shape mid-tail. The exact-period
+        # pass leaves a one-unit stub below the numbered loop; that stub must
+        # not shield the numbered lines above it from trimming.
+        text = ("正文部分。\n\n"
+                + "\n\n".join(f"{i}. 音频采样和采样，使用音频采样和采样"
+                             f"（如 Audacity, Adobe Audition 等）进行音频采样处理，"
+                             f"可以减少采样频率。"
+                             for i in range(1, 20))
+                + "\n\n" + "878" * 700)
+        out = _clean_ocr_transcription(text)
+        assert "正文部分" in out
+        assert "878878" not in out
+        assert "19. 音频采样" not in out
+        assert len(out) < 300
+
+    def test_legitimate_list_with_short_tail_stub_untouched(self):
+        legit = (
+            "## 步骤\n\n"
+            "1. 打开电源开关，确认指示灯亮起。\n\n"
+            "2. 连接网线到路由器 LAN 口。\n\n"
+            "3. 在浏览器输入管理地址进入配置页。\n\n"
+            "4. 保存设置并重启设备。\n\n"
+            "5. 完成安装。\n\n"
+            "878"  # stray short stub after a legitimate list
+        )
+        assert _clean_ocr_transcription(legit) == legit

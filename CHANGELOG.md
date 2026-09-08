@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Copy button works on non-secure origins.** `navigator.clipboard` requires
   a secure context, so over `http://<lan-ip>:port` the copy button silently
   failed. A legacy textarea fallback now handles that case.
+- **Uploaded image files now get OCR degeneration cleanup.** The `auto` vision
+  route resolves to the dedicated OCR endpoint when configured, but unlike PDF
+  page transcription its output was not passed through the tail-repetition
+  cleanup — degenerate loops from the OCR model could enter the index. Also
+  fixed the cleanup chain itself: when degeneration switches shape mid-tail
+  (numbered loop → exact digit run), the one-unit stub left by the exact-period
+  pass no longer shields the numbered loop above it from trimming.
 - **Page renders now land in the tenant-scoped images dir.** Ingestion wrote
   page renders (`{doc_id}_p{N}.png`) to the legacy global `data/images/`, while
   the authenticated `/images/{filename}` endpoint serves only from

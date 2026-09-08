@@ -192,6 +192,72 @@ class TestParserOcrTranscription:
         assert parser._transcribe_pdf_page_with_ocr(img, 3) == ""
 
 
+class TestParseImageAutoCleanup:
+    """Uploaded image files use endpoint="auto". When that route resolves to
+    the dedicated OCR endpoint, the output carries the OCR model's tail-
+    repetition degeneration and must get the same cleanup PDF page
+    transcription receives (parser._transcribe_pdf_page_with_ocr). When the
+    route falls back to the main LLM (no OCR configured) the output is
+    semantic, not OCR transcription, and must pass through untouched."""
+
+    DEGEN = (
+        "Chart shows UART baud rate 115200.\n\n"
+        + "\n\n".join(f"{i}. 音频采样和采样，使用音频采样和采样"
+                      f"（如 Audacity, Adobe Audition 等）进行音频采样处理，"
+                      f"可以减少采样频率。"
+                      for i in range(1, 12))
+        + "\n\n" + "878" * 700
+    )
+
+    def _parse(self, monkeypatch, tmp_path, ocr_available, output):
+        from core.ingestion.parser import DocumentParser
+
+        class FakeClient:
+            ocr_endpoint_available = ocr_available
+
+            def generate_with_image(self, prompt, image_path, **kw):
+                assert kw.get("endpoint") == "auto"
+                return output
+
+        monkeypatch.setattr("core.ingestion.parser.get_model_client",
+                            lambda: FakeClient())
+        Image = _real_pil_image()
+        img = tmp_path / "chart.png"
+        Image.new("RGB", (8, 8), "white").save(img)
+        parser = DocumentParser.__new__(DocumentParser)
+        return parser._parse_image(img)
+
+    def test_ocr_routed_output_is_cleaned(self, monkeypatch, tmp_path):
+        doc = self._parse(monkeypatch, tmp_path, True, self.DEGEN)
+        text = doc.pages[0].raw_text
+        assert "UART baud rate" in text      # real content preserved
+        assert "878878" not in text          # digit-run tail collapsed
+        assert "11. 音频采样" not in text     # numbered loop above it trimmed
+
+    def test_llm_routed_output_passes_through(self, monkeypatch, tmp_path):
+        doc = self._parse(monkeypatch, tmp_path, False, self.DEGEN)
+        assert self.DEGEN.strip() in doc.pages[0].raw_text
+
+    def test_empty_output_still_falls_back(self, monkeypatch, tmp_path):
+        from core.ingestion.parser import DocumentParser
+
+        class EmptyClient:
+            ocr_endpoint_available = True
+
+            def generate_with_image(self, *a, **kw):
+                return ""
+
+        monkeypatch.setattr("core.ingestion.parser.get_model_client",
+                            lambda: EmptyClient())
+        monkeypatch.setattr(DocumentParser, "_ocr_image_fallback",
+                            lambda self, p: "tesseract text")
+        Image = _real_pil_image()
+        img = tmp_path / "blank.png"
+        Image.new("RGB", (8, 8), "white").save(img)
+        parser = DocumentParser.__new__(DocumentParser)
+        assert "tesseract text" in parser._parse_image(img).pages[0].raw_text
+
+
 class TestHotReload:
     def test_reload_model_client_syncs_ocr_attrs(self, monkeypatch):
         """Regression: hot-reload (admin UI save path) must propagate the OCR
