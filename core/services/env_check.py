@@ -42,6 +42,7 @@ REQUIRED_MODULES = {
     "jinja2": "Jinja2",
     "bcrypt": "bcrypt",
     "psutil": "psutil",
+    "pytesseract": "pytesseract",
 }
 
 
@@ -73,3 +74,14 @@ def check_environment() -> None:
         )
 
     logger.info(f"[ENV_CHECK] all {len(REQUIRED_MODULES)} required dependencies importable")
+
+    # pytesseract imports fine without the system binary, but the OCR fallback
+    # then dies silently at call time. Warn at startup instead (the binary is
+    # shipped in the Docker image; host deployments must apt install it).
+    import shutil
+    if shutil.which("tesseract") is None:
+        logger.warning(
+            "[ENV_CHECK] tesseract binary not found on PATH — the OCR "
+            "fallback for image files / low-quality PDF pages is inactive. "
+            "Fix with: apt install tesseract-ocr tesseract-ocr-chi-sim"
+        )

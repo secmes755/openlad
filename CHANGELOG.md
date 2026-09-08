@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now writes to the tenant dir; `scripts/migrate_page_images_to_tenants.py`
   migrates existing files (idempotent, `--dry-run` supported, ownership
   resolved via each tenant's metadata.db).
+- **The Tesseract OCR fallback now actually ships in deployments.**
+  `pytesseract` was absent from `requirements.txt` and the `tesseract` binary
+  was never installed in the Docker image, so the last-resort OCR fallback for
+  uploaded image files and low-quality PDF pages was silently dead (placeholder
+  text, not even an error log). `pytesseract` is now a declared dependency and
+  the image installs `tesseract-ocr` + `tesseract-ocr-chi-sim`; the startup
+  environment self-check enforces the package and warns when the system binary
+  is missing on host deployments.
 
 ## [0.4.8] - 2026-09-07
 

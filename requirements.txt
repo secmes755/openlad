@@ -24,6 +24,12 @@ pdf2image>=1.16.0
 numpy>=1.24.0
 opencv-python>=4.8.0
 
+# OCR fallback (image files / low-quality PDF pages). Requires the system
+# tesseract binary plus language data (eng + chi_sim) at runtime — installed
+# in the Docker image; on host deployments: apt install tesseract-ocr
+# tesseract-ocr-chi-sim
+pytesseract>=0.3.10
+
 # HTTP Client
 httpx>=0.25.0
 requests>=2.31.0
