@@ -22,23 +22,30 @@ class RetrievalExecutor:
         self.retriever = HierarchicalRetriever(tenant_id)
         self.merger = SegmentMerger(tenant_id)
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
-        self.industry_hint = None  # Initialized in execute()
         self.max_chars = settings.CONTEXT_CONFIG.get("phase2_max_chars", 60000)
         env_max = os.environ.get("OPENLAD_MAX_CHARS")
         if env_max:
             self.max_chars = int(env_max)
             logger.info(f"[PHASE-2] Environment variable overrides context quota: {self.max_chars}")
 
-    def _get_query_expansion_keywords(self) -> list[str]:
-        """Load query expansion keywords from industry packs. If industry_hint is not specified, iterate all industry packs to collect."""
+    def _get_query_expansion_keywords(self, industry_hint: str = None) -> list[str]:
+        """Load query expansion keywords from industry packs.
+
+        If industry_hint is not specified, iterate all industry packs to collect.
+
+        industry_hint is REQUEST-scoped and therefore passed in explicitly:
+        this executor is cached per tenant (QueryEngine._get_components) and
+        shared by concurrent requests, so request parameters must never be
+        stored on self.
+        """
         try:
             from ..plugins import get_plugin_registry
             registry = get_plugin_registry()
             # If industry hint is specified, prioritize loading the corresponding industry pack
-            if self.industry_hint and self.industry_hint != "auto":
-                plugin = registry.get_plugin(self.industry_hint)
+            if industry_hint and industry_hint != "auto":
+                plugin = registry.get_plugin(industry_hint)
                 if not plugin:
-                    plugin = registry.get_plugin_by_category(self.industry_hint)
+                    plugin = registry.get_plugin_by_category(industry_hint)
                 if plugin and hasattr(plugin.retrieval, 'get_query_expansion_keywords'):
                     return plugin.retrieval.get_query_expansion_keywords()
             # Otherwise iterate all industry packs, merge expansion keywords
@@ -61,17 +68,20 @@ class RetrievalExecutor:
             self.merger = SegmentMerger(tenant_id)
             self.metadata_db = get_tenant_metadata_db(tenant_id)
 
-        self.industry_hint = industry_hint
         strategy = plan.get("strategy", "single_retrieve")
         steps = plan.get("steps", [])
         logger.info("[PHASE-2] ===== Retrieval Execution =====")
         logger.info(f"[PHASE-2] Strategy: {strategy}, Steps: {len(steps)}, Industry: {industry_hint or 'auto'}")
 
         if strategy == "decomposed_retrieve":
-            return self._execute_decomposed(steps, original_query=original_query)
-        return self._execute_standard(steps, strategy_label=strategy, original_query=original_query)
+            return self._execute_decomposed(steps, original_query=original_query,
+                                            industry_hint=industry_hint)
+        return self._execute_standard(steps, strategy_label=strategy,
+                                      original_query=original_query,
+                                      industry_hint=industry_hint)
 
-    def _execute_standard(self, steps: list[dict], strategy_label: str = "single_retrieve", original_query: str = None) -> dict[str, Any]:
+    def _execute_standard(self, steps: list[dict], strategy_label: str = "single_retrieve",
+                          original_query: str = None, industry_hint: str = None) -> dict[str, Any]:
         step_quotas = self._calculate_step_quotas(steps)
         all_results: list[SearchResult] = []
         trace: list[dict] = []
@@ -92,10 +102,11 @@ class RetrievalExecutor:
             if not resolved_filter and doc_filter:
                 logger.warning(f"[PHASE-2] Step {i} doc_filter {doc_filter} did not match any documents, using original query for retrieval")
 
-            step_results = self._execute_step(tool, query, resolved_filter, purpose, step_quota, original_query=original_query)
+            step_results = self._execute_step(tool, query, resolved_filter, purpose, step_quota,
+                                              original_query=original_query, industry_hint=industry_hint)
             step_trace = {"step": i, "tool": tool, "query": query, "doc_filter": doc_filter, "purpose": purpose, "quota": step_quota, "results_count": len(step_results)}
             merge_quota = min(step_quota, self.max_chars - total_step_chars)
-            step_context, step_sources = self.merger.merge(step_results, max_context_chars=merge_quota, query=query, industry_hint=self.industry_hint)
+            step_context, step_sources = self.merger.merge(step_results, max_context_chars=merge_quota, query=query, industry_hint=industry_hint)
             # FIX: Safety truncation, ensure context does not exceed quota (merger.merge may have imprecise truncation issues)
             if len(step_context) > step_quota:
                 step_context = step_context[:step_quota]
@@ -154,7 +165,8 @@ class RetrievalExecutor:
         logger.info(f"[PHASE-2] Total results: {len(all_results)}, Context: {len(final_context)} chars")
         return {"context": final_context, "sources": final_sources, "trace": trace, "total_results": len(all_results), "total_chars": len(final_context), "strategy": strategy_label}
 
-    def _execute_decomposed(self, steps: list[dict], original_query: str = None) -> dict[str, Any]:
+    def _execute_decomposed(self, steps: list[dict], original_query: str = None,
+                            industry_hint: str = None) -> dict[str, Any]:
         """
         Step-by-step retrieval + structured extraction. After each step's retrieval, use LLM to distill into JSON.
         The final Synthesizer only processes the structured summary, not raw page text.
@@ -188,7 +200,7 @@ class RetrievalExecutor:
                 # FIX: If industry pack has query expansion keywords configured, enhance overly simple sub-queries
                 original_sub_q = sub_q
                 if len(sub_q.split()) <= 3:
-                    expansion_kws = self._get_query_expansion_keywords()
+                    expansion_kws = self._get_query_expansion_keywords(industry_hint)
                     if expansion_kws:
                         expanded = f"{sub_q} {' '.join(expansion_kws)}"
                         logger.info(f"[PHASE-2] Step {i} sub-query {sub_i} expanded: '{original_sub_q}' -> '{expanded}'")
@@ -198,14 +210,15 @@ class RetrievalExecutor:
                 sub_filter = self._match_subquery_to_docs(sub_q, resolved_filter)
                 if sub_filter:
                     logger.info(f"[PHASE-2] Step {i} sub-query {sub_i} matched trusted documents: {[d[:8] for d in sub_filter]}")
-                sub_results = self._execute_step("single_retrieve", sub_q, sub_filter, purpose, step_quota, original_query=original_query)
+                sub_results = self._execute_step("single_retrieve", sub_q, sub_filter, purpose, step_quota,
+                                                 original_query=original_query, industry_hint=industry_hint)
 
                 # Supplementary retrieval: use the same sub_filter
                 # No longer hardcode financial keywords to trigger supplementary retrieval; let original sub-query naturally recall related content
 
                 cfg = settings.CONTEXT_CONFIG
                 sub_merge_cap = cfg.get("decomposed_sub_merge_cap", 30000)
-                sub_context, sub_sources = self.merger.merge(sub_results, max_context_chars=min(step_quota, sub_merge_cap), query=sub_q, industry_hint=self.industry_hint)
+                sub_context, sub_sources = self.merger.merge(sub_results, max_context_chars=min(step_quota, sub_merge_cap), query=sub_q, industry_hint=industry_hint)
                 # FIX: Safety truncation, ensure sub-query context does not exceed quota
                 if len(sub_context) > step_quota:
                     sub_context = sub_context[:step_quota]
@@ -478,22 +491,30 @@ Output structure (JSON):
     def _execute_step(self, tool: str, query: str, doc_filter: list[str],
                       purpose: str,
                       max_context_quota: int = None,
-                      original_query: str = None) -> list[SearchResult]:
+                      original_query: str = None,
+                      industry_hint: str = None) -> list[SearchResult]:
         if tool == "single_retrieve":
-            return self._single_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
+            return self._single_retrieve(query, doc_filter, max_context_quota,
+                                         original_query=original_query, industry_hint=industry_hint)
         elif tool == "decomposed_retrieve":
             if isinstance(query, list):
                 all_results = []
                 for q in query:
-                    all_results.extend(self._single_retrieve(q, doc_filter, max_context_quota, original_query=original_query))
+                    all_results.extend(self._single_retrieve(q, doc_filter, max_context_quota,
+                                                              original_query=original_query,
+                                                              industry_hint=industry_hint))
                 return all_results
-            return self._single_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
+            return self._single_retrieve(query, doc_filter, max_context_quota,
+                                         original_query=original_query, industry_hint=industry_hint)
         elif tool == "fulltext_retrieve":
-            return self._fulltext_retrieve(doc_filter, query, max_context_quota, original_query=original_query)
+            return self._fulltext_retrieve(doc_filter, query, max_context_quota,
+                                           original_query=original_query, industry_hint=industry_hint)
         elif tool == "filtered_retrieve":
-            return self._filtered_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
+            return self._filtered_retrieve(query, doc_filter, max_context_quota,
+                                           original_query=original_query, industry_hint=industry_hint)
         else:
-            return self._single_retrieve(query, doc_filter, max_context_quota, original_query=original_query)
+            return self._single_retrieve(query, doc_filter, max_context_quota,
+                                         original_query=original_query, industry_hint=industry_hint)
 
     @staticmethod
     def _build_exact_match_excerpt(raw_text: str, tokens: list[str],
@@ -717,7 +738,8 @@ Output structure (JSON):
         return results
 
     def _single_retrieve(self, query: str, doc_filter: list[str],
-                         max_context_quota: int = None, original_query: str = None) -> list[SearchResult]:
+                         max_context_quota: int = None, original_query: str = None,
+                         industry_hint: str = None) -> list[SearchResult]:
         doc_id_filter = self._resolve_doc_filter(doc_filter)
         cfg = settings.CONTEXT_CONFIG
         max_per_doc = cfg.get("max_results_per_doc", 15)
@@ -740,7 +762,7 @@ Output structure (JSON):
         # FIX: Clean query, strip intent words to make embedding/FTS retrieval more precise
         search_query = self._clean_query_for_retrieval(query)
 
-        plan = QueryPlan(intent=IntentType.EXACT_LOOKUP, raw_query=search_query, entities=[], deep_explore=False, industry_hint=self.industry_hint)
+        plan = QueryPlan(intent=IntentType.EXACT_LOOKUP, raw_query=search_query, entities=[], deep_explore=False, industry_hint=industry_hint)
         cfg = settings.CONTEXT_CONFIG
         avg_page_chars = cfg.get("avg_page_chars", 1200)
         min_pages = cfg.get("min_pages_per_doc", 5)
@@ -1140,17 +1162,21 @@ Output only JSON, no explanation."""
         return results
 
     def _fulltext_retrieve(self, doc_filter: list[str], query: str = None,
-                            max_context_quota: int = None, original_query: str = None) -> list[SearchResult]:
+                            max_context_quota: int = None, original_query: str = None,
+                            industry_hint: str = None) -> list[SearchResult]:
         doc_ids = self._resolve_doc_filter(doc_filter)
         if not doc_ids:
-            return self._single_retrieve(query, [], original_query=original_query) if query else []
+            return self._single_retrieve(query, [], original_query=original_query,
+                                         industry_hint=industry_hint) if query else []
 
         # FIX: When there is a query, can't blindly truncate first N pages by page number. Should first use keyword retrieval for relevant pages,
         # to avoid truncation when the answer is in the later half of the document. If no query, keep original behavior.
         if query and query.strip():
             all_results = []
             for doc_id in doc_ids:
-                all_results.extend(self._single_retrieve(query, [doc_id], max_context_quota, original_query=original_query))
+                all_results.extend(self._single_retrieve(query, [doc_id], max_context_quota,
+                                                         original_query=original_query,
+                                                         industry_hint=industry_hint))
             return all_results
 
         results = []
@@ -1175,12 +1201,15 @@ Output only JSON, no explanation."""
         return results
 
     def _filtered_retrieve(self, query: str, doc_filter: list[str],
-                            max_context_quota: int = None, original_query: str = None) -> list[SearchResult]:
+                            max_context_quota: int = None, original_query: str = None,
+                            industry_hint: str = None) -> list[SearchResult]:
         if not doc_filter:
-            return self._single_retrieve(query, [], max_context_quota, original_query=original_query)
+            return self._single_retrieve(query, [], max_context_quota,
+                                         original_query=original_query, industry_hint=industry_hint)
         results = []
         for doc_id in self._resolve_doc_filter(doc_filter):
-            results.extend(self._single_retrieve(query, [doc_id], max_context_quota, original_query=original_query))
+            results.extend(self._single_retrieve(query, [doc_id], max_context_quota,
+                                                 original_query=original_query, industry_hint=industry_hint))
         return results
 
     def _resolve_doc_filter(self, doc_filter: list[str], silent: bool = False) -> list[str]:

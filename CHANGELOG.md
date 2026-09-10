@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Concurrent queries no longer share each other's industry hint.**
+  `RetrievalExecutor` is cached per tenant and reused by concurrent requests,
+  but `industry_hint` (supplied by the client on every request) was stored on
+  the executor instance and read back from it later in the same call chain, so
+  two overlapping requests for one tenant could apply each other's industry
+  pack rules — query expansion, chapter boost rules and spec-fact terms. The
+  hint now travels through the retrieval call chain as an explicit argument
+  and is no longer kept on the shared instance; `execute()`'s public signature
+  is unchanged.
 - **Source citations are now clickable and deduplicated.** The answer footer's
   source links were `href="#"` placeholders that did nothing when clicked and
   repeated the same document once per cited chunk. Sources are now merged per
