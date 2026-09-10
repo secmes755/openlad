@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The answer self-check is now a decision rather than an accident of attribute
+  naming.** Its gate read `getattr(industry_pack, "name", "generic") != "generic"`,
+  but no plugin class has ever had a `name` attribute — pack identity lives on
+  `manifest.id` / `manifest.name` — so the default always won and the check could
+  never run. The composed plugin's docstring even recorded that state as
+  intentional ("must stay disabled until its own fix lands"). The gate now reads
+  `manifest.id` together with an explicit `self_check_enabled` config knob that
+  defaults to **off**: behaviour is unchanged and the check's known cost (one extra
+  LLM round trip per answer) stays opt-in, but enabling it is now a configuration
+  change instead of unreachable code. The generic base pack is never checked — it is
+  composed under every pack and carries no domain rules to enforce.
 - **The agentic retriever's per-request index is actually released.** `AgenticRetriever`
   is built per deep-research query and loads the tenant's entire vector index into
   memory, but `release()` only logged a line — the index stayed referenced until the

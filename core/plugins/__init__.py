@@ -718,9 +718,15 @@ class ComposedIngestionPlugin(IngestionPlugin):
 class ComposedIndustryPlugin(IndustryPlugin):
     """An explicitly-selected industry pack layered over the generic base pack.
 
-    Identity (manifest) is the overlay's; hooks are composed. Intentionally
-    exposes no `name` attribute: the self-check gate keys off `name` and must
-    stay disabled until its own fix lands.
+    Identity (manifest) is the overlay's; hooks are composed, so callers that
+    need a label read `manifest.name` and callers that need identity read
+    `manifest.id`.
+
+    This object deliberately exposes no `name` attribute. That is no longer load
+    bearing: the synthesizer's self-check gate used to key off `name` — which no
+    plugin ever had, so the check could never run — and it now decides from
+    `manifest.id` together with the `self_check_enabled` config, which stays off
+    by default.
     """
 
     def __init__(self, base: IndustryPlugin, overlay: IndustryPlugin):

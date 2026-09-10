@@ -175,6 +175,11 @@ CONTEXT_CONFIG = {
     "context_extract_fragment_size": 3000,
     # Self-check context sampling: max evidence-anchor keywords per answer
     "context_extract_max_keywords": 20,
+    # Answer self-check (LLM reviews its own answer against the evidence and may
+    # replace it). Off by default: it costs one extra LLM round trip per answer.
+    # It applies to real industry packs only — the always-on generic base carries
+    # no domain rules to enforce.
+    "self_check_enabled": False,
     # Map-Reduce: chunk size for splitting context
     "map_reduce_chunk_size": 8000,
     # Direct generation: max_tokens for simple queries

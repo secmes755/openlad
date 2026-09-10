@@ -154,7 +154,7 @@ class AnswerSynthesizer:
                 answer = self._post_process_answer(raw_answer)
 
             self_check_passed = False
-            if industry_pack and getattr(industry_pack, "name", "generic") != "generic":
+            if self._should_self_check(industry_pack):
                 answer_before_check = answer
                 answer = self._self_check(query, answer, context, industry_pack=industry_pack)
                 self_check_passed = (answer == answer_before_check)  # unchanged = passed
@@ -273,6 +273,31 @@ For example: if the user asks whether a capability exists, the answer should inc
         if not parts:
             return ""
         return "\n\n".join(parts)
+
+    def _should_self_check(self, industry_pack) -> bool:
+        """Whether to run the answer self-check for this pack.
+
+        Off by default (``self_check_enabled``): the check costs one extra LLM
+        round trip per answer, and its corrections are only as good as the pack's
+        rules. It applies to a real industry pack only — the always-on generic
+        base is composed under every pack and has no domain rules to enforce, so
+        the pack id is what decides.
+
+        The gate this replaces read ``getattr(industry_pack, "name", "generic")``.
+        No plugin class has ever had a ``name`` attribute (identity lives on
+        ``manifest.id`` / ``manifest.name``), so the default always won and the
+        check could never run. The composed plugin's docstring records that state
+        as intentional ("must stay disabled until its own fix lands"); this makes
+        it an explicit, configurable decision instead of an accident of attribute
+        naming.
+        """
+        if not settings.CONTEXT_CONFIG.get("self_check_enabled", False):
+            return False
+        if industry_pack is None:
+            return False
+        manifest = getattr(industry_pack, "manifest", None)
+        pack_id = getattr(manifest, "id", None)
+        return bool(pack_id) and pack_id != "generic"
 
     def _self_check(self, query: str, raw_answer: str, context: str, industry_pack=None) -> str:
         if "not found" in raw_answer.lower() or "not mentioned" in raw_answer.lower():
