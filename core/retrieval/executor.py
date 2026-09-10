@@ -16,6 +16,23 @@ from .truncation import mark_truncated
 logger = logging.getLogger(__name__)
 
 
+def _log_doc_filter(doc_filter: list[str], silent: bool, skipped: list[str],
+                    matched_count: int, sample: list[str]) -> None:
+    """Report what a doc-filter resolution decided.
+
+    Separate from ``_resolve_doc_filter`` so a memoised hit can replay the report
+    without redoing the work: the quota pass resolves filters silently and the step
+    pass does not, and the second one is entitled to the log the first suppressed.
+    """
+    if silent:
+        return
+    if skipped:
+        logger.warning(f"[DOC_FILTER] Skipping too-short/invalid filter terms: {skipped}")
+    if matched_count:
+        logger.info(f"[DOC_FILTER] Filter terms {doc_filter} -> matched "
+                    f"{matched_count} documents: {sample}")
+
+
 class RetrievalExecutor:
     def __init__(self, tenant_id: str = None):
         self.tenant_id = tenant_id
@@ -69,6 +86,15 @@ class RetrievalExecutor:
             self.retriever = HierarchicalRetriever(tenant_id)
             self.merger = SegmentMerger(tenant_id)
             self.metadata_db = get_tenant_metadata_db(tenant_id)
+
+        # Doc-filter resolution lists up to doc_filter_list_limit documents, and the
+        # same filter comes back for the quota pass and then again for every step:
+        # a decomposed request paid for the full listing several times over. One
+        # request cannot see the document set change, so memoise for its duration.
+        # Deliberately scoped here and not on the instance: the executor is cached
+        # per tenant and reused across requests, so a longer-lived cache would be
+        # stale after an upload and would hide the new document from filters.
+        self._doc_filter_cache: dict = {}
 
         strategy = plan.get("strategy", "single_retrieve")
         steps = plan.get("steps", [])
@@ -1139,6 +1165,18 @@ Output only JSON, no explanation."""
         if not doc_filter:
             return []
 
+        # Memoised for the duration of one execute() call (see the note there).
+        # `silent` is deliberately NOT part of the key: the quota pass asks
+        # silently and the step pass does not, and treating those as different
+        # filters is what made the listing happen twice. The cached details carry
+        # what the non-silent caller needs to log.
+        cache = getattr(self, "_doc_filter_cache", None)
+        cache_key = tuple(doc_filter)
+        if cache is not None and cache_key in cache:
+            resolved, skipped, matched_count, sample = cache[cache_key]
+            _log_doc_filter(doc_filter, silent, skipped, matched_count, sample)
+            return list(resolved)
+
         # FIX: admin tenant also searches default tenant's documents
         cfg = settings.CONTEXT_CONFIG
         doc_list_limit = cfg.get("doc_filter_list_limit", 10000)
@@ -1179,11 +1217,11 @@ Output only JSON, no explanation."""
                     matched_ids.add(doc_id)
                 elif self._is_precise_match(filter_with_underscore, filename):
                     matched_ids.add(doc_id)
-        if skipped and not silent:
-            logger.warning(f"[DOC_FILTER] Skipping too-short/invalid filter terms: {skipped}")
-        if matched_ids and not silent:
-            logger.info(f"[DOC_FILTER] Filter terms {doc_filter} -> matched {len(matched_ids)} documents: {list(matched_ids)[:3]}")
-        return list(matched_ids)
+        resolved = list(matched_ids)
+        _log_doc_filter(doc_filter, silent, skipped, len(matched_ids), resolved[:3])
+        if cache is not None:
+            cache[cache_key] = (resolved, skipped, len(matched_ids), resolved[:3])
+        return list(resolved)
 
     def _is_precise_match(self, term: str, text: str) -> bool:
         """

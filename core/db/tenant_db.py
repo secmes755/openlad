@@ -266,6 +266,10 @@ class TenantMetadataDB:
                 "CREATE INDEX IF NOT EXISTS idx_structure_doc_path ON doc_structure_index(doc_id, section_path)",
                 "CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category_level1)",
                 "CREATE INDEX IF NOT EXISTS idx_documents_industry ON documents(industry_package_id)",
+                # The planner asks for documents by ingestion state on every query
+                # (status IN ('verified','degraded') ORDER BY created_at DESC), which
+                # was a full scan of the document table each time.
+                "CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status, created_at)",
                 "CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc_id ON doc_chunks(doc_id)",
                 "CREATE INDEX IF NOT EXISTS idx_doc_chunks_page_id ON doc_chunks(page_id)",
             ]:

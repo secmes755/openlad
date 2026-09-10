@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner they landed on. Jobs are pinned to `ubuntu-24.04` and install their own
   dependencies.
 
+### Changed
+
+- **The query hot path no longer re-lists the document table or scans it.** Two
+  costs, both work the request did not need to do:
+  `RetrievalExecutor._resolve_doc_filter` loads up to 10k documents to map filter
+  terms to document ids, and it was reached once per step in two passes over the
+  same plan (the quota pass and the step pass), so a request with a repeated filter
+  paid for that listing several times. It is now resolved once per request — the
+  memo is scoped to a single `execute()` call on purpose, because the executor is
+  cached per tenant and reused, so a longer-lived cache would go stale after an
+  upload and hide the new document from filters. Separately, the planner's document
+  query (`status IN ('verified','degraded') ORDER BY created_at DESC`) planned as
+  `SCAN DOCUMENTS USE TEMP B-TREE FOR ORDER BY` on every query; `documents` now
+  carries `idx_documents_status` on `(status, created_at)`.
+
 ### Added
 
 - **Contract tests for the retrieval executor and the agentic retriever**, the two
