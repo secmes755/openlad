@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A truncated context can no longer be reported as high confidence.** The
+  confidence heuristic looked for an uppercase `[TRUNCATED` marker in the
+  synthesized context, but the retrieval side wrote lowercase markers
+  (`...[truncated]`, `...[content truncated]`, `... (context truncated)`) and
+  three call sites — the standard and decomposed executors and the deep-research
+  engine — cut the context with no marker at all, so a cut-short context was
+  invisible either way and still scored `high`. Every producer now appends one
+  canonical marker from `core/retrieval/truncation.py` and the detector reads it
+  through the same module, which also still recognises the older marker shapes.
 - **`/health`, `/` and the OpenAPI schema now report the real version.** The
   version was hardcoded as `"1.0.0"` in four places across the API layer while the
   project was releasing 0.4.x, so `GET /health` never named the running release

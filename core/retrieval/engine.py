@@ -14,6 +14,7 @@ from .planner import QueryPlanner
 from .retriever import HierarchicalRetriever, SegmentMerger
 from .router import IntentRouter
 from .synthesizer import AnswerSynthesizer
+from .truncation import mark_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                 sub_result = executor.execute(sub_plan, tenant_id=tenant_id, industry_hint=industry_hint, original_query=query_text)
                 sub_context = sub_result.get('context', '')
                 if len(sub_context) > per_subquery_max:
-                    sub_context = sub_context[:per_subquery_max]
+                    sub_context = mark_truncated(sub_context[:per_subquery_max])
                     logger.warning(f"[ENGINE] sub-query {i} context truncated: {len(sub_result.get('context', ''))} -> {per_subquery_max}")
                 all_contexts.append(f"\n===== Sub-query {i}: {sq} =====\n{sub_context}")
                 all_sources.extend(sub_result.get("sources", []))
@@ -208,9 +209,9 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                     for ac in all_contexts:
                         keep = max(int(len(ac) * ratio), 500)
                         truncated.append(ac[:keep])
-                    final_context = "\n".join(truncated)
+                    final_context = mark_truncated("\n".join(truncated))
                 else:
-                    final_context = final_context[:context_budget]
+                    final_context = mark_truncated(final_context[:context_budget])
                 logger.info(
                     f"[ENGINE] deep_research context truncated: "
                     f"{sum(len(ac) for ac in all_contexts)} -> {len(final_context)}"

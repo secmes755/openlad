@@ -9,6 +9,7 @@ from typing import Any
 from ..config import settings
 from ..models.client import get_model_client
 from .router import IntentType, QueryPlan
+from .truncation import is_truncated, mark_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +404,7 @@ Output only JSON."""
 
         merged = "\n\n".join(parts)
         if len(merged) > max_chars:
-            merged = merged[:max_chars] + "\n... (context truncated)"
+            merged = mark_truncated(merged[:max_chars])
 
         return merged
 
@@ -635,7 +636,7 @@ Output JSON:
         specificity += ans_lower.count('\n|') // 2
 
         # ── Truncation context penalty ──
-        context_truncated = "[CONTENT TRUNCATED" in context or "[TRUNCATED" in context
+        context_truncated = is_truncated(context)
 
         # ── Score ──
         if has_not_found:

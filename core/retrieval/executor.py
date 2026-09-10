@@ -11,6 +11,7 @@ from ..db.tenant_db import get_tenant_metadata_db
 from ..models.client import get_model_client
 from .retriever import HierarchicalRetriever, SearchResult, SegmentMerger
 from .router import IntentType, QueryPlan
+from .truncation import mark_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -150,14 +151,14 @@ class RetrievalExecutor:
                 for sc in step_contexts:
                     keep = max(int(len(sc) * ratio), 500)
                     truncated.append(sc[:keep])
-                final_context = "".join(truncated)
+                final_context = mark_truncated("".join(truncated))
                 logger.info(
                     f"[PHASE-2] Proportional truncation: {sum(len(sc) for sc in step_contexts)} "
                     f"-> {len(final_context)} (ratio={ratio:.2f}, {len(step_contexts)} steps)"
                 )
             else:
                 # Single-step: tail truncation is lossless (only one source)
-                final_context = final_context[:context_budget]
+                final_context = mark_truncated(final_context[:context_budget])
                 logger.warning(f"[PHASE-2] Single-step context truncation: -> {context_budget}")
 
         logger.info("[PHASE-2] ===== Retrieval Complete =====")
@@ -262,7 +263,7 @@ class RetrievalExecutor:
             for sp in structured_parts:
                 keep = max(int(len(sp) * ratio), 300)
                 truncated_parts.append(sp[:keep])
-            final_context = "\n".join(truncated_parts)
+            final_context = mark_truncated("\n".join(truncated_parts))
             logger.info(
                 f"[PHASE-2] Decomposed proportional truncation: "
                 f"{sum(len(sp) for sp in structured_parts)} -> {len(final_context)} "

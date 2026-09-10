@@ -11,6 +11,7 @@ from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models.client import EmbeddingError, get_model_client
 from .router import IntentType, QueryPlan
+from .truncation import mark_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -1264,7 +1265,7 @@ class SegmentMerger:
 
         result = "\n".join(parts)
         if len(result) > max_len:
-            result = result[:max_len] + "\n...[truncated]"
+            result = mark_truncated(result[:max_len])
         return result
 
     def _segment_page_content(self, content: str, section_title: str) -> str:
@@ -1553,7 +1554,7 @@ class SegmentMerger:
             # Limit total content length returned to client to avoid oversized response
             max_source_content = cfg.get("merger_max_source_content", 8000)
             if len(source_content) > max_source_content:
-                source_content = source_content[:max_source_content] + "\n...[content truncated]"
+                source_content = mark_truncated(source_content[:max_source_content])
 
             source_entry = {
                 "doc_id": doc_id, "title": doc_title,
