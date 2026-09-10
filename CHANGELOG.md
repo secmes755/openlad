@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Failures in the retrieval layer's industry-pack hooks are no longer silent.**
+  Six handlers caught an exception and continued with a degraded result — the
+  pack's query vocabulary, its retrieval rules, its spec terms — behind a bare
+  `pass` or a debug-level line, so a pack that could not be consulted was
+  indistinguishable from a pack with nothing to contribute. Each now logs, at
+  warning where answer quality is affected (including the rule loader, which lost
+  every rule while reporting only at debug) and at debug where the path is already
+  degraded or the call is best-effort by design.
 - **A model reply that could not be parsed as JSON is now distinguishable from an
   empty one.** `generate_json` returns `{}` both when the model genuinely answered
   `{}` and when its reply was unreadable, and the ~13 call sites cannot tell the

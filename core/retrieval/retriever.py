@@ -76,11 +76,14 @@ class HierarchicalRetriever:
                     raw_rules = plugin.retrieval.get_retrieval_rules()
                     if "package_model_pages" in raw_rules:
                         all_rules["package_model_pages"].append(raw_rules["package_model_pages"])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[RETRIEVER] pack {pack_id!r} retrieval rules unreadable: {e}")
             return all_rules
         except Exception as e:
-            logger.debug(f"[RETRIEVER] failed to load industry retrieval rules: {e}")
+            # This drops every rule: low-value-section filtering, spec sections and
+            # section boosts all stop applying. That is an answer-quality
+            # regression, so it is reported at warning rather than debug.
+            logger.warning(f"[RETRIEVER] failed to load industry retrieval rules: {e}")
             return {}
 
     def retrieve(self, query: str, plan: QueryPlan, max_results: int = 20,
@@ -260,7 +263,10 @@ class HierarchicalRetriever:
             plugin = None
             try:
                 plugin = registry.detect_plugin_for_text(query)
-            except Exception:
+            except Exception as e:
+                # A pack that cannot be consulted for this query loses its spec
+                # vocabulary silently; "no match" is the normal path, not this.
+                logger.warning(f"[RETRIEVER] industry detection failed for query: {e}")
                 plugin = None
             if plugin is not None and hasattr(plugin, "get_spec_query_terms"):
                 try:
@@ -269,9 +275,10 @@ class HierarchicalRetriever:
                         for item in v:
                             if item not in merged[k]:
                                 merged[k].append(item)
-                except Exception:
-                    pass
-        except Exception:
+                except Exception as e:
+                    logger.warning(f"[RETRIEVER] spec query terms unavailable: {e}")
+        except Exception as e:
+            logger.warning(f"[RETRIEVER] query term expansion failed: {e}")
             return keywords
 
         if not merged:
@@ -1068,8 +1075,9 @@ class HierarchicalRetriever:
             if cj.get("vlm_analysis"):
                 extra_data = dict(extra_data or {})
                 extra_data["has_vlm_description"] = True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[RETRIEVER] page content_json unreadable "
+                         f"(page {page.get('page_num')}): {e}")
         return SearchResult(
             doc_id=result["doc_id"], page_id=result.get("page_id", page.get("id")),
             page_num=page.get("page_num"), score=result.get("score", 0.0),

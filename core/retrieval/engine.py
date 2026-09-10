@@ -319,8 +319,11 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             if progress_cb:
                 try:
                     progress_cb(stage, **meta)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Swallowed on purpose (a transport must not break the
+                    # pipeline), but not without a trace: a callback that always
+                    # fails means the client sees no progress at all.
+                    logger.debug(f"[ENGINE] progress callback failed at stage {stage!r}: {e}")
 
         # OpenLAD: No hardcoded language-specific rewrites in core.
         # Query normalization is handled by the industry pack's preprocess_query hook if needed.

@@ -56,8 +56,10 @@ class RetrievalExecutor:
                     kws = plugin.retrieval.get_query_expansion_keywords()
                     all_kws.extend(kws)
             return list(dict.fromkeys(all_kws))  # Deduplicate while preserving order
-        except Exception:
-            pass
+        except Exception as e:
+            # Returning [] here silently strips the pack's query vocabulary, which
+            # only shows up as worse recall with nothing to point at.
+            logger.warning(f"[EXECUTOR] query expansion keywords unavailable: {e}")
         return []
 
     def execute(self, plan: dict[str, Any], tenant_id: str = None,

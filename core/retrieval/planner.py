@@ -506,8 +506,10 @@ Rewritten query:"""
                         if entity_upper in title and doc["id"] not in doc_filter:
                             doc_filter.append(doc["id"])
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                # Already inside the degraded path (the caller is told the plan
+                # failed), but the reason still belongs in the log.
+                logger.debug(f"[PLANNER] entity-to-document matching failed while degrading: {e}")
 
         return {
             "analysis": "Analysis failed, degraded to single retrieval",
