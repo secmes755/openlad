@@ -44,13 +44,19 @@ async def lifespan(app: FastAPI):
         plugins = registry.list_plugins()
         logger.info(f"[LIFESPAN] Loaded {len(plugins)} industry packages: {list(plugins.keys())}")
 
-        # Auto-initialize built-in admin tenant + admin user
-        try:
-            from ..tenant.auth import get_auth_manager
-            from ..tenant.tenant_manager import get_tenant_manager
-            tenant_mgr = get_tenant_manager()
-            auth_mgr = get_auth_manager()
+        # Auto-initialize built-in admin tenant + admin user.
+        # The password requirement is part of the STARTUP CONTRACT: an instance
+        # whose built-in admin user was never created is not administrable, so
+        # this must abort startup instead of degrading to a log line. The check
+        # therefore sits OUTSIDE the best-effort try below — a bare `raise`
+        # inside it used to be caught by that try, leaving a service that
+        # started healthy with no admin user.
+        from ..tenant.auth import get_auth_manager
+        from ..tenant.tenant_manager import get_tenant_manager
+        tenant_mgr = get_tenant_manager()
+        auth_mgr = get_auth_manager()
 
+        try:
             admin_tenant = tenant_mgr.get_tenant("admin")
             if not admin_tenant:
                 tenant_mgr.create_tenant(
@@ -60,42 +66,44 @@ async def lifespan(app: FastAPI):
                     storage_quota_mb=10240
                 )
                 logger.info("[LIFESPAN] Built-in admin tenant created")
-
-            # Check if admin user exists
-            admin_users = auth_mgr.list_users("admin")
-            if not any(u.username == "admin" for u in admin_users):
-                # FIX: No default password — require explicit OPENLAD_ADMIN_PASSWORD env var
-                admin_password = os.environ.get("OPENLAD_ADMIN_PASSWORD")
-                if not admin_password:
-                    logger.error("[LIFESPAN] OPENLAD_ADMIN_PASSWORD environment variable is not set. "
-                                 "Admin user cannot be created. Please set it before first startup.")
-                    raise RuntimeError("OPENLAD_ADMIN_PASSWORD is required for initial admin creation")
-                auth_mgr.create_user(
-                    tenant_id="admin",
-                    username="admin",
-                    password=admin_password,
-                    role="admin"
-                )
-                logger.info("[LIFESPAN] Built-in admin user created")
-            else:
-                logger.info("[LIFESPAN] Built-in admin user already exists")
         except Exception as e:
-            logger.error(f"[LIFESPAN] admin initialization failed: {e}", exc_info=True)
+            raise RuntimeError(f"admin tenant initialization failed: {e}") from e
 
-        # Initialize core engine (each component initialized independently, no blocking)
+        # No default password — require explicit OPENLAD_ADMIN_PASSWORD
+        admin_users = auth_mgr.list_users("admin")
+        if not any(u.username == "admin" for u in admin_users):
+            admin_password = os.environ.get("OPENLAD_ADMIN_PASSWORD")
+            if not admin_password:
+                raise RuntimeError(
+                    "OPENLAD_ADMIN_PASSWORD is required for initial admin creation"
+                )
+            auth_mgr.create_user(
+                tenant_id="admin",
+                username="admin",
+                password=admin_password,
+                role="admin"
+            )
+            logger.info("[LIFESPAN] Built-in admin user created")
+        else:
+            logger.info("[LIFESPAN] Built-in admin user already exists")
+
+        # Core components: a service that cannot ingest or retrieve must not
+        # start. Swallowing these failures left app.state.query_engine unset,
+        # turning every later /query into an opaque 500 while /health kept
+        # reporting success.
         try:
             from ..ingestion.builder import DocumentIndexBuilder
             app.state.builder = DocumentIndexBuilder()
             logger.info("[LIFESPAN] Document builder initialization complete")
         except Exception as e:
-            logger.error(f"[LIFESPAN] Document builder initialization failed: {e}", exc_info=True)
+            raise RuntimeError(f"Document builder initialization failed: {e}") from e
 
         try:
             from ..retrieval.engine import QueryEngine
             app.state.query_engine = QueryEngine()
             logger.info("[LIFESPAN] Retrieval engine initialization complete")
         except Exception as e:
-            logger.error(f"[LIFESPAN] Retrieval engine initialization failed: {e}", exc_info=True)
+            raise RuntimeError(f"Retrieval engine initialization failed: {e}") from e
 
         # Check external model service reachability (do not start processes)
         try:
@@ -113,7 +121,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"[LIFESPAN] Service reachability check failed: {e}", exc_info=True)
     except Exception as e:
+        # Abort startup — swallowing here would defeat every raise() above.
         logger.error(f"Initialization failed: {e}", exc_info=True)
+        raise
     yield
     logger.info("OpenLAD service shutting down...")
 

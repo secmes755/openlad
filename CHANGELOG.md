@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Startup now fails fast when a core component cannot initialise.** The
+  lifespan caught every initialisation error and only logged it, so the service
+  started healthy in states it cannot serve: a failed `QueryEngine` or
+  `DocumentIndexBuilder` left `app.state.query_engine` unset (every later
+  `/query` returned an opaque 500 while `/health` stayed green), and a missing
+  `OPENLAD_ADMIN_PASSWORD` produced an instance with no admin user. Both now
+  abort startup — the same contract the environment self-check already
+  followed — and only the non-core, network-dependent service reachability
+  check remains a warning.
 - **Concurrent queries no longer share each other's industry hint.**
   `RetrievalExecutor` is cached per tenant and reused by concurrent requests,
   but `industry_hint` (supplied by the client on every request) was stored on
