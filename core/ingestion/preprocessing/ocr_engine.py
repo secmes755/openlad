@@ -306,22 +306,6 @@ class TextQualityChecker:
             "中", "上", "下", "内", "外", "时", "后", "前", "间",
         ])
 
-        # Industry-specific terms injected from industry pack, not hardcoded in core
-        self._industry_terms = set()
-
-    def _load_industry_terms(self, industry_pack=None):
-        """Load terminology word list from industry pack"""
-        if industry_pack and hasattr(industry_pack, 'ingestion'):
-            terms = getattr(industry_pack.ingestion, 'ocr_quality_terms', [])
-            if terms:
-                self._industry_terms = set(terms)
-                return
-        # Default empty, no industry terms hardcoded
-        self._industry_terms = set()
-
-    def set_industry_pack(self, industry_pack):
-        """Set industry pack, load industry-specific terms"""
-        self._load_industry_terms(industry_pack)
 
     def check(self, text: str) -> dict[str, Any]:
         """
@@ -513,9 +497,6 @@ class TextQualityChecker:
             return 0.0
 
         hits = sum(1 for w in words if w in self._cn_common_words)
-        # Also check industry-specific terms (injected from industry pack)
-        if self._industry_terms:
-            hits += sum(1 for w in words if w in self._industry_terms)
 
         return min(hits / len(words), 1.0) if words else 0.0
 

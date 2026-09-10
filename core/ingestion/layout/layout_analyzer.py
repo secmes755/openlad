@@ -454,24 +454,3 @@ class LayoutAnalyzer:
 
         return "text_body"
 
-    def detect_columns_from_positions(self, x_positions: list[float],
-                                     page_width: float) -> int:
-        """Detect column count from positions (for external use)"""
-        if len(x_positions) < 3:
-            return 1
-
-        x_positions = sorted(x_positions)
-        gaps = [x_positions[i+1] - x_positions[i] for i in range(len(x_positions)-1)]
-
-        if not gaps:
-            return 1
-
-        # Detect if there are obvious gap separators
-        large_gaps = [g for g in gaps if g > page_width * 0.15]
-
-        if len(large_gaps) >= 2:
-            return 3
-        elif len(large_gaps) == 1:
-            return 2
-
-        return 1

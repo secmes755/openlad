@@ -172,12 +172,6 @@ class DocumentPreprocessor:
 
         return result
 
-    def preprocess_image_file(self, image_path: str, doc_id: str = "") -> PagePreprocessResult:
-        """
-        Process a single image file (jpg/png, etc.)
-        """
-        img = Image.open(image_path).convert('RGB')
-        return self.preprocess_pdf_page(img, page_num=1, direct_text="", force_ocr=True, doc_id=doc_id)
 
     def release(self):
         """Release all resources"""

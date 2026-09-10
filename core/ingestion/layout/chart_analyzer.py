@@ -582,31 +582,6 @@ Data:
 
         return chart
 
-    def _infer_chart_type(self, line: str) -> str:
-        """
-        Infer chart type from a line of text
-        """
-        line_lower = line.lower()
-        type_keywords = {
-            "flowchart": ["flowchart", "flow", "流程图", "流程"],
-            "architecture": ["architecture", "block diagram", "架构图", "架构", "系统架构"],
-            "data_chart": ["data chart", "bar chart", "line chart", "pie chart", "scatter",
-                           "柱状图", "折线图", "饼图", "散点图", "数据图", "图表"],
-            "table_image": ["table", "表格", "表格截图"],
-            "timeline": ["timeline", "gantt", "时序图", "时间线"],
-            "state_machine": ["state machine", "state diagram", "状态机", "状态图"],
-            "circuit": ["circuit", "schematic", "电路图", "原理图"],
-            "organization": ["org chart", "organization", "组织架构图", "组织图"],
-            "pinout": ["pinout", "pin diagram", "引脚图", "封装图"],
-            "product_photo": ["product", "photo", "产品图", "实物图", "照片"],
-        }
-
-        for chart_type, keywords in type_keywords.items():
-            for kw in keywords:
-                if kw in line_lower:
-                    return chart_type
-
-        return "unknown"
 
     def build_enhanced_text(self, original_text: str,
                            charts: list[ChartDescription]) -> str:

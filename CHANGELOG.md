@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead ingestion code (~600 lines across 9 files).** Unreachable code removed:
+  the disabled LLM full-structure-analysis chain in `builder.py` (its call site
+  logs "LLM full analysis disabled", so the path could never run), the legacy
+  `_optimize_table_format` whose call site was already commented out,
+  `_chunk_by_page_boundary`, the `title_deriver` delegating wrappers
+  `_generate_identifiable_title`/`_subject_in_text`, `parser._classify_pdf_page`,
+  plus unused helpers in the layout, formula, chart and preprocessing modules,
+  and `ModelClient.generate_json_array` / `ModelClient.health_check` (the only
+  caller of the former was the dead structure-analysis chain). Every symbol was
+  confirmed unreachable by call-graph analysis and by an independent whole-repo
+  search; the JSON-array parameter plumbing on the client is deliberately kept,
+  since it is the provider capability rather than application logic.
 - **Dead module: `core/ingestion/pdf_watermark_remover.py` (747 lines).** It was
   never imported by any code path, test, script, configuration or document —
   page-level watermark handling in ingestion is done by the text sanitizer in

@@ -294,8 +294,3 @@ class ImageCorrector:
             logger.warning(f"Adaptive threshold failed: {e}")
             return img
 
-    def save_corrected_image(self, image: np.ndarray, output_path: str) -> str:
-        """Save corrected image"""
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        Image.fromarray(image).save(output_path, quality=95)
-        return output_path

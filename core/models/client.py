@@ -304,15 +304,6 @@ class ModelClient:
             return result
         return {}
 
-    def generate_json_array(self, prompt: str, system_prompt: str = None,
-                            max_tokens: int = 4096, temperature: float = 0.3) -> list[dict]:
-        result = self._generate_json_inner(prompt, system_prompt, max_tokens, temperature,
-                                           json_array_mode=True)
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            return [result]
-        return []
 
     def _generate_json_inner(self, prompt: str, system_prompt: str = None,
                               max_tokens: int = 4096, temperature: float = 0.3,
@@ -454,19 +445,6 @@ class ModelClient:
         except Exception as e:
             status, kind = _classify_embedding_error(e)
             raise EmbeddingError(f"Embedding batch call failed: {e}", status_code=status, kind=kind) from e
-
-    def health_check(self) -> bool:
-        try:
-            response = self.session.get(f"{self.llm_base_url}/models", timeout=5)
-            llm_ok = response.status_code == 200
-        except Exception:
-            llm_ok = False
-        try:
-            response = self.session.get(f"{self.embedding_base_url}/models", timeout=5)
-            emb_ok = response.status_code == 200
-        except Exception:
-            emb_ok = False
-        return llm_ok and emb_ok
 
 
 _model_client = None

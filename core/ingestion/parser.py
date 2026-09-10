@@ -648,41 +648,6 @@ class DocumentParser:
             logger.warning(f"Classify p{page_num} failed: {e}")
             return "TEXT"
 
-    def _classify_pdf_page(self, page, text: str, has_images: bool, table_md: str) -> str:
-        """PDF page type classification
-
-        Return types:
-        - "text": plain text page (no images, no tables)
-        - "native_table": native text table page (no images, has text tables)
-        - "image_table": embedded image table page (has images, minimal text)
-        - "scan_page": scanned/complex image page (has images, almost no text)
-        """
-        text_len = len(text.strip())
-        has_table_markers = bool(table_md) or "Table" in text or "Fig." in text or "Figure" in text
-
-        # 1. Scanned/complex image page: has images + very little text (<100 chars)
-        if has_images and text_len < 100:
-            return "scan_page"
-
-        # 2. Embedded image table page: has images + minimal text (<500 chars) + incomplete text
-        # Check text completeness: if text has section headings and body text, consider it complete
-        text_is_complete = (
-            len(text.strip().split('\n')) > 5  # at least 5 lines
-            and any(c in text for c in ['章', '节', '1.', '2.', '3.'])  # has chapter structure
-        )
-        if has_images and text_len < 500 and not text_is_complete:
-            return "image_table"
-
-        # 3. Native text table page: no images + has table markers + has text
-        if not has_images and has_table_markers and text_len > 50:
-            return "native_table"
-
-        # 4. Plain text page: no images + no table markers
-        if not has_images and not has_table_markers:
-            return "text"
-
-        # 5. Default: plain text page
-        return "text"
 
     def _render_single_page(self, pdf_path: str, page_num: int, dpi: int = 150):
         """Render a single PDF page as PIL Image via pdf2image"""

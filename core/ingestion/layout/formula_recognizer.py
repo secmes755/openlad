@@ -175,22 +175,6 @@ Output only the LaTeX code, no other explanations."""
 
         return min(max(score, 0.0), 1.0)
 
-    def batch_recognize(self, formula_images: list[tuple[str, str]]) -> list[dict[str, Any]]:
-        """
-        Batch formula recognition
-
-        Args:
-            formula_images: [(formula_id, image_path), ...]
-
-        Returns:
-            List of recognition results
-        """
-        results = []
-        for formula_id, image_path in formula_images:
-            result = self.recognize(image_path, formula_id)
-            result["formula_id"] = formula_id
-            results.append(result)
-        return results
 
     def release(self):
         """Release model resources"""
