@@ -464,6 +464,42 @@ class TenantMetadataDB:
             conn.commit()
             return chunk_db_id
 
+    def save_chunks(self, chunks: list[dict]) -> list[int]:
+        """Save many chunks in one transaction; returns their row ids in order.
+
+        ``save_chunk`` opens a connection and commits for every chunk, and the
+        builder always stores a whole embedded batch at once, so a large document
+        paid one connection plus one fsync per chunk — thousands of them. Same
+        rows, same statements, one transaction.
+
+        Callers that need per-chunk failure isolation (a single bad row must not
+        cost the batch) should fall back to ``save_chunk`` for the batch that failed.
+        """
+        if not chunks:
+            return []
+        ids: list[int] = []
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            for chunk in chunks:
+                text = chunk.get("chunk_text") or ""
+                cursor.execute("""
+                    INSERT INTO doc_chunks (doc_id, page_id, page_num, chunk_idx, section_path, section_title, chunk_text, chunk_text_preview)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (chunk["doc_id"], chunk["page_id"], chunk["page_num"], chunk["chunk_idx"],
+                      chunk.get("section_path"), chunk.get("section_title"), text, text[:200]))
+                chunk_db_id = cursor.lastrowid
+                if chunk_db_id is None:                       # pragma: no cover
+                    raise RuntimeError("INSERT into doc_chunks returned no row id")
+                ids.append(chunk_db_id)
+                if text:
+                    try:
+                        cursor.execute("INSERT INTO doc_chunks_fts(rowid, chunk_text) VALUES (?, ?)",
+                                       (chunk_db_id, text))
+                    except Exception as e:
+                        logger.warning(f"Chunk FTS index failed: {e}")
+            conn.commit()
+        return ids
+
 
     def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: set[int] | None = None) -> list[dict]:
         """Chunk-level FTS search (OpenLAD: downgraded from page-level to chunk-level)
@@ -927,6 +963,40 @@ class TenantVectorDB:
             conn.close()
         except Exception as e:
             logger.error(f"L2 chunk store failed: {e}")
+
+    def store_l2_chunks(self, rows: list[dict]) -> int:
+        """Store many chunk embeddings in one transaction; returns the count.
+
+        ``store_l2_chunk`` connects and commits per chunk while the builder holds a
+        whole embedded batch, so a large document paid one fsync per chunk. Raises
+        on failure so the caller can fall back to per-chunk writes and keep its
+        per-chunk failure accounting.
+        """
+        if not rows:
+            return 0
+        import struct
+        payload = [
+            (row["page_id"], row["chunk_idx"], row["doc_id"],
+             struct.pack(f'{len(row["embedding"])}f', *row["embedding"]),
+             (row.get("chunk_text_preview") or "")[:200], row.get("chunk_text") or "")
+            for row in rows
+        ]
+        try:
+            conn = sqlite3.connect(self.vec_db_path)
+            try:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO l2_chunks
+                       (page_id, chunk_idx, doc_id, embedding, chunk_text_preview, chunk_text)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    payload
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"L2 chunk batch store failed ({len(rows)} chunks): {e}")
+            raise
+        return len(rows)
 
     def search_l2_chunks(self, query_embedding: list[float], limit: int = 20,
                          doc_id_filter: set[str] = None, min_score: float = 0.35) -> list[dict]:

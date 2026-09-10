@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query (`status IN ('verified','degraded') ORDER BY created_at DESC`) planned as
   `SCAN DOCUMENTS USE TEMP B-TREE FOR ORDER BY` on every query; `documents` now
   carries `idx_documents_status` on `(status, created_at)`.
+- **Chunks are written to both databases in batches instead of one connection per
+  chunk.** `save_chunk` and `store_l2_chunk` each open a connection and commit, and
+  the builder always stores a whole embedded batch at once, so a long document paid
+  two connections plus two fsyncs *per chunk* — the ingestion bottleneck on large
+  PDFs. New `save_chunks` / `store_l2_chunks` write a batch in a single transaction
+  (the metadata one keeps its FTS rows, so the chunks stay searchable), and the
+  builder falls back to the per-chunk path when a batch fails — so one bad row still
+  cannot cost its neighbours, and the per-chunk failure counters are unchanged. A
+  failed batch is rolled back whole, so the fallback cannot duplicate what it
+  rewrites.
 
 ### Added
 

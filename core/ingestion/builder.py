@@ -1842,31 +1842,44 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
                     logger.warning(f"[EMBED] Batch {batch_start}-{batch_start+len(batch)} embedding failed, skipping")
                     continue
 
-                for (page_id, page_num, chunk_idx, section_path, section_title, chunk_text), emb in zip(batch, embeddings):
-                    try:
-                        # Store in vector DB
-                        vector_db.store_l2_chunk(
-                            page_id=page_id,
-                            chunk_idx=chunk_idx,
-                            doc_id=doc_id,
-                            embedding=emb,
-                            chunk_text_preview=chunk_text[:200],
-                            chunk_text=chunk_text
-                        )
-                        # Store to chunk metadata table (including FTS)
-                        metadata_db.save_chunk(
-                            doc_id=doc_id,
-                            page_id=page_id,
-                            page_num=page_num,
-                            chunk_idx=chunk_idx,
-                            section_path=section_path,
-                            section_title=section_title,
-                            chunk_text=chunk_text
-                        )
-                        total_stored += 1
-                    except Exception as e:
-                        fail_counts["store"] += 1
-                        logger.warning(f"[EMBED] store chunk failed page={page_id} idx={chunk_idx}: {e}")
+                # The embeddings are already in hand for the whole batch, so write
+                # them in two transactions instead of two per chunk: one connection
+                # and one fsync per chunk was the ingestion bottleneck on large
+                # documents. On failure, fall back to the per-chunk path so one bad
+                # row cannot cost the batch, keeping the per-chunk failure counts.
+                stored_rows = [
+                    {"doc_id": doc_id, "page_id": page_id, "page_num": page_num,
+                     "chunk_idx": chunk_idx, "section_path": section_path,
+                     "section_title": section_title, "chunk_text": chunk_text,
+                     "chunk_text_preview": chunk_text[:200], "embedding": emb}
+                    for (page_id, page_num, chunk_idx, section_path, section_title,
+                         chunk_text), emb in zip(batch, embeddings)
+                ]
+                try:
+                    vector_db.store_l2_chunks(stored_rows)
+                    metadata_db.save_chunks(stored_rows)
+                    total_stored += len(stored_rows)
+                except Exception as e:
+                    logger.warning(f"[EMBED] Batch store failed, retrying per chunk: {e}")
+                    for row in stored_rows:
+                        try:
+                            vector_db.store_l2_chunk(
+                                page_id=row["page_id"], chunk_idx=row["chunk_idx"],
+                                doc_id=row["doc_id"], embedding=row["embedding"],
+                                chunk_text_preview=row["chunk_text_preview"],
+                                chunk_text=row["chunk_text"])
+                            metadata_db.save_chunk(
+                                doc_id=row["doc_id"], page_id=row["page_id"],
+                                page_num=row["page_num"], chunk_idx=row["chunk_idx"],
+                                section_path=row["section_path"],
+                                section_title=row["section_title"],
+                                chunk_text=row["chunk_text"])
+                            total_stored += 1
+                        except Exception as row_error:
+                            fail_counts["store"] += 1
+                            logger.warning(
+                                f"[EMBED] store chunk failed page={row['page_id']} "
+                                f"idx={row['chunk_idx']}: {row_error}")
 
             # Always report the outcome — a document that lost chunks must be
             # loudly visible, not "successfully stored 32" with 272 silently gone.

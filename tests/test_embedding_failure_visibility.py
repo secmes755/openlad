@@ -146,6 +146,29 @@ def _ok_embeddings(texts):
     return [[0.1, 0.2, 0.3] for _ in texts]
 
 
+def _chunks_written(obj, batch_method: str, single_method: str) -> int:
+    """How many chunks landed, whichever write path carried them.
+
+    Chunks are written in batches, and one at a time when a batch fails; these
+    tests care that every embedded chunk was stored and that losses are reported,
+    not which call did the storing.
+    """
+    total = getattr(obj, single_method).call_count
+    for call in getattr(obj, batch_method).call_args_list:
+        rows = call.args[0] if call.args else (
+            call.kwargs.get("rows") or call.kwargs.get("chunks"))
+        total += len(rows)
+    return total
+
+
+def _chunks_stored(vector_db) -> int:
+    return _chunks_written(vector_db, "store_l2_chunks", "store_l2_chunk")
+
+
+def _chunks_indexed(metadata_db) -> int:
+    return _chunks_written(metadata_db, "save_chunks", "save_chunk")
+
+
 def test_rejected_batch_fails_fast_without_retry(monkeypatch, caplog):
     monkeypatch.setattr("time.sleep", lambda s: None)
     b, _, _ = _make_builder(3, EmbeddingError("400 too large", status_code=400, kind="rejected"))
@@ -175,8 +198,8 @@ def test_full_success_logs_info_not_error(caplog):
     b, metadata_db, vector_db = _make_builder(3, _ok_embeddings)
     with caplog.at_level(logging.INFO):
         b._build_embeddings("doc1", [], "t1")
-    assert vector_db.store_l2_chunk.call_count == 3
-    assert metadata_db.save_chunk.call_count == 3
+    assert _chunks_stored(vector_db) == 3
+    assert _chunks_indexed(metadata_db) == 3
     infos = [r for r in caplog.records if r.levelno == logging.INFO]
     assert any("successfully stored 3" in r.getMessage() for r in infos)
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -196,7 +219,7 @@ def test_partial_failure_summary_buckets_losses(monkeypatch, caplog):
     b, metadata_db, vector_db = _make_builder(10, flaky)
     with caplog.at_level(logging.WARNING):
         warnings = b._build_embeddings("doc1", [], "t1")
-    stored = vector_db.store_l2_chunk.call_count
+    stored = _chunks_stored(vector_db)
     assert stored == 8  # only the first batch made it
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     summary = [r for r in errors if "LOST" in r.getMessage()]
