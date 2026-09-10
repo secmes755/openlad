@@ -191,7 +191,7 @@ class DocumentIndexBuilder:
 
         # L2: Page-level processing
         _report(30, "Building L2 page index")
-        l2_results = self._build_l2(doc_id, parsed_doc, preprocessed_pages, tid, plugin)
+        l2_results, page_loss_warnings = self._build_l2(doc_id, parsed_doc, preprocessed_pages, tid, plugin)
 
         # Document classification
         # V5.0: Generate document-level summary before classification
@@ -260,7 +260,7 @@ class DocumentIndexBuilder:
         # consumed by retrieval so answers can flag incomplete sources).
         # Page-level visual transcription failures (OCR/VLM) also degrade:
         # a scanned page that produced no text is missing content.
-        all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata)
+        all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata, page_loss_warnings)
         doc_status = "degraded" if all_warnings else "verified"
         doc_metadata = dict(parsed_doc.metadata or {})
         doc_metadata.pop("visual_transcription_warnings", None)
@@ -367,6 +367,7 @@ class DocumentIndexBuilder:
         if max_workers < 1:
             max_workers = 1
         page_results = {}
+        preprocess_failures: dict[int, str] = {}
 
         if max_workers > 1:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -376,11 +377,25 @@ class DocumentIndexBuilder:
                         page_num, result = future.result()
                         page_results[page_num] = result
                     except Exception as e:
+                        failed = parsed_doc.pages[futures[future]].page_num
+                        preprocess_failures[failed] = f"{type(e).__name__}: {e}"
                         logger.error(f"Page preprocess failed: {e}", exc_info=True)
         else:
             for i in range(len(parsed_doc.pages)):
                 page_num, result = _process_page(i)
                 page_results[page_num] = result
+
+        if preprocess_failures:
+            # This list is index-aligned with parsed_doc.pages, and
+            # _analyze_single_page indexes into it, so a failed page cannot simply
+            # be skipped: removing it would shift every later page's text onto the
+            # wrong page number. Stop with the pages and causes named instead of
+            # the bare KeyError the list comprehension used to raise.
+            detail = "; ".join(f"page {num} ({why})" for num, why in sorted(preprocess_failures.items()))
+            raise RuntimeError(
+                f"Preprocessing failed for {len(preprocess_failures)} of "
+                f"{len(parsed_doc.pages)} page(s) of {parsed_doc.filename!r}: {detail}"
+            )
 
         return [page_results[page.page_num] for page in parsed_doc.pages]
 
@@ -445,8 +460,12 @@ class DocumentIndexBuilder:
 
 
     def _build_l2(self, doc_id: str, parsed_doc: ParsedDocument,
-                  preprocessed_pages: list, tid: str, plugin=None) -> list[dict]:
-        """Build L2 layer: page-level processing"""
+                  preprocessed_pages: list, tid: str, plugin=None) -> tuple[list[dict], list[str]]:
+        """Build L2 layer: page-level processing.
+        Returns (l2_results, warnings). A page whose analysis raised is left out
+        of the index, so it is named in the warnings: without that the document
+        would be recorded as complete while silently missing content.
+        """
         from concurrent.futures import ThreadPoolExecutor
         metadata_db, vector_db = self._get_dbs(tid)
 
@@ -586,6 +605,7 @@ class DocumentIndexBuilder:
         if max_workers < 1:
             max_workers = 1
         page_results = {}
+        failed_pages: list[int] = []
         if max_workers > 1:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {executor.submit(_analyze_single_page, i): i for i in range(len(parsed_doc.pages))}
@@ -594,11 +614,16 @@ class DocumentIndexBuilder:
                         result = future.result()
                         page_results[result["page_num"]] = result
                     except Exception as e:
-                        logger.error(f"Page analysis failed: {e}", exc_info=True)
+                        failed_pages.append(parsed_doc.pages[futures[future]].page_num)
+                        logger.error(f"Page analysis failed (page {failed_pages[-1]}): {e}", exc_info=True)
         else:
             for i in range(len(parsed_doc.pages)):
-                result = _analyze_single_page(i)
-                page_results[result["page_num"]] = result
+                try:
+                    result = _analyze_single_page(i)
+                    page_results[result["page_num"]] = result
+                except Exception as e:
+                    failed_pages.append(parsed_doc.pages[i].page_num)
+                    logger.error(f"Page analysis failed (page {failed_pages[-1]}): {e}", exc_info=True)
 
         # Phase 2: serial writes
         structure_index, explicit_sections = self._build_structure_index(doc_id, page_results, parsed_doc)
@@ -642,7 +667,16 @@ class DocumentIndexBuilder:
 
         self._save_structure_index_to_db(doc_id, structure_index, page_results, tenant_id=tid,
                                          explicit_sections=explicit_sections)
-        return l2_results
+        # A page that failed analysis is missing content, not a page that never
+        # existed. Report it so the document is marked degraded and retrieval can
+        # flag the gap, rather than indexing the document as if it were complete.
+        page_loss_warnings = []
+        if failed_pages:
+            page_loss_warnings.append(
+                f"{len(failed_pages)} of {len(parsed_doc.pages)} page(s) failed analysis and are "
+                f"missing from the index: {sorted(failed_pages)}"
+            )
+        return l2_results, page_loss_warnings
 
     def _extract_spec_facts(self, doc_id: str, l2_results: list, tid: str,
                             plugin, parsed_doc) -> None:
@@ -1874,12 +1908,15 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         return hashlib.md5(content.encode()).hexdigest()
 
     @staticmethod
-    def _collect_ingest_warnings(embed_warnings: list | None, parsed_metadata: dict | None) -> list:
-        """Merge embedding-loss warnings with page-level visual transcription
-        warnings (OCR/VLM) reported by the parser. Any non-empty result marks
-        the document degraded so retrieval can flag incomplete sources."""
+    def _collect_ingest_warnings(embed_warnings: list | None, parsed_metadata: dict | None,
+                                 page_loss_warnings: list | None = None) -> list:
+        """Merge page losses, embedding-loss warnings and page-level visual
+        transcription warnings (OCR/VLM) reported by the parser. Any non-empty
+        result marks the document degraded so retrieval can flag incomplete
+        sources; a page missing from the index is lost content in exactly the
+        same sense as a scanned page that produced no text."""
         visual = list((parsed_metadata or {}).get("visual_transcription_warnings") or [])
-        return list(embed_warnings or []) + visual
+        return list(page_loss_warnings or []) + list(embed_warnings or []) + visual
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]

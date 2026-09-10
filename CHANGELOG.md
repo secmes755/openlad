@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A page lost during ingestion is now reported instead of silently missing.**
+  When a page's analysis raised, `_build_l2` logged it and left the page out of the
+  index, after which the document was saved as *verified* — retrieval then had no
+  way to know content was missing, so answers could be confidently incomplete.
+  Failed pages are collected and emitted through `_collect_ingest_warnings`, the
+  channel that already marks a document *degraded* and is surfaced by retrieval, so
+  the gap is visible to the user. The sequential path now records failures the same
+  way the parallel path did (it previously aborted instead).
+  Preprocessing failures were also mis-reported: the page list is index-aligned and
+  `_analyze_single_page` indexes into it, so a page cannot simply be dropped without
+  shifting every later page's text onto the wrong page number. That path now stops
+  with the affected pages and causes named, rather than raising a bare `KeyError`.
 - **Rate limiting is scoped to the caller instead of a context that does not exist
   yet.** `RateLimitMiddleware` runs outside `TenantMiddleware` — deliberately, so a
   flood is rejected before any authentication work — but its limit key read the
