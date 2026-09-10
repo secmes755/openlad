@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rate limiting is scoped to the caller instead of a context that does not exist
+  yet.** `RateLimitMiddleware` runs outside `TenantMiddleware` — deliberately, so a
+  flood is rejected before any authentication work — but its limit key read the
+  tenant from the contextvar that `TenantMiddleware` sets. That context is empty at
+  this layer, so the key was always `query:unknown` / `upload:unknown` and every
+  caller shared one bucket: a single busy client could exhaust the quota of all the
+  others. The key is now derived from the presented credential (hashed so the key
+  itself is never stored or logged) and falls back to the client IP. Quotas are
+  therefore per credential rather than per tenant, which is the trade-off chosen
+  over moving the middleware behind authentication and paying a database lookup on
+  every unauthenticated request.
 - **The LLM client no longer retries requests that were rejected, and builds one
   session.** `_chat_completion` retried every failure three times, including 4xx
   rejections where the retry sends an identical request that cannot succeed —

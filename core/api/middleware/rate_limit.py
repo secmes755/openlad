@@ -1,7 +1,8 @@
 """
 Rate limiting middleware
-Memory-based sliding window, rate limiting by tenant + path category
+Memory-based sliding window, rate limiting by credential + path category
 """
+import hashlib
 import json
 import logging
 import time
@@ -48,20 +49,43 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _get_limit_key(self, request: Request) -> tuple:
         """Returns (rate_key, limit_count) or (None, None) meaning no rate limit"""
         path = request.url.path
-        # Use authenticated tenant context (set by TenantMiddleware), not raw header
-        try:
-            from ...tenant.context import get_tenant_context
-            ctx = get_tenant_context()
-            tenant_id = ctx.tenant_id if ctx else "unknown"
-        except Exception:
-            tenant_id = "unknown"
+        caller = self._caller_key(request)
         query_limit, upload_limit = self._get_limits()
 
         if path in ("/api/v1/query", "/api/v1/skill/query", "/api/v1/skill/search"):
-            return f"query:{tenant_id}", query_limit
+            return f"query:{caller}", query_limit
         if path == "/api/v1/documents/upload":
-            return f"upload:{tenant_id}", upload_limit
+            return f"upload:{caller}", upload_limit
         return None, None
+
+    @staticmethod
+    def _caller_key(request: Request) -> str:
+        """Bucket identity for the caller: the presented API key, else the client IP.
+
+        This middleware deliberately runs OUTSIDE TenantMiddleware so that floods
+        are rejected before any authentication work. The tenant context is
+        therefore empty here, and the tenant_id this used to read was always
+        "unknown" — every tenant and every caller shared one bucket, so a single
+        busy client could exhaust the quota of all others. The credential is
+        available from the request itself, so the limit is now scoped to the
+        caller rather than to a context that does not exist yet.
+
+        Consequence: quotas are per credential, so one tenant using several API
+        keys gets one bucket each. That is the trade-off chosen over moving this
+        middleware behind authentication, which would make every unauthenticated
+        request cost a database lookup.
+
+        The value is hashed, never stored or logged verbatim: it ends up in dict
+        keys and log lines, and a raw API key must not be written to logs.
+        """
+        auth = request.headers.get("Authorization", "")
+        # Same extraction as TenantMiddleware (the single place credentials are
+        # read); if that ever learns a new header, this must follow.
+        api_key = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        if api_key:
+            return "key:" + hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+        ip = request.client.host if request.client else "unknown"
+        return f"ip:{ip}"
 
     def _is_allowed(self, key: str, limit: int, window_seconds: int = 60) -> bool:
         now = time.time()
