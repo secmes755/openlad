@@ -498,6 +498,12 @@ TEXT_QUALITY_CONFIG = {
     "garbled_threshold": 0.05,
     "min_dictionary_hit_rate": 0.3,
     "enable_ocr_fallback": True,
+    # Unmapped font glyphs (`(cid:NNN)`): valid ASCII, so the garbled-character
+    # checks above cannot see them. A page at or above the page threshold is not
+    # used for spec-fact extraction at all; a fact whose own source line is at or
+    # above the fact threshold is dropped even when its page is mostly fine.
+    "unmapped_glyph_page_threshold": 0.10,
+    "unmapped_glyph_fact_threshold": 0.30,
 }
 
 # =============================================================================

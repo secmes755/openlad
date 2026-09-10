@@ -20,6 +20,7 @@ from .classifier import DocumentClassifier
 from .layout import ChartAnalyzer, FormulaRecognizer, LayoutAnalyzer
 from .parser import DocumentParser, ParsedDocument, ParsedPage
 from .preprocessing import DocumentPreprocessor, PagePreprocessResult
+from .text_quality import unmapped_glyph_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -232,8 +233,8 @@ class DocumentIndexBuilder:
                 logger.info(f"[BUILDER] Resolved industry plugin "
                             f"'{extraction_plugin.manifest.id}' for spec-fact "
                             f"extraction from document category")
-        self._extract_spec_facts(doc_id, l2_results, tid, extraction_plugin,
-                                 parsed_doc)
+        spec_fact_warnings = self._extract_spec_facts(doc_id, l2_results, tid,
+                                                      extraction_plugin, parsed_doc)
 
         # Generate L2 page vector embeddings
         _report(75, "Generating L2 vector embeddings")
@@ -260,7 +261,8 @@ class DocumentIndexBuilder:
         # consumed by retrieval so answers can flag incomplete sources).
         # Page-level visual transcription failures (OCR/VLM) also degrade:
         # a scanned page that produced no text is missing content.
-        all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata, page_loss_warnings)
+        all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata,
+                                                     page_loss_warnings, spec_fact_warnings)
         doc_status = "degraded" if all_warnings else "verified"
         doc_metadata = dict(parsed_doc.metadata or {})
         doc_metadata.pop("visual_transcription_warnings", None)
@@ -679,7 +681,7 @@ class DocumentIndexBuilder:
         return l2_results, page_loss_warnings
 
     def _extract_spec_facts(self, doc_id: str, l2_results: list, tid: str,
-                            plugin, parsed_doc) -> None:
+                            plugin, parsed_doc) -> list[str]:
         """Extract assertion-level spec facts from L2 page texts.
 
         Runs after classification so the industry plugin can be resolved from
@@ -687,11 +689,21 @@ class DocumentIndexBuilder:
         document. The extractor strips VLM description blocks first and
         self-verifies every value against the original line — fully local,
         rule-based (no LLM, no external API). Failure never blocks ingest.
+
+        Pages whose text layer is unmapped font glyphs are not used at all, and a
+        fact whose own source line is mostly such glyphs is dropped: nothing there
+        can be verified against the original, and a fact table of
+        authoritative-looking noise is worse than a small one. Anything skipped is
+        returned as a warning so the document is marked degraded and retrieval can
+        say its sources are incomplete.
         """
         if not settings.CONTEXT_CONFIG.get("spec_facts_enabled", True):
-            return
+            return []
+        warnings: list[str] = []
         try:
             from .spec_facts_extractor import extract_spec_facts_from_text, infer_doc_entity
+            page_threshold = settings.TEXT_QUALITY_CONFIG["unmapped_glyph_page_threshold"]
+            fact_threshold = settings.TEXT_QUALITY_CONFIG["unmapped_glyph_fact_threshold"]
             metadata_db, _ = self._get_dbs(tid)
             entity_patterns = None
             extraction = None
@@ -710,11 +722,23 @@ class DocumentIndexBuilder:
             spec_entity = infer_doc_entity(
                 parsed_doc.filename, entity_patterns=entity_patterns) if parsed_doc else ""
             count = 0
+            pages_skipped = 0
+            facts_dropped = 0
             for r in l2_results:
                 try:
+                    page_text = r.get("page_text") or ""
+                    if unmapped_glyph_ratio(page_text) >= page_threshold:
+                        pages_skipped += 1
+                        logger.warning(
+                            f"[BUILDER] page {r.get('page_num')} has an unreadable text "
+                            f"layer (unmapped font glyphs); no facts extracted from it")
+                        continue
                     for fact in extract_spec_facts_from_text(
-                            r["page_text"], r["page_num"], spec_entity, doc_id,
+                            page_text, r["page_num"], spec_entity, doc_id,
                             extraction=extraction):
+                        if unmapped_glyph_ratio(fact.get("source_text") or "") >= fact_threshold:
+                            facts_dropped += 1
+                            continue
                         metadata_db.insert_spec_fact(
                             doc_id=fact["doc_id"], entity=fact["entity"],
                             attribute=fact["attribute"], value=fact["value"],
@@ -724,10 +748,24 @@ class DocumentIndexBuilder:
                 except Exception as e:
                     logger.warning(f"spec fact extraction failed for page {r['page_num']}: {e}")
             logger.info(f"[BUILDER] spec-fact extraction: {count} facts "
+                        f"({pages_skipped} pages skipped, {facts_dropped} facts dropped "
+                        f"for unreadable text layer) "
                         f"(plugin={plugin.manifest.id if plugin else None}, "
                         f"entity={spec_entity!r})")
+            if pages_skipped or facts_dropped:
+                parts = []
+                if pages_skipped:
+                    parts.append(
+                        f"pages skipped for an unreadable text layer "
+                        f"(unmapped font glyphs, no ToUnicode map): "
+                        f"{pages_skipped}/{len(l2_results)}")
+                if facts_dropped:
+                    parts.append(
+                        f"facts dropped for unreadable source lines: {facts_dropped}")
+                warnings.append("spec-fact extraction: " + "; ".join(parts))
         except Exception as e:
             logger.warning(f"[BUILDER] spec-fact extraction failed (non-fatal): {e}")
+        return warnings
 
     def _build_structure_index(self, doc_id: str, page_results: dict[int, dict],
                                 parsed_doc=None):
@@ -1922,14 +1960,18 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
 
     @staticmethod
     def _collect_ingest_warnings(embed_warnings: list | None, parsed_metadata: dict | None,
-                                 page_loss_warnings: list | None = None) -> list:
+                                 page_loss_warnings: list | None = None,
+                                 spec_fact_warnings: list | None = None) -> list:
         """Merge page losses, embedding-loss warnings and page-level visual
-        transcription warnings (OCR/VLM) reported by the parser. Any non-empty
-        result marks the document degraded so retrieval can flag incomplete
-        sources; a page missing from the index is lost content in exactly the
-        same sense as a scanned page that produced no text."""
+        transcription warnings (OCR/VLM) reported by the parser, plus anything
+        the fact index had to skip. Any non-empty result marks the document
+        degraded so retrieval can flag incomplete sources; a page missing from the
+        index is lost content in exactly the same sense as a scanned page that
+        produced no text, and a page the fact extractor could not read is
+        unreadable content in exactly the same sense."""
         visual = list((parsed_metadata or {}).get("visual_transcription_warnings") or [])
-        return list(page_loss_warnings or []) + list(embed_warnings or []) + visual
+        return (list(page_loss_warnings or []) + list(embed_warnings or []) + visual
+                + list(spec_fact_warnings or []))
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]

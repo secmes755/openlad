@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Spec facts are no longer built out of a text layer that is font glyph codes.**
+  Fonts without a ToUnicode map make a reader render glyph indices as `(cid:NNN)`
+  — ordinary ASCII, so the garbled-character checks pass them (they look for
+  replacement and control characters). Worse, `(cid:4303)` has the shape of an
+  attribute/value pair, so the structural extractor took `cid` as the attribute
+  and the number as the value, and its self-verification ("the value must appear
+  in the source line") was satisfied by the glyph token itself — that is how a
+  tenant's fact table ended up 29% glyph noise. A page whose text is mostly these
+  glyphs is now skipped entirely, a fact whose own source line is mostly glyphs is
+  dropped, and either case marks the document degraded (`ingest_warnings`) so
+  retrieval reports the sources as incomplete. Measured on the corpus that
+  prompted it: all 258 such facts are blocked (245 by the page gate, 13 by the
+  fact gate) and no fact from a readable page is affected.
 - **CI now installs the dependencies it actually imports, from a single source.**
   The unit job ran `pip install` with a hand-maintained list that was missing
   `numpy` and `Pillow` — both declared in `requirements.txt` and both imported at
