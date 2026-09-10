@@ -69,10 +69,15 @@ def _cleanup_old_tasks(max_age_seconds: int = 3600):
 
 def _process_document_async_sync(task_id: str, tenant_id: str, file_path: str,
                                   industry: str | None, auto_detect: bool, builder,
-                                  title: str | None = None):
+                                  title: str | None = None, user_id: str = ""):
     """Sync wrapper for document processing — runs directly in a thread pool.
 
     Uses builder.ingest_document() entry point with built-in MD5 dedup protection.
+
+    user_id is passed in rather than read from the tenant context: this runs on
+    a worker thread dispatched via run_in_executor, which does NOT copy
+    contextvars (only asyncio.to_thread does), so the context is empty here and
+    the audit row's acting user was always recorded as "".
     """
     def _progress_callback(p, msg):
         _update_task(task_id, status="processing", progress=p, message=msg)
@@ -115,14 +120,12 @@ def _process_document_async_sync(task_id: str, tenant_id: str, file_path: str,
         # Record audit log
         try:
             from ...db.tenant_db import get_tenant_metadata_db
-            from ...tenant.context import get_tenant_context
-            ctx = get_tenant_context()
             db = get_tenant_metadata_db(tenant_id)
             db.log_audit(
                 action="document_upload",
                 resource_type="document",
                 resource_id=doc_id,
-                user_id=ctx.user_id if ctx else "",
+                user_id=user_id,
                 tenant_id=tenant_id,
                 details={"file_path": file_path, "status": status}
             )
@@ -233,6 +236,9 @@ async def upload_document(
         raise HTTPException(status_code=503, detail="Document builder not initialized")
 
     task_id = _create_task(doc_id, file.filename, tenant_id=ctx.tenant_id)
+    # Read the acting user here, on the request's own context — the worker
+    # thread below does not inherit contextvars.
+    acting_user_id = ctx.user_id or ""
 
     # Use a dedicated thread pool executor for document processing to avoid
     # competing with the default asyncio executor (which is limited to N threads).
@@ -248,7 +254,8 @@ async def upload_document(
                     pool,
                     lambda: _process_document_async_sync(
                         task_id, ctx.tenant_id, str(upload_path),
-                        industry, auto_detect, builder, title=title
+                        industry, auto_detect, builder, title=title,
+                        user_id=acting_user_id
                     )
                 )
         except Exception as e:

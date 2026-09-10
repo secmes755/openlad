@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Upload audit rows now name the acting user.** The background document
+  processor is dispatched on a worker thread via `run_in_executor`, which does
+  not copy contextvars (only `asyncio.to_thread` does), so the `user_id` it read
+  from the tenant context inside that worker was always empty — every
+  `document_upload` audit row recorded an anonymous actor. The tenant was still
+  attributed correctly because it is passed as an argument; the acting user now
+  travels the same way.
 - **Startup now fails fast when a core component cannot initialise.** The
   lifespan caught every initialisation error and only logged it, so the service
   started healthy in states it cannot serve: a failed `QueryEngine` or
