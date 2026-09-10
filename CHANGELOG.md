@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Upload task history is no longer wiped, and timestamps have a single shape.**
+  `update_upload_task` stored `updated_at` as an epoch float while freshly created
+  rows took the TEXT column default (`CURRENT_TIMESTAMP`). SQLite orders every REAL
+  below every TEXT, so the cleanup's `updated_at < datetime('now', '-N hours')` was
+  true for rows that had just been written — every upload reaped the previous
+  batch's completed tasks, destroying the history the table exists to preserve.
+  `updated_at` is now written by SQLite, rows left in the float shape are normalised
+  when the database is opened, and the sqlite3 datetime adapter is registered
+  explicitly at second precision to match the column default (Python 3.12 deprecated
+  the implicit adapter and 3.13 removes it, so bound `datetime` objects emitted a
+  DeprecationWarning and would have failed outright on an interpreter upgrade).
 - **Upload audit rows now name the acting user.** The background document
   processor is dispatched on a worker thread via `run_in_executor`, which does
   not copy contextvars (only `asyncio.to_thread` does), so the `user_id` it read

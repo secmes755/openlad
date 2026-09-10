@@ -7,7 +7,6 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
@@ -109,6 +108,19 @@ class SystemDB:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_upload_tasks_tenant ON upload_tasks(tenant_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_upload_tasks_status ON upload_tasks(status)")
+
+            # One-time normalisation: upload_tasks.updated_at was previously
+            # written as an epoch float by update_upload_task while new rows got
+            # the TEXT column default, so the column held two formats at once.
+            # SQLite orders every REAL below every TEXT, which made
+            # `updated_at < datetime('now', ...)` true for freshly touched rows.
+            # Convert any such rows to the TEXT shape the default uses
+            # (datetime(..., 'unixepoch') returns UTC, like CURRENT_TIMESTAMP).
+            cursor.execute("""
+                UPDATE upload_tasks
+                SET updated_at = datetime(updated_at, 'unixepoch')
+                WHERE typeof(updated_at) IN ('real', 'integer')
+            """)
 
             # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)")
@@ -490,8 +502,9 @@ class SystemDB:
                 updates[k] = v
         if not updates:
             return False
-        updates['updated_at'] = time.time()
-        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+        # updated_at must keep the same TEXT shape as the column default, so it
+        # is written by SQLite rather than bound from Python as an epoch float.
+        set_clause = ', '.join(f"{k} = ?" for k in updates) + ", updated_at = CURRENT_TIMESTAMP"
         values = list(updates.values())
         values.append(task_id)
         with self.get_connection() as conn:
