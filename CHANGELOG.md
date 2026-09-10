@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The agentic retriever's per-request index is actually released.** `AgenticRetriever`
+  is built per deep-research query and loads the tenant's entire vector index into
+  memory, but `release()` only logged a line — the index stayed referenced until the
+  garbage collector reached it — and the engine's failure path skipped the call
+  altogether, so a query that failed part-way held that memory with nothing to drop
+  it. The release now clears the index and catalog and runs from a `finally`, so it
+  covers the success and failure paths alike. The per-request rebuild itself is
+  unchanged: caching it per tenant would trade load cost for index staleness, which
+  remains an open decision.
 - **Failures in the retrieval layer's industry-pack hooks are no longer silent.**
   Six handlers caught an exception and continued with a degraded result — the
   pack's query vocabulary, its retrieval rules, its spec terms — behind a bare

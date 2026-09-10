@@ -56,14 +56,21 @@ class QueryEngine:
         """Execute Agentic retrieval. spec_facts_plan carries the planner output
         (routed_category / entities / rewritten_query) so the per-document
         spec-fact lookups resolve the same industry pack terms as other paths."""
+        agent = None
         try:
             agent = AgenticRetriever(tenant_id, spec_facts_plan=spec_facts_plan)
-            result = agent.retrieve(query_text)
-            agent.release()
-            return result
+            return agent.retrieve(query_text)
         except Exception as e:
+            # Logged, then the caller falls back to traditional decomposition
+            # (it also logs that decision). The failure is not silent, but it is
+            # only observable in the logs, not to the API consumer.
             logger.error(f"[ENGINE] Agentic retrieval failed: {e}")
             return None
+        finally:
+            # Release even when retrieve() raised: the agent holds the tenant's
+            # whole vector index in memory and the failure path used to skip it.
+            if agent is not None:
+                agent.release()
 
     def _classify_query(self, query: str) -> str:
         """OpenLAD: Detect query type: traditional / deep_research

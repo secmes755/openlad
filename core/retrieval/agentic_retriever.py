@@ -639,5 +639,13 @@ Answering rules:
         }
 
     def release(self):
-        """Release resources"""
-        logger.info("[AGENTIC] Resources released")
+        """Drop the per-request index.
+
+        This instance is constructed per query and loads the tenant's entire
+        vector index into memory, so keeping the reference alive until GC is the
+        peak-memory cost of every deep-research request. The caller invokes this
+        immediately after retrieve(), and nothing reads the index afterwards.
+        """
+        self.vec_index = []
+        self.catalog = {}
+        logger.info("[AGENTIC] Per-request index released")
