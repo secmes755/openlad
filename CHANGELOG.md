@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The LLM client no longer retries requests that were rejected, and builds one
+  session.** `_chat_completion` retried every failure three times, including 4xx
+  rejections where the retry sends an identical request that cannot succeed —
+  the failure was then reported as "LLM call failed (attempt 3/3)", hiding the
+  real cause. Deterministic 4xx now returns immediately with the status and body
+  logged, while 408/429/5xx still retry; this reuses the distinction the
+  embedding path already made. Separately, the `session` property built its
+  `requests.Session` without holding `self._lock` (which existed but was never
+  used), so concurrent first use from the ingestion thread pool could create
+  several sessions and leak every loser's connection pool.
 - **A truncated context can no longer be reported as high confidence.** The
   confidence heuristic looked for an uppercase `[TRUNCATED` marker in the
   synthesized context, but the retrieval side wrote lowercase markers

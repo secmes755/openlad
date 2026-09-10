@@ -47,6 +47,14 @@ def _classify_embedding_error(e: Exception) -> tuple[int | None, str]:
     return status, "other"
 
 
+# Statuses that can plausibly succeed on a second attempt. Any other 4xx is a
+# deterministic rejection of this payload: the retry sends the identical request
+# and cannot change the outcome, it only hides the real cause behind
+# "LLM call failed (attempt 3/3)". The embedding path already classifies 4xx as
+# "rejected" for the same reason.
+_RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+
+
 class ModelClient:
     """Model Client - Thread-safe"""
 
@@ -73,8 +81,13 @@ class ModelClient:
 
     @property
     def session(self):
+        # Double-checked under the lock: concurrent first use from the page
+        # threads would otherwise build several Sessions, and every loser's
+        # connection pool is leaked (never closed) for the process lifetime.
         if self._session is None:
-            self._session = requests.Session()
+            with self._lock:
+                if self._session is None:
+                    self._session = requests.Session()
         return self._session
 
     @staticmethod
@@ -272,6 +285,14 @@ class ModelClient:
                     if any(pe in error_text for pe in permanent_errors):
                         logger.error(f"[MODEL] Permanent server error (not retrying): {error_text[:200]}")
                         return ""
+                # Deterministic 4xx rejections are not worth a second identical
+                # request; transient statuses fall through to the retry handler.
+                if response.status_code >= 400 and response.status_code not in _RETRYABLE_STATUS:
+                    logger.error(
+                        f"[MODEL] HTTP {response.status_code} rejected by {target_url} "
+                        f"(not retrying): {response.text[:200]}"
+                    )
+                    return ""
                 response.raise_for_status()
                 data = response.json()
                 msg = data["choices"][0]["message"]
