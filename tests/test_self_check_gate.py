@@ -9,8 +9,6 @@ explicit ``self_check_enabled`` config that stays off by default.
 """
 from types import SimpleNamespace
 
-import pytest
-
 from core.config import CONTEXT_CONFIG
 from core.retrieval.synthesizer import AnswerSynthesizer
 

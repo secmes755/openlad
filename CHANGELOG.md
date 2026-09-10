@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Contract tests for the retrieval executor and the agentic retriever**, the two
+  modules the audit found with no coverage at all (1214 and 651 lines). They pin
+  what callers observe rather than internal detail: which strategy each plan shape
+  dispatches to, the per-request tenant switch, the step-quota arithmetic, the
+  result shape of both the standard and agentic paths, the agentic index load, the
+  document-selection rules (a model named in the query is searched even when the
+  model selects nothing) and the early exit once a document answers. The net was
+  mutation-checked: six deliberate breaks of those behaviours (default strategy,
+  tenant rebuild, quota cap, result accounting, force-include, early exit) each
+  make a specific test fail.
+
 ### Removed
 
 - **Dead retrieval and sample-pack code, plus the superseded schematic prompts.**
