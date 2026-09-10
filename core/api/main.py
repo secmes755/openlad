@@ -13,6 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+# Imported before load_dotenv(): the version constant reads no environment, and
+# importing it afterwards would add another E402 to the existing baseline.
+from ..version import __version__
+
 load_dotenv()
 
 from ..config import settings
@@ -131,7 +135,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenLAD - Intelligent Document Analysis System",
     description="Local document intelligent Q&A system with multi-tenant support and industry plugins",
-    version="1.0.0",
+    version=__version__,
     lifespan=lifespan
 )
 
@@ -203,7 +207,7 @@ async def root():
         return FileResponse(index_path)
     return {
         "name": "OpenLAD",
-        "version": "1.0.0",
+        "version": __version__,
         "description": "OpenLAD Intelligent Document Analysis System"
     }
 

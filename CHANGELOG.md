@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/health`, `/` and the OpenAPI schema now report the real version.** The
+  version was hardcoded as `"1.0.0"` in four places across the API layer while the
+  project was releasing 0.4.x, so `GET /health` never named the running release
+  and operators could not tell which build was deployed. It now comes from a
+  single `core/version.py` constant, bumped by the release commit together with
+  the CHANGELOG entry.
 - **Upload task history is no longer wiped, and timestamps have a single shape.**
   `update_upload_task` stored `updated_at` as an epoch float while freshly created
   rows took the TEXT column default (`CURRENT_TIMESTAMP`). SQLite orders every REAL

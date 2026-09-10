@@ -5,6 +5,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
+from ...version import __version__
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,7 @@ async def health_check():
 
     return {
         "status": overall,
-        "version": "1.0.0",
+        "version": __version__,
         "name": "OpenLAD",
         "services": {
             "database": db_status,
@@ -97,7 +99,7 @@ async def system_stats():
             logger.warning(f"[STATS] Tenant statistics query failed: {e}")
 
     return {
-        "version": "1.0.0",
+        "version": __version__,
         "industry_packages": len(registry.list_plugins()),
         "tenants": len(tenant_mgr.list_tenants()),
         "total_documents": total_documents,
