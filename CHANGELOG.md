@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI now installs the dependencies it actually imports, from a single source.**
+  The unit job ran `pip install` with a hand-maintained list that was missing
+  `numpy` and `Pillow` — both declared in `requirements.txt` and both imported at
+  module level by five modules under `core/` (`agentic_retriever`,
+  `layout/{chart_analyzer,layout_analyzer}`, `preprocessing/{__init__,image_corrector}`
+  and `ingestion/builder`). On a runner image that did not happen to provide them,
+  `pytest` could not even collect tests that import those modules and the job died
+  with `ModuleNotFoundError`; on an image that did, the same commit passed. The
+  dependency set now lives in `requirements-ci.txt`, installed by the workflow and
+  read by the local gate, so the two cannot drift apart again.
+  `tests/test_ci_dependency_completeness.py` parses `core/` and fails if a
+  module-level import is missing from that file, so this cannot come back quietly.
+- **CI no longer depends on which runner image it lands on.** Both jobs ran on
+  `ubuntu-latest`, which rolled from image `20260831.293` (Ubuntu 24.04.4) to
+  `20260907.300` (24.04.5) inside one afternoon; the two images carry different
+  preinstalled packages, so identical commits passed or failed depending on the
+  runner they landed on. Jobs are pinned to `ubuntu-24.04` and install their own
+  dependencies.
+
 ### Added
 
 - **Contract tests for the retrieval executor and the agentic retriever**, the two

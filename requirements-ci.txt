@@ -1,0 +1,38 @@
+# Minimal dependency set for CI (the lint and unit jobs) and for the local gate
+# scripts/ci_gate.sh. This file is the SINGLE source of truth: the workflow and
+# the gate both install from it, so they cannot drift apart.
+#
+# What must be in here:
+#   * everything needed to IMPORT every module under core/, because the unit job
+#     runs `pytest`, which imports whatever the tests touch. A missing
+#     module-level dependency turns the job red with a collection error — or,
+#     worse, turns it green on a runner image that happens to provide the
+#     package, so the same commit passes or fails depending on which runner it
+#     lands on. That is exactly how numpy went missing: five modules under core/
+#     import it at module level (core/retrieval/agentic_retriever.py,
+#     core/ingestion/layout/{chart_analyzer,layout_analyzer}.py,
+#     core/ingestion/preprocessing/{__init__,image_corrector}.py) while this list
+#     did not carry it.
+#   * the packages the tests themselves need.
+#
+# What does NOT need to be here: dependencies imported lazily (inside functions)
+# or behind try/except ImportError. Those are optional by construction — pandas,
+# opencv-python, pytesseract, duckdb, pypdf, pdfplumber, torch and friends stay
+# out on purpose, to keep the gate fast.
+#
+# tests/test_ci_dependency_completeness.py enforces the first rule: it parses
+# core/ and fails if a module-level import is missing from this file.
+fastapi
+pydantic
+python-dotenv
+python-multipart
+PyYAML
+bcrypt
+psutil
+requests
+httpx
+numpy
+Pillow
+starlette
+pytest
+ruff==0.16.1

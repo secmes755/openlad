@@ -7,27 +7,33 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the floating label rolls over (24.04.4 -> 24.04.5
+    # was observed inside one afternoon) and each image ships a different set of
+    # preinstalled packages, so the same commit can pass or fail depending on
+    # which runner it lands on. Dependencies come from requirements-ci.txt so the
+    # job installs exactly what the tests need instead of borrowing them from the
+    # image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install ruff
-        run: pip install ruff==0.16.1
+      - name: Install dependencies
+        run: pip install -r requirements-ci.txt
       - name: Ruff check
         run: ruff check tests scripts
       - name: Ruff baseline check (core, new violations only)
         run: ./scripts/ruff_baseline_check.sh
 
   unit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install core dependencies
-        run: pip install fastapi pydantic python-dotenv python-multipart PyYAML bcrypt psutil requests httpx pytest
+      - name: Install dependencies
+        run: pip install -r requirements-ci.txt
       - name: Run unit checks
         run: pytest -q

@@ -9,12 +9,15 @@
 #   ./scripts/ci_gate.sh --self-test # verify the gate's failure detection works
 #
 # Why this exists:
-#   CI (ci.yml) installs ONLY: fastapi pydantic python-dotenv python-multipart
-#   PyYAML bcrypt psutil requests pytest  (+ ruff==0.16.1 in the lint job).
-#   The full local venv carries extra deps (Pillow/OCR/...) so a green local
-#   pytest does NOT imply green CI -- a module that imports PIL at top level
-#   passes locally and explodes on the runner. This gate reproduces the CI
-#   dependency set, not the developer's.
+#   CI installs only the minimal set in requirements-ci.txt, while the full local
+#   venv carries extra deps (pandas/OCR/...), so a green local pytest does NOT
+#   imply green CI -- a module that imports PIL or numpy at top level passes
+#   locally and explodes on the runner. This gate reproduces the CI dependency
+#   set, not the developer's.
+#
+#   That set is read from requirements-ci.txt, which is also what ci.yml
+#   installs: keeping a second copy here is how numpy went missing from CI while
+#   the gate stayed happy.
 #
 # The minimal venv is cached under ~/.cache/openlad-ci-gate/ so repeat runs
 # are fast. Override with OPENLAD_CI_GATE_DIR.
@@ -28,8 +31,14 @@ GATE_DIR="${OPENLAD_CI_GATE_DIR:-$HOME/.cache/openlad-ci-gate}"
 VENV="$GATE_DIR/venv"
 UV="${UV:-uv}"
 
-# CI unit-job dependency set -- keep in sync with .github/workflows/ci.yml
-CI_DEPS=(fastapi pydantic python-dotenv python-multipart PyYAML bcrypt psutil requests httpx pytest ruff==0.16.1)
+# CI dependency set -- single-sourced from requirements-ci.txt (also installed by
+# .github/workflows/ci.yml), so the two cannot drift apart.
+CI_REQS="$REPO_ROOT/requirements-ci.txt"
+if [ ! -f "$CI_REQS" ]; then
+  echo "error: $CI_REQS not found" >&2
+  exit 2
+fi
+mapfile -t CI_DEPS < <(grep -vE '^[[:space:]]*(#|$)' "$CI_REQS")
 
 refresh=0
 self_test=0
@@ -59,9 +68,11 @@ if [ "$refresh" = 1 ]; then
   "$UV" pip install --python "$VENV" "${CI_DEPS[@]}"
 fi
 
-# sanity: the cached venv must actually contain the CI deps
-if ! "$VENV/bin/python" -c "import fastapi, pydantic, pytest, requests" 2>/dev/null; then
-  echo "[env] cached venv missing deps; reinstalling"
+# sanity: the cached venv must contain the deps that decide whether core/ can be
+# imported at all (numpy/Pillow included: they are module-level imports in five
+# modules), so a stale cache is detected instead of producing a false failure.
+if ! "$VENV/bin/python" -c "import fastapi, pydantic, pytest, requests, numpy, PIL" 2>/dev/null; then
+  echo "[env] cached venv missing CI deps; reinstalling"
   "$UV" pip install --python "$VENV" "${CI_DEPS[@]}"
 fi
 
