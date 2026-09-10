@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead module: `core/ingestion/pdf_watermark_remover.py` (747 lines).** It was
+  never imported by any code path, test, script, configuration or document —
+  page-level watermark handling in ingestion is done by the text sanitizer in
+  `builder.py`, which is unaffected. Located by call-graph reachability
+  analysis and confirmed by an independent whole-repo name search (the module's
+  symbols occur nowhere but inside the file itself).
+
 ### Fixed
 
 - **Upload audit rows now name the acting user.** The background document
