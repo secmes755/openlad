@@ -10,16 +10,10 @@
 import json
 import logging
 import re
-from typing import List, Optional, Dict, Any
+from typing import Any, List
 
 from schematic_types import SchematicPage, SchematicPowerSupply, SchematicNet, SchematicComponent, SchematicPinMux
 from schematic_prompts import (
-    PAGE_TYPE_CLASSIFICATION_PROMPT,
-    PARSE_POWER_TREE_PROMPT,
-    PARSE_POWER_DESC_PROMPT,
-    PARSE_POWER_LAYOUT_PROMPT,
-    PARSE_PINMUX_PROMPT,
-    PARSE_DCDC_PROMPT,
     PARSE_GENERIC_SCHEMATIC_PROMPT,
 )
 
@@ -144,123 +138,6 @@ class SchematicParser:
 
         return "unknown"
 
-    def _llm_classify(self, text: str) -> str:
-        """用 LLM 分类页面类型"""
-        if not self.model_client:
-            return "unknown"
-
-        sample = text[:2000] if len(text) > 2000 else text
-        prompt = PAGE_TYPE_CLASSIFICATION_PROMPT.replace("{text_sample}", sample)
-
-        try:
-            result = self.model_client.generate(prompt, temperature=0.1, max_tokens=50)
-            result = result.strip().lower()
-            valid_types = {"power_tree", "power_desc", "power_layout", "pinmux", "dcdc", "other"}
-            if result in valid_types:
-                return result
-            # 模糊匹配
-            if "power" in result and "tree" in result:
-                return "power_tree"
-            if "power" in result and "desc" in result:
-                return "power_desc"
-            if "power" in result and "layout" in result:
-                return "power_layout"
-            if "pin" in result:
-                return "pinmux"
-            if "dcdc" in result:
-                return "dcdc"
-        except Exception as e:
-            logger.warning(f"[SCHEMATIC] LLM 分类失败: {e}")
-
-        return "other"
-
-    def _parse_power_page(self, page: SchematicPage, text: str, page_type: str):
-        """解析电源相关页面"""
-        if not self.model_client:
-            # 无 LLM 时回退到正则提取
-            self._regex_extract_power(page, text)
-            return
-
-        # 选择 prompt（使用 replace 而非 format，避免 JSON 示例中的 {} 被误解析）
-        if page_type == "power_tree":
-            prompt = PARSE_POWER_TREE_PROMPT.replace("{text}", text)
-        elif page_type == "power_desc":
-            prompt = PARSE_POWER_DESC_PROMPT.replace("{text}", text)
-        elif page_type == "power_layout":
-            prompt = PARSE_POWER_LAYOUT_PROMPT.replace("{text}", text)
-        elif page_type == "dcdc":
-            prompt = PARSE_DCDC_PROMPT.replace("{text}", text)
-        else:
-            prompt = PARSE_POWER_TREE_PROMPT.replace("{text}", text)
-
-        try:
-            result = self.model_client.generate(prompt, temperature=0.1, max_tokens=4096)
-            data = self._extract_json(result)
-
-            if isinstance(data, list):
-                # power_tree / power_desc 返回数组
-                for item in data:
-                    page.power_supplies.append(SchematicPowerSupply(
-                        name=item.get("name", ""),
-                        voltage=item.get("voltage", ""),
-                        source=item.get("source", ""),
-                        max_current=item.get("max_current", ""),
-                        connected_pins=item.get("connected_pins", []),
-                        decoupling_caps=item.get("decoupling_caps", []),
-                        layout_notes=item.get("layout_notes", item.get("notes", "")),
-                        sequence=item.get("sequence", ""),
-                    ))
-            elif isinstance(data, dict):
-                # power_layout / dcdc 返回对象
-                for item in data.get("power_supplies", []):
-                    page.power_supplies.append(SchematicPowerSupply(
-                        name=item.get("name", ""),
-                        voltage=item.get("voltage", ""),
-                        source=item.get("source", ""),
-                        max_current=item.get("max_current", ""),
-                        connected_pins=item.get("connected_pins", []),
-                        decoupling_caps=item.get("decoupling_caps", []),
-                        layout_notes=item.get("layout_notes", item.get("notes", "")),
-                        sequence=item.get("sequence", ""),
-                    ))
-                for item in data.get("components", []):
-                    page.components.append(SchematicComponent(
-                        ref=item.get("ref", ""),
-                        value=item.get("value", ""),
-                        package=item.get("package", ""),
-                        characteristics=item.get("characteristics", ""),
-                    ))
-                page.special_notes.extend(data.get("special_notes", []))
-
-            # 同时提取网络信息
-            self._regex_extract_nets(page, text)
-
-        except Exception as e:
-            logger.warning(f"[SCHEMATIC] LLM 解析电源页面失败 (页{page.page_num}): {e}")
-            # 回退到规则提取
-            self._extract_components_and_nets(page, text)
-
-    def _parse_pinmux_page(self, page: SchematicPage, text: str):
-        """解析引脚复用页面"""
-        if not self.model_client:
-            self._regex_extract_pinmux(page, text)
-            return
-
-        prompt = PARSE_PINMUX_PROMPT.replace("{text}", text)
-        try:
-            result = self.model_client.generate(prompt, temperature=0.1, max_tokens=4096)
-            data = self._extract_json(result)
-            if isinstance(data, list):
-                for item in data:
-                    page.pinmux.append(SchematicPinMux(
-                        pin=item.get("pin", ""),
-                        ball=item.get("ball", ""),
-                        functions=item.get("functions", []),
-                        default_function=item.get("default_function", ""),
-                    ))
-        except Exception as e:
-            logger.warning(f"[SCHEMATIC] LLM 解析 PinMux 页面失败 (页{page.page_num}): {e}")
-            self._extract_components_and_nets(page, text)
 
     def _regex_extract_power(self, page: SchematicPage, text: str):
         """正则提取电源信息（无 LLM 回退）"""

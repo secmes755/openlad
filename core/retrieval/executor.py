@@ -1,7 +1,6 @@
 """
 PHASE-2: Retrieval Executor
 """
-import json
 import logging
 import os
 import re
@@ -288,85 +287,6 @@ class RetrievalExecutor:
                 "total_results": len(all_results), "total_chars": len(final_context),
                 "strategy": "decomposed_retrieve"}
 
-    def _extract_step_data(self, context: str, query: str, model_client) -> str:
-        """
-        Extract key data from retrieval context. Let LLM autonomously decide what to extract based on query objectives and document content.
-        No predefined fields or keywords in the code.
-        """
-        if not context or len(context) < 200:
-            return context
-
-        ctx_len = len(context)
-        cfg = settings.CONTEXT_CONFIG
-        sample_size = cfg.get("extraction_sample_size", 12000)
-        fragment_size = cfg.get("extraction_fragment_size", 3000)
-        if ctx_len <= sample_size:
-            sample = context
-        else:
-            # Uniform sampling: start, middle, end
-            parts = []
-            parts.append(f"=== Document Start ===\n{context[:fragment_size]}")
-
-            # Uniform sampling of the middle portion
-            mid_start = ctx_len // 3
-            mid_end = 2 * ctx_len // 3
-            parts.append(f"=== Document Middle ===\n{context[mid_start:mid_start+fragment_size]}")
-            parts.append(f"=== Document Later ===\n{context[mid_end:mid_end+fragment_size]}")
-
-            # Tail
-            parts.append(f"=== Document End ===\n{context[-fragment_size:]}")
-            sample = "\n".join(parts)
-
-        prompt = f"""Extract key data related to the query objective from the following document fragments. Only output structured results, no explanations.
-
-Query objective: {query}
-
-Extraction principles (general, no preset fields):
-1. Read the document fragments and determine what type of data they contain
-2. For each relevant entity/subject, extract its key attributes and values
-3. Annotate each data point with: value, unit (if any), condition/version (if any), source page
-4. If a piece of data that should exist is not found, explicitly mark as "Not found"
-5. Do not analyze or compare; only extract raw data
-
-Document fragments:
-{sample}
-
-Output structure (JSON):
-{{
-  "entities": [
-    {{
-      "name": "Entity name/subject identifier",
-      "attributes": [
-        {{
-          "attribute": "Attribute name",
-          "value": "Value or content",
-          "unit": "Unit (if any)",
-          "condition": "Condition/version/year (if any)",
-          "page": "Page x"
-        }}
-      ]
-    }}
-  ],
-  "notes": "Other key information"
-}}
-"""
-        try:
-            extraction_max_tokens = cfg.get("extraction_max_tokens", 4096)
-            result = model_client.generate(prompt, max_tokens=extraction_max_tokens, temperature=0.1)
-            if result and result.strip():
-                if result.strip().startswith("{"):
-                    try:
-                        parsed = json.loads(result)
-                        return json.dumps(parsed, ensure_ascii=False, indent=2)
-                    except json.JSONDecodeError:
-                        pass
-                return result.strip()
-        except Exception as e:
-            logger.warning(f"[PHASE-2] Structured extraction failed: {e}")
-
-        cfg = settings.CONTEXT_CONFIG
-        fallback_limit = cfg.get("extraction_fallback_limit", 3000)
-        return context[:fallback_limit]
 
     def _match_subquery_to_docs(self, sub_query: str, doc_filter: list[str]) -> list[str]:
         """
@@ -1289,5 +1209,3 @@ Output only JSON, no explanation."""
                 idx = text.find(term, idx + 1)
         return False
 
-    def reload_overview(self):
-        pass

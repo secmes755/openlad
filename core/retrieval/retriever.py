@@ -4,7 +4,6 @@ FTS (TenantMetadataDB) + Vector (TenantVectorDB) + Structure Index
 """
 import json
 import logging
-import os
 import re
 from typing import Any
 
@@ -1086,10 +1085,6 @@ class SegmentMerger:
         self.tenant_id = tenant_id
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
 
-    def _path_to_url(self, path: str) -> str:
-        if not path:
-            return ""
-        return f"/images/{os.path.basename(path)}"
 
     def _load_industry_boost_rules(self, industry_hint: str) -> dict[str, Any]:
         """Load industry package chapter boost rules (for merge phase)"""

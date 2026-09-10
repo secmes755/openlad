@@ -9,7 +9,6 @@ Provides system-level diagnostic functions, including:
 import logging
 import os
 import sqlite3
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -37,12 +36,6 @@ class TenantInfo(BaseModel):
     document_count: int
     user_count: int
     storage_used_mb: float | None
-
-
-class DiagnosticResponse(BaseModel):
-    status: str
-    timestamp: str
-    data: dict[str, Any]
 
 
 @router.get("/diagnostic/users")

@@ -49,15 +49,6 @@ Available retrieval tools:
         self.tenant_id = tenant_id
         self.taxonomy_text = ""
 
-        # FIX: admin tenant also loads the default tenant's database
-        # taxonomy functionality temporarily simplified
-        # self.taxonomy_builder = CorpusTaxonomyBuilder()
-        # self._load_taxonomy()
-
-    def _load_taxonomy(self):
-        # taxonomy functionality temporarily simplified
-        self.taxonomy_text = ""
-
     def _list_retrievable_documents(self) -> list[dict]:
         """Documents eligible for retrieval.
 
@@ -527,6 +518,3 @@ Rewritten query:"""
             "routed_category": self._route_category(query, None) or "",
         }
 
-    def reload_overview(self):
-        # overview/taxonomy functionality temporarily simplified
-        pass

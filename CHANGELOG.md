@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead retrieval and sample-pack code, plus the superseded schematic prompts.**
+  Removed unreachable helpers in the retrieval stack
+  (`RetrievalExecutor._extract_step_data`, the no-op `reload_overview` on both
+  the executor and the planner, `HierarchicalRetriever._path_to_url`,
+  `AgenticRetriever._verify_pages_have_answer`/`_extract_notes`,
+  `QueryPlanner._load_taxonomy`) and in the semiconductor sample pack
+  (`_llm_classify`, `_parse_power_page`, `_parse_pinmux_page`,
+  `find_power_supply`/`find_pinmux`/`find_net`). The six per-page-type schematic
+  prompts those functions used are removed as well: they belong to the
+  specialised path that the generic `PARSE_GENERIC_SCHEMATIC_PROMPT` extraction
+  superseded, and were never called. Also drops the `DiagnosticResponse` model
+  (its field models were removed above) and the imports left unused.
 - **Dead database, API and service code (~400 lines).** Removed the duplicated
   `upload_tasks` implementation in `TenantDB` (table, both indexes and five CRUD
   methods: the only callers go through the `SystemDB` copy, and the two had

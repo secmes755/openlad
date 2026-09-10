@@ -8,7 +8,7 @@
 - 引脚复用（PinMux）：引脚功能分配
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List
 
 
 @dataclass
@@ -204,35 +204,6 @@ class SchematicDocument:
     title: str = ""
     pages: List[SchematicPage] = field(default_factory=list)
 
-    def find_power_supply(self, name_keyword: str) -> List[SchematicPowerSupply]:
-        """按关键词搜索电源供应"""
-        results = []
-        kw = name_keyword.lower()
-        for page in self.pages:
-            for ps in page.power_supplies:
-                if kw in ps.name.lower() or kw in ps.voltage.lower() or kw in ps.source.lower():
-                    results.append(ps)
-        return results
-
-    def find_pinmux(self, function_keyword: str) -> List[SchematicPinMux]:
-        """按功能关键词搜索引脚复用"""
-        results = []
-        kw = function_keyword.lower()
-        for page in self.pages:
-            for pm in page.pinmux:
-                if any(kw in f.lower() for f in pm.functions):
-                    results.append(pm)
-        return results
-
-    def find_net(self, net_keyword: str) -> List[SchematicNet]:
-        """按关键词搜索网络"""
-        results = []
-        kw = net_keyword.lower()
-        for page in self.pages:
-            for net in page.nets:
-                if kw in net.net_name.lower():
-                    results.append(net)
-        return results
 
     def to_dict(self) -> Dict[str, Any]:
         return {
