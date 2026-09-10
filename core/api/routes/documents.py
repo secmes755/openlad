@@ -11,8 +11,6 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 logger = logging.getLogger(__name__)
 
-from pydantic import BaseModel
-
 from ...db.tenant_db import get_tenant_metadata_db
 from ...ingestion.parser import DocumentParser
 from ...tenant.context import get_tenant_context
@@ -30,16 +28,6 @@ SUPPORTED_EXTENSIONS = DocumentParser.SUPPORTED_EXTENSIONS
 def _get_system_db():
     from ...db.system_db import get_system_db
     return get_system_db()
-
-
-class DocumentListResponse(BaseModel):
-    id: str
-    filename: str
-    title: str | None
-    status: str
-    category_level1: str | None
-    industry_package_id: str | None
-    created_at: str
 
 
 def _create_task(doc_id: str, filename: str, tenant_id: str = "") -> str:

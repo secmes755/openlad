@@ -145,9 +145,6 @@ class AuthManager:
         """Revoke one login session (current device logout)."""
         return self.system_db.delete_session_by_key(api_key)
 
-    def revoke_all_sessions(self, user_id: str) -> int:
-        """Revoke every session of a user (account-level revocation)."""
-        return self.system_db.delete_sessions_by_user(user_id)
 
     def get_user(self, user_id: str) -> UserInfo | None:
         """Get user info"""

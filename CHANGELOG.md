@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead database, API and service code (~400 lines).** Removed the duplicated
+  `upload_tasks` implementation in `TenantDB` (table, both indexes and five CRUD
+  methods: the only callers go through the `SystemDB` copy, and the two had
+  already drifted apart), seven unused `TenantDB` methods including the
+  127-line superseded `search_fts` (chunk search runs through
+  `search_fts_chunks`), four unused `SystemDB` methods,
+  `restore_interrupted_tasks` on both sides — the "resume uploads after a
+  restart" hook was never wired up — five unused Pydantic request/response
+  models, the unused `TenantContext` path helpers, `AuthManager.revoke_all_sessions`,
+  `ServiceManager.log_event`, `ResourceCapacity.get_snapshot`, and the two
+  imports those deletions left unused.
 - **Dead ingestion code (~600 lines across 9 files).** Unreachable code removed:
   the disabled LLM full-structure-analysis chain in `builder.py` (its call site
   logs "LLM full analysis disabled", so the path could never run), the legacy

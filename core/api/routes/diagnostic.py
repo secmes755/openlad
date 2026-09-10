@@ -30,23 +30,6 @@ class UserInfo(BaseModel):
     created_at: str | None
 
 
-class DocumentInfo(BaseModel):
-    id: str
-    title: str
-    filename: str
-    doc_type: str
-    status: str
-    page_count: int | None
-    chunk_count: int | None
-    category_level1: str | None
-    category_level2: str | None
-    category_level3: str | None
-    tenant_id: str
-    tenant_name: str | None
-    created_at: str | None
-    updated_at: str | None
-
-
 class TenantInfo(BaseModel):
     tenant_id: str
     name: str
@@ -54,14 +37,6 @@ class TenantInfo(BaseModel):
     document_count: int
     user_count: int
     storage_used_mb: float | None
-
-
-class CategoryNode(BaseModel):
-    name: str
-    level: int
-    document_count: int
-    children: list[Any]  # Recursive type, use Any to avoid Pydantic recursion issues
-    documents: list[DocumentInfo]
 
 
 class DiagnosticResponse(BaseModel):

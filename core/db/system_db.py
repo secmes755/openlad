@@ -11,7 +11,6 @@ import time
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from ..config import settings
 from ..tenant.models import TenantInfo, UserInfo
@@ -241,18 +240,6 @@ class SystemDB:
             logger.error(f"[SYSTEM_DB] Failed to create user: {e}")
             return False
 
-    def authenticate_user(self, username: str, password_hash: str,
-                           tenant_id: str = None) -> UserInfo | None:
-        query = "SELECT * FROM users WHERE username = ? AND password_hash = ?"
-        params = [username, password_hash]
-        if tenant_id:
-            query += " AND tenant_id = ?"
-            params.append(tenant_id)
-        with self.get_connection() as conn:
-            row = conn.execute(query, params).fetchone()
-            if row:
-                return self._row_to_user(row)
-        return None
 
     def find_users_by_username(self, username: str,
                                 tenant_id: str = None) -> list:
@@ -456,30 +443,7 @@ class SystemDB:
         )
 
     # === Industry Package Registry ===
-    def register_industry_package(self, pkg_id: str, name: str, version: str,
-                                   path: str, category_mapping: list,
-                                   is_builtin: bool = False) -> bool:
-        try:
-            with self.get_connection() as conn:
-                conn.execute("""
-                    INSERT OR REPLACE INTO industry_packages
-                    (id, name, version, path, category_mapping, is_builtin, is_active, loaded_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                """, (pkg_id, name, version, path, json.dumps(category_mapping), int(is_builtin)))
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"[SYSTEM_DB] Failed to register industry package: {e}")
-            return False
 
-    def get_industry_packages(self) -> list[dict[str, Any]]:
-        with self.get_connection() as conn:
-            rows = conn.execute("SELECT * FROM industry_packages WHERE is_active = 1").fetchall()
-            return [{
-                "id": r["id"], "name": r["name"], "version": r["version"],
-                "path": r["path"], "category_mapping": json.loads(r["category_mapping"]) if r["category_mapping"] else [],
-                "is_builtin": bool(r["is_builtin"]),
-            } for r in rows]
 
     # === System Config ===
     def get_config(self, key: str, default: str = None) -> str | None:
@@ -570,15 +534,6 @@ class SystemDB:
             """)
             conn.commit()
             return cursor.rowcount
-
-    def restore_interrupted_tasks(self) -> list[dict]:
-        """Restore tasks that were interrupted (processing status)"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM upload_tasks WHERE status = 'processing'
-            """)
-            return [dict(row) for row in cursor.fetchall()]
 
 
 # Singleton

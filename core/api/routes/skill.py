@@ -32,11 +32,6 @@ class SkillSearchRequest(BaseModel):
     max_results: int = 10
 
 
-class SkillIngestRequest(BaseModel):
-    doc_id: str | None = None
-    industry: str | None = None
-
-
 @router.post("/query")
 async def skill_query(req: SkillQueryRequest, request: Request):
     """Agent query endpoint (shares global concurrency lock)

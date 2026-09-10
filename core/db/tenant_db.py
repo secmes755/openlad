@@ -253,22 +253,6 @@ class TenantMetadataDB:
                 CREATE VIRTUAL TABLE IF NOT EXISTS doc_chunks_fts USING fts5(chunk_text, tokenize='trigram')
             """)
 
-            # V4.7: Upload task status table (replaces in-memory _upload_tasks)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS upload_tasks (
-                    task_id TEXT PRIMARY KEY,
-                    doc_id TEXT,
-                    tenant_id TEXT,
-                    filename TEXT NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    progress INTEGER DEFAULT 0,
-                    message TEXT DEFAULT 'Waiting for processing',
-                    result TEXT,
-                    error TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
 
             # Indexes
             for idx_sql in [
@@ -284,8 +268,6 @@ class TenantMetadataDB:
                 "CREATE INDEX IF NOT EXISTS idx_documents_industry ON documents(industry_package_id)",
                 "CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc_id ON doc_chunks(doc_id)",
                 "CREATE INDEX IF NOT EXISTS idx_doc_chunks_page_id ON doc_chunks(page_id)",
-                "CREATE INDEX IF NOT EXISTS idx_upload_tasks_tenant ON upload_tasks(tenant_id)",
-                "CREATE INDEX IF NOT EXISTS idx_upload_tasks_status ON upload_tasks(status)",
             ]:
                 cursor.execute(idx_sql)
 
@@ -452,21 +434,6 @@ class TenantMetadataDB:
                 "SELECT * FROM doc_pages WHERE doc_id = ? ORDER BY page_num", (doc_id,)
             ).fetchall()]
 
-    def count_document_pages(self, doc_id: str) -> int:
-        """Count total pages for a document"""
-        with self.get_connection() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM doc_pages WHERE doc_id = ?", (doc_id,)
-            ).fetchone()
-            return row[0] if row else 0
-
-    def get_document_pages_batch(self, doc_id: str, offset: int = 0, limit: int = 100) -> list[dict]:
-        """Get pages in batches (streaming) to avoid loading all pages into memory"""
-        with self.get_connection() as conn:
-            return [_page_from_row(r) for r in conn.execute(
-                "SELECT * FROM doc_pages WHERE doc_id = ? ORDER BY page_num LIMIT ? OFFSET ?",
-                (doc_id, limit, offset)
-            ).fetchall()]
 
     def get_page(self, page_id: int) -> dict | None:
         with self.get_connection() as conn:
@@ -493,20 +460,6 @@ class TenantMetadataDB:
             conn.commit()
             return chunk_db_id
 
-    def get_document_chunks(self, doc_id: str, page_id: int = None) -> list[dict]:
-        """Get document chunks"""
-        with self.get_connection() as conn:
-            if page_id:
-                rows = conn.execute(
-                    "SELECT * FROM doc_chunks WHERE doc_id = ? AND page_id = ? ORDER BY page_num, chunk_idx",
-                    (doc_id, page_id)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM doc_chunks WHERE doc_id = ? ORDER BY page_num, chunk_idx",
-                    (doc_id,)
-                ).fetchall()
-            return [dict(r) for r in rows]
 
     def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: set[int] | None = None) -> list[dict]:
         """Chunk-level FTS search (OpenLAD: downgraded from page-level to chunk-level)
@@ -811,134 +764,6 @@ class TenantMetadataDB:
                 (doc_id, f"%{keyword}%", limit)).fetchall()]
 
     # === FTS Search ===
-    def search_fts(self, query: str, limit: int = 20) -> list[dict]:
-        import re
-        clean_query = re.sub(r'[^\w\s\u4e00-\u9fff]', ' ', query)
-        clean_query = re.sub(r'\s+', ' ', clean_query).strip()
-        if not clean_query:
-            return []
-        # FIX: Insert spaces between Chinese characters and English/digits to ensure correct tokenization
-        # e.g. "compare RK3562" → "compare RK3562"
-        clean_query = re.sub(r'([\u4e00-\u9fff])([A-Za-z0-9])', r'\1 \2', clean_query)
-        clean_query = re.sub(r'([A-Za-z0-9])([\u4e00-\u9fff])', r'\1 \2', clean_query)
-        clean_query = re.sub(r'\s+', ' ', clean_query).strip()
-
-        tokens = clean_query.split()
-
-        # Split long Chinese strings into 2-character bigrams for LIKE fallback
-        expanded_tokens = []
-        for t in tokens:
-            if len(t) > 4 and all(CJK_START <= c <= CJK_END for c in t):
-                # No function words: split by 2-character bigrams
-                for i in range(0, len(t) - 1, 2):
-                    expanded_tokens.append(t[i:i+2])
-                if len(t) % 2 == 1:
-                    expanded_tokens.append(t[-2:])
-            else:
-                expanded_tokens.append(t)
-        tokens = expanded_tokens
-
-        trigram_tokens = [t for t in tokens if len(t) >= 3 and not re.match(r'^\d+$', t)]
-        # OpenLAD FIX: All 2-character words cannot be indexed by the trigram tokenizer; all need LIKE fallback
-        bigram_tokens = [t for t in tokens if len(t) == 2]
-
-        all_results = []
-        seen_page_ids = set()
-
-        # 1. FTS5 trigram search (3+ characters)
-        # OpenLAD FIX: Try AND logic first (reduces noise), then supplement with OR if insufficient
-        if trigram_tokens:
-            # Try AND search first
-            if len(trigram_tokens) >= 2:
-                and_query = ' AND '.join(trigram_tokens)
-                try:
-                    with self.get_connection() as conn:
-                        rows = conn.execute("""
-                            SELECT dp.id, dp.doc_id, dp.page_num, dp.section_title, dp.raw_text, rank
-                            FROM doc_pages_fts JOIN doc_pages dp ON doc_pages_fts.rowid = dp.id
-                            WHERE doc_pages_fts MATCH ? ORDER BY rank LIMIT ?
-                        """, (and_query, limit)).fetchall()
-                        for r in rows:
-                            pid = r["id"]
-                            if pid not in seen_page_ids:
-                                seen_page_ids.add(pid)
-                                all_results.append({
-                                    "page_id": pid, "doc_id": r["doc_id"],
-                                    "page_num": r["page_num"], "section_title": r["section_title"],
-                                    "raw_text": r["raw_text"], "score": -r["rank"] if r["rank"] < 0 else r["rank"]
-                                })
-                except Exception as e:
-                    logger.warning(f"FTS AND search error: {e}")
-
-            # If AND results are less than 30% of limit, supplement with OR
-            if len(all_results) < int(max(limit * 0.3, 3)):
-                match_query = ' OR '.join(trigram_tokens)
-                try:
-                    with self.get_connection() as conn:
-                        rows = conn.execute("""
-                            SELECT dp.id, dp.doc_id, dp.page_num, dp.section_title, dp.raw_text, rank
-                            FROM doc_pages_fts JOIN doc_pages dp ON doc_pages_fts.rowid = dp.id
-                            WHERE doc_pages_fts MATCH ? ORDER BY rank LIMIT ?
-                        """, (match_query, limit * 2)).fetchall()
-                        for r in rows:
-                            pid = r["id"]
-                            if pid not in seen_page_ids:
-                                seen_page_ids.add(pid)
-                                all_results.append({
-                                    "page_id": pid, "doc_id": r["doc_id"],
-                                    "page_num": r["page_num"], "section_title": r["section_title"],
-                                    "raw_text": r["raw_text"], "score": -r["rank"] if r["rank"] < 0 else r["rank"]
-                                })
-                except Exception as e:
-                    logger.warning(f"FTS OR search error: {e}")
-
-        # Deduplicate and sort by score (AND results typically have higher scores, ranked first)
-        all_results.sort(key=lambda x: x["score"], reverse=True)
-
-        # 2. Supplementary recall: search 2-character Chinese words with LIKE (FTS5 trigram tokenizer doesn't index 2-character words)
-        # OpenLAD FIX: Sort by number of matched keywords; more matches rank higher
-        if bigram_tokens:
-            like_limit = max(limit * 2, 40)
-            try:
-                with self.get_connection() as conn:
-                    conditions = " OR ".join(["dp.raw_text LIKE ?" for _ in bigram_tokens])
-                    params = [f"%{t}%" for t in bigram_tokens]
-                    match_score = " + ".join(["CASE WHEN dp.raw_text LIKE ? THEN 1 ELSE 0 END" for _ in bigram_tokens])
-                    if seen_page_ids:
-                        exclude_sql = f"AND dp.id NOT IN ({','.join(['?'] * len(seen_page_ids))})"
-                        sql = f"""
-                            SELECT dp.id, dp.doc_id, dp.page_num, dp.section_title, dp.raw_text, ({match_score}) as match_count
-                            FROM doc_pages dp
-                            WHERE ({conditions}) {exclude_sql}
-                            ORDER BY match_count DESC, dp.page_num
-                            LIMIT ?
-                        """
-                        query_params = params + params + list(seen_page_ids) + [like_limit]
-                    else:
-                        sql = f"""
-                            SELECT dp.id, dp.doc_id, dp.page_num, dp.section_title, dp.raw_text, ({match_score}) as match_count
-                            FROM doc_pages dp
-                            WHERE ({conditions})
-                            ORDER BY match_count DESC, dp.page_num
-                            LIMIT ?
-                        """
-                        query_params = params + params + [like_limit]
-                    rows = conn.execute(sql, query_params).fetchall()
-                    for r in rows:
-                        pid = r["id"]
-                        if pid not in seen_page_ids:
-                            seen_page_ids.add(pid)
-                            match_count = r["match_count"]
-                            base_score = 0.1 + min(match_count * 0.05, 0.3)
-                            all_results.append({
-                                "page_id": pid, "doc_id": r["doc_id"],
-                                "page_num": r["page_num"], "section_title": r["section_title"],
-                                "raw_text": r["raw_text"], "score": base_score
-                            })
-            except Exception as e:
-                logger.warning(f"Bigram LIKE search error: {e}")
-
-        return all_results[:limit]
 
     # === Chat ===
     def create_chat_session(self, session_id: str, user_id: str = None,
@@ -1024,83 +849,6 @@ class TenantMetadataDB:
             conn.commit()
             return cursor.lastrowid
 
-    # -------------------------------------------------------------------------
-    # Upload Task Status (V4.7: replaces in-memory _upload_tasks)
-    # -------------------------------------------------------------------------
-    def create_upload_task(self, task_id: str, doc_id: str, filename: str, tenant_id: str = "") -> str:
-        """Create upload task record in DB"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO upload_tasks (task_id, doc_id, tenant_id, filename, status, progress, message)
-                VALUES (?, ?, ?, ?, 'pending', 0, 'Waiting for processing')
-            """, (task_id, doc_id, tenant_id, filename))
-            conn.commit()
-            return task_id
-
-    def update_upload_task(self, task_id: str, **kwargs) -> bool:
-        """Update upload task status in DB. Only updates every 10% progress or status change to reduce writes."""
-        # Build dynamic update
-        allowed_fields = {'status', 'progress', 'message', 'result', 'error'}
-        updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
-        if not updates:
-            return False
-
-        # Add updated_at
-        updates['updated_at'] = 'CURRENT_TIMESTAMP'
-
-        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
-        values = list(updates.values())
-        values.append(task_id)
-
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                UPDATE upload_tasks SET {set_clause} WHERE task_id = ?
-            """, values)
-            conn.commit()
-            return cursor.rowcount > 0
-
-    def get_upload_task(self, task_id: str) -> dict | None:
-        """Get upload task by ID"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM upload_tasks WHERE task_id = ?
-            """, (task_id,))
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
-            return None
-
-    def cleanup_upload_tasks(self, max_age_hours: int = 24) -> int:
-        """Clean up old completed/failed tasks"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                DELETE FROM upload_tasks
-                WHERE updated_at < datetime('now', '-{max_age_hours} hours')
-                AND status IN ('completed', 'failed', 'already_imported')
-            """)
-            conn.commit()
-            return cursor.rowcount
-
-    def restore_interrupted_tasks(self, tenant_id: str = None) -> list[dict]:
-        """On API startup, find tasks that were 'processing' when API last crashed"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            if tenant_id:
-                cursor.execute("""
-                    SELECT * FROM upload_tasks
-                    WHERE status = 'processing' AND tenant_id = ?
-                """, (tenant_id,))
-            else:
-                cursor.execute("""
-                    SELECT * FROM upload_tasks WHERE status = 'processing'
-                """)
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-
 
 # =============================================================================
 # Tenant-level Vector/Full-text Database
@@ -1154,49 +902,7 @@ class TenantVectorDB:
             logger.error(f"sqlite-vec init failed: {e}")
 
     # --- Legacy interface: page-level (kept for compatibility) ---
-    def store_l2_embedding(self, page_id: int, doc_id: str, embedding: list[float]):
-        try:
-            conn = sqlite3.connect(self.vec_db_path)
-            import struct
-            emb_bytes = struct.pack(f'{len(embedding)}f', *embedding)
-            conn.execute("INSERT OR REPLACE INTO l2_pages (page_id, doc_id, embedding) VALUES (?, ?, ?)",
-                         (page_id, doc_id, emb_bytes))
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"L2 embedding failed: {e}")
 
-    def search_l2(self, query_embedding: list[float], limit: int = 20,
-                  doc_id_filter: set[str] = None, min_score: float = 0.40) -> list[dict]:
-        """Legacy page-level search (compatibility)"""
-        try:
-            conn = sqlite3.connect(self.vec_db_path)
-            conn.enable_load_extension(True)
-            try:
-                import sqlite_vec
-                sqlite_vec.load(conn)
-            except Exception:
-                conn.close()
-                return []
-            import struct
-            emb_bytes = struct.pack(f'{len(query_embedding)}f', *query_embedding)
-            max_distance = 1.0 - min_score
-            if doc_id_filter is not None and len(doc_id_filter) > 0 and "__ALL__" not in doc_id_filter:
-                ph = ",".join("?" * len(doc_id_filter))
-                results = conn.execute(f"""
-                    SELECT page_id, doc_id, vec_distance_cosine(embedding, ?) as distance
-                    FROM l2_pages WHERE doc_id IN ({ph}) AND distance < ? ORDER BY distance LIMIT ?
-                """, (emb_bytes,) + tuple(doc_id_filter) + (max_distance, limit)).fetchall()
-            else:
-                results = conn.execute("""
-                    SELECT page_id, doc_id, vec_distance_cosine(embedding, ?) as distance
-                    FROM l2_pages WHERE distance < ? ORDER BY distance LIMIT ?
-                """, (emb_bytes, max_distance, limit)).fetchall()
-            conn.close()
-            return [{"page_id": r[0], "doc_id": r[1], "score": 1.0 - r[2]} for r in results]
-        except Exception as e:
-            logger.error(f"L2 search failed: {e}")
-            return []
 
     # --- New interface: chunk-level ---
     def store_l2_chunk(self, page_id: int, chunk_idx: int, doc_id: str,

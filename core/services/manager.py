@@ -80,23 +80,6 @@ class ServiceManager:
         except Exception as e:
             logger.warning(f"Failed to initialize service_events table: {e}")
 
-    def log_event(self, service: str, event_type: str, message: str,
-                  pid: int = None, old_pid: int = None, new_pid: int = None,
-                  details: dict = None):
-        try:
-            db = get_system_db()
-            with db.get_connection() as conn:
-                conn.execute("""
-                    INSERT INTO service_events
-                    (timestamp, service, event_type, pid, old_pid, new_pid, message, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    time.time(), service, event_type, pid, old_pid, new_pid,
-                    message, json.dumps(details, ensure_ascii=False) if details else None
-                ))
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to record service event: {e}")
 
     def get_logs(self, service: str = None, limit: int = 100,
                  event_type: str = None, since_hours: int = 24) -> list[dict]:

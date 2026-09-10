@@ -53,13 +53,6 @@ class QueryRequest(BaseModel):
 MAX_QUERY_LENGTH = 2000  # Default value, will be read from config in endpoint
 
 
-class QueryResponse(BaseModel):
-    answer: str
-    sources: list[dict]
-    confidence: str
-    elapsed_ms: int
-
-
 @router.post("/query")
 async def query(req: QueryRequest, request: Request):
     """Document query (protected by global concurrency lock)

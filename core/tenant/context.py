@@ -24,25 +24,10 @@ class TenantContext:
     api_key: str | None = None
     industry_hint: str | None = None  # Industry package specified by user
 
-    def get_data_dir(self):
-        from ..config import settings
-        return settings.get_tenant_data_dir(self.tenant_id)
-
-    def get_db_path(self):
-        from ..config import settings
-        return settings.get_tenant_db_path(self.tenant_id)
-
-    def get_vec_db_path(self):
-        from ..config import settings
-        return settings.get_tenant_vec_db_path(self.tenant_id)
 
     def get_documents_dir(self):
         from ..config import settings
         return settings.get_tenant_documents_dir(self.tenant_id)
-
-    def get_images_dir(self):
-        from ..config import settings
-        return settings.get_tenant_images_dir(self.tenant_id)
 
 
 def set_tenant_context(ctx: TenantContext):

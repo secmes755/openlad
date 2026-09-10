@@ -197,9 +197,6 @@ class ResourceCapacityManager:
             self._last_compute_time = now
         return self._plan
 
-    def get_snapshot(self) -> ResourceSnapshot | None:
-        """Get latest resource snapshot"""
-        return self._snapshot
 
     def can_create_tenant(self, current_tenant_count: int) -> tuple:
         """Check whether a new tenant can be created
