@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A model reply that could not be parsed as JSON is now distinguishable from an
+  empty one.** `generate_json` returns `{}` both when the model genuinely answered
+  `{}` and when its reply was unreadable, and the ~13 call sites cannot tell the
+  two apart: a planner whose reply failed to parse looked exactly like a planner
+  that found no candidates, so retrieval quietly ran with less than it should have.
+  The failure is now also recorded on `client.last_json_error` (None on success, a
+  reason otherwise), mirroring the existing `last_finish_reason` convention. The
+  return value is unchanged, so no caller had to be touched; reacting to the flag
+  is a per-caller decision and is deliberately left for the callers whose fallback
+  is a *wrong* answer rather than a degraded one.
 - **A page lost during ingestion is now reported instead of silently missing.**
   When a page's analysis raised, `_build_l2` logged it and left the page out of the
   index, after which the document was saved as *verified* — retrieval then had no

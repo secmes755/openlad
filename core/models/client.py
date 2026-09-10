@@ -78,6 +78,11 @@ class ModelClient:
         self._session = None
         self._lock = threading.Lock()
         self.last_finish_reason = None
+        # Mirror of last_finish_reason for the JSON paths: set when the model's
+        # reply could not be read as a JSON object, cleared on success. Callers
+        # that must tell "the model answered {}" from "we could not parse the
+        # reply" read this, because both currently return {}.
+        self.last_json_error: str | None = None
 
     @property
     def session(self):
@@ -318,11 +323,27 @@ class ModelClient:
 
     def generate_json(self, prompt: str, system_prompt: str = None,
                       max_tokens: int = 4096, temperature: float = 0.3) -> dict[str, Any]:
+        """Return the model's reply as a JSON object, or {} if it was not one.
+
+        {} is also a legitimate model answer, so the two cases are distinguished
+        by ``self.last_json_error`` (None on success, a reason on failure) rather
+        than by the return value. The failure is logged either way; the attribute
+        exists so a caller can react instead of silently proceeding with an empty
+        result — a planner that found no candidate and a planner whose reply was
+        unreadable are not the same situation.
+        """
+        self.last_json_error = None
         result = self._generate_json_inner(prompt, system_prompt, max_tokens, temperature)
         if isinstance(result, list) and result and isinstance(result[0], dict):
             return result[0]
         if isinstance(result, dict):
             return result
+        self.last_json_error = (
+            "no parsable JSON in the model reply" if result is None
+            else f"expected a JSON object, got {type(result).__name__}"
+        )
+        logger.warning(f"[MODEL] generate_json unusable: {self.last_json_error} "
+                       f"(prompt {len(prompt)} chars, max_tokens={max_tokens})")
         return {}
 
 
