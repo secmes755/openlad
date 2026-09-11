@@ -72,10 +72,13 @@ def test_infer_doc_entity_from_title_and_filename():
     assert infer_doc_entity("", "RK3588 Datasheet.pdf", entity_patterns=patterns) == "RK3588"
 
 
-def test_infer_doc_entity_falls_back_to_cleaned_title():
-    # No model pattern found -> fall back to the cleaned source text (by design)
-    assert infer_doc_entity("", "T536_Datasheet_V0.91.pdf") == "T536_Datasheet_V0.91.pdf"
-    assert infer_doc_entity("No model here") == "No model here"
+def test_infer_doc_entity_is_empty_when_no_pattern_matches():
+    # No pattern matched -> there is no entity, and the caller must be able to
+    # tell. Returning the cleaned title/filename used to put document labels
+    # ("<uuid>_2024") into the entity vocabulary that scopes fact injection, so
+    # the scoping guard could never match a real entity while looking active.
+    assert infer_doc_entity("", "T536_Datasheet_V0.91.pdf") == ""
+    assert infer_doc_entity("No model here") == ""
 
 
 # ---- rule extraction ----

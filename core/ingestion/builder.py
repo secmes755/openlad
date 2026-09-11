@@ -234,7 +234,7 @@ class DocumentIndexBuilder:
                             f"'{extraction_plugin.manifest.id}' for spec-fact "
                             f"extraction from document category")
         spec_fact_warnings = self._extract_spec_facts(doc_id, l2_results, tid,
-                                                      extraction_plugin, parsed_doc)
+                                                      extraction_plugin, parsed_doc, title)
 
         # Generate L2 page vector embeddings
         _report(75, "Generating L2 vector embeddings")
@@ -681,7 +681,7 @@ class DocumentIndexBuilder:
         return l2_results, page_loss_warnings
 
     def _extract_spec_facts(self, doc_id: str, l2_results: list, tid: str,
-                            plugin, parsed_doc) -> list[str]:
+                            plugin, parsed_doc, title: str | None = None) -> list[str]:
         """Extract assertion-level spec facts from L2 page texts.
 
         Runs after classification so the industry plugin can be resolved from
@@ -716,11 +716,14 @@ class DocumentIndexBuilder:
                     extraction = plugin.retrieval.get_spec_extraction_config() or None
                 except Exception as e:
                     logger.warning(f"[BUILDER] get_spec_extraction_config failed (non-fatal): {e}")
-            # Document-level entity from filename — the only reliable title
-            # source at this stage. Entity patterns come from the active
-            # industry pack (core stays industry-agnostic).
+            # Document-level entity, matched by the active industry pack's patterns
+            # (core stays industry-agnostic). The caller's title comes first, then
+            # the filename: matching only ever saw the filename, so a corpus whose
+            # filenames are opaque (uuids, internal ids) could never produce an
+            # entity even when the title named one. No match means no entity.
             spec_entity = infer_doc_entity(
-                parsed_doc.filename, entity_patterns=entity_patterns) if parsed_doc else ""
+                title or "", filename=parsed_doc.filename,
+                entity_patterns=entity_patterns) if parsed_doc else ""
             count = 0
             pages_skipped = 0
             facts_dropped = 0

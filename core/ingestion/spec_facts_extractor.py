@@ -261,8 +261,16 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
     # documents (annual reports, legal filings...), which then gets
     # injected into queries via the spec-fact bypass. A pack-less or
     # vocabulary-less document must not populate the assertion table.
-    if not (spec_headers or compute_re or freq_re
-            or support_re or resolution_re):
+    #
+    # Units are not vocabulary. They are what a value is measured *in*, and the
+    # generic pack ships SI units for every industry, so counting them here made
+    # this guard pass for any document at all -- and the structural colon-header
+    # pattern below then read statement lines ("Less: Corporate income tax
+    # 143,692") as facts. The compute pattern needs the industry's own attribute
+    # name alongside its units, so compute_attribute is the part that actually
+    # says "this document type has spec facts".
+    if not (spec_headers or freq_re or support_re or resolution_re
+            or compute_attribute):
         return []
 
     text = strip_vlm_blocks(raw_text)
@@ -411,10 +419,18 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
 # Core is industry-agnostic: entity patterns (e.g. chip-model regexes) are
 # supplied by the active industry pack via RetrievalPlugin.get_entity_patterns()
 # (see industries/*/retrieval/rules.yaml -> entity_patterns). With no patterns
-# the entity falls back to a compact title/filename tag.
+# (or no match) the entity is unknown and comes back empty — see the docstring.
 def infer_doc_entity(title: str, filename: str = "",
                      entity_patterns: list[str] | None = None) -> str:
-    """Infer the primary document entity from title/filename via pack patterns."""
+    """Infer the primary document entity from title/filename via pack patterns.
+
+    Returns "" when no pattern matches. A document label is not an entity: the
+    old fallback returned the cleaned title/filename, which put values like
+    ``<uuid>_2024`` into the entity vocabulary that scopes fact injection -- the
+    scoping guard then looked active while it could never match a real entity,
+    and the label was rendered to the model as if it named an entity. Callers
+    treat "" as "the entity is unknown".
+    """
     for pat in (entity_patterns or []):
         try:
             rx = re.compile(pat)
@@ -423,4 +439,4 @@ def infer_doc_entity(title: str, filename: str = "",
         m = rx.search(title or "") or rx.search(filename or "")
         if m:
             return m.group(1)
-    return _clean(title or filename)[:40] or "unknown"
+    return ""

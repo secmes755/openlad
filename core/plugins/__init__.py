@@ -395,8 +395,11 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         return self.config.rules.get("entity_stopwords", []) or []
 
     def get_spec_extraction_config(self) -> dict[str, Any]:
-        # Extractor vocabulary from rules.yaml `spec_extraction` (default
-        # empty -> core runs structural patterns only).
+        # Extractor vocabulary from rules.yaml `spec_extraction`. Empty (or a
+        # unit list with no industry vocabulary in it) means the extractor
+        # produces nothing for this pack's documents — see
+        # core/ingestion/spec_facts_extractor.py on why units do not count as
+        # vocabulary.
         return self.config.rules.get("spec_extraction", {}) or {}
 
     def get_evidence_anchor_patterns(self) -> list[str]:

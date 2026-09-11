@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Only industry vocabulary opens the spec-fact table, and a fact is only
+  attributed to a real entity.** Two ways the assertion index took on content it
+  could not support:
+  - *Units counted as vocabulary.* The guard that decides whether a document may
+    be mined for facts accepted a unit list as industry vocabulary. The generic
+    pack ships SI units (V, mV, A …) for every industry and nothing else, so any
+    document it applied to qualified, and the pack-independent colon-header
+    pattern then read the prose that was there — `Less: Corporate income tax
+    143,692` became a fact with attribute `Less`, and on a PDF whose text layer is
+    font glyph codes `(cid:6813)` became one with attribute `cid`. Units are what a
+    value is measured *in*, not a vocabulary; only declared industry vocabulary
+    (spec headers, frequency terms, support objects, codec literals, the compute
+    attribute name) enables extraction. Measured on a datasheet corpus the
+    units-only configuration produced 241 facts by itself; the pack-driven
+    extraction over the same pages is unchanged (312 facts, before and after).
+  - *Document labels posed as entities.* `infer_doc_entity` fell back to the
+    cleaned title/filename when no pack pattern matched, so facts were labelled
+    `<uuid>_2024` / `..._Roc` and those labels entered the entity vocabulary that
+    scopes fact injection — a vocabulary of document labels can never match a
+    query entity, so the scoping looked active while it could not scope anything
+    (26% of one corpus's facts carried such labels). An unknown entity is now
+    empty; the vocabulary query already excludes empty entities. Inference also
+    sees the caller's title now, not only the filename, so a corpus with opaque
+    filenames can still resolve an entity from its title.
 - **Spec facts are no longer built out of a text layer that is font glyph codes.**
   Fonts without a ToUnicode map make a reader render glyph indices as `(cid:NNN)`
   — ordinary ASCII, so the garbled-character checks pass them (they look for
