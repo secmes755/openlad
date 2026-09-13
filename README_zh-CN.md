@@ -93,14 +93,14 @@ llama-server \
     --host 127.0.0.1 --port 8080 --alias qwen3.5-9b \
     --n-gpu-layers 999 --ctx-size 262144 --parallel 2 \
     --batch-size 2048 --reasoning off \
-    --cache-type-k q4_0 --cache-type-v q4_0 -n -1
+    --cache-type-k q4_0 --cache-type-v q4_0 --cache-ram 2048 -n -1
 
 # Embedding（端口 8081）
 llama-server \
     --model ~/models/qwen3-embedding-0.6b-q8_0.gguf \
     --host 127.0.0.1 --port 8081 --alias qwen3-embedding-0.6b \
     --n-gpu-layers 999 --ctx-size 8192 \
-    --embeddings --pooling mean --batch-size 2048
+    --embeddings --pooling mean --batch-size 2048 --cache-ram 0
 ```
 
 > `--reasoning off` **至关重要** —— Qwen3.5 的思考模式会破坏结构化输出。

@@ -77,6 +77,7 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 | `--reasoning`    | `off`    | **CRITICAL** — Qwen3.5 thinking mode must be disabled    |
 | `--cache-type-k` | `q4_0`   | Q4 KV cache quantization (~2.3 GB at 256K)               |
 | `--cache-type-v` | `q4_0`   | Q4 value cache quantization                              |
+| `--cache-ram`    | `2048`   | Host-side prompt cache cap, MiB — **pin this**, see below |
 | `-n`             | `-1`     | No limit on generated tokens                             |
 
 **Embedding — Qwen3-Embedding-0.6B Q8_0:**
@@ -88,6 +89,7 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 | `--embeddings`   | —      | Enable embedding mode                             |
 | `--pooling`      | `mean` | Mean pooling for embedding vectors                |
 | `--batch-size`   | `2048` | Caps tokens per input — see the pairing rule below |
+| `--cache-ram`    | `0`    | Prompt cache off — nothing to reuse for embeddings |
 
 > **Batch-size pairing.** The embedding server's `--batch-size` caps the
 > tokens of any *single* input — a chunk larger than that is rejected
@@ -98,6 +100,17 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 > `OPENLAD_EMB_MAX_INPUT_TOKENS=512`. A mismatch does not crash — affected
 > chunks are silently skipped and the document ingests "hollow". See
 > [configuration reference](configuration.md#embedding-batch-size-pairing).
+
+> **The prompt cache lives in host RAM, and its default ceiling is 8192 MiB *per
+> process*.** llama.cpp's server keeps the state of recent prompts on the host so
+> that a later request can skip re-processing a shared prefix. Leave that default
+> in place and three model services reserve up to 24 GiB of host RAM that is never
+> returned while the servers run — on a 32 GB baseline machine the OOM killer
+> eventually takes a model server, and every service sharing memory with it. Pin
+> the cache explicitly: `--cache-ram 2048` for the main LLM (bounded, keeps prefix
+> reuse), `--cache-ram 0` for the embedding and OCR servers (nothing to reuse).
+> A cached prompt state costs roughly 28 KB of host RAM per prompt token, so the
+> 8192 MiB default holds ~300k prompt tokens.
 
 ### Using Ollama instead
 
@@ -128,7 +141,7 @@ llama-server \
     --model ~/models/ovisocr2-q8_0.gguf \
     --mmproj ~/models/mmproj-f16.gguf \
     --host 127.0.0.1 --port 8082 --alias ovisocr2 \
-    --n-gpu-layers 999 --ctx-size 32768
+    --n-gpu-layers 999 --ctx-size 32768 --cache-ram 0
 
 export OPENLAD_OCR_URL=http://127.0.0.1:8082/v1
 export OPENLAD_OCR_MODEL=ovisocr2

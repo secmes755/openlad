@@ -64,6 +64,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preinstalled packages, so identical commits passed or failed depending on the
   runner they landed on. Jobs are pinned to `ubuntu-24.04` and install their own
   dependencies.
+- **The deployment guide's llama-server flags did not pin `--cache-ram`, so the
+  reference deployment slowly pins host RAM until the OOM killer acts.** The
+  llama.cpp server keeps the state of recently processed prompts on the *host* to
+  skip re-processing shared prefixes, and its default ceiling is 8192 MiB **per
+  process** — anonymous host memory that is not returned for as long as the
+  process runs. Deployed as documented (three model services on a 32 GB baseline
+  machine) that is a 24 GiB ceiling on a 32 GB host, so a long-running deployment
+  eventually loses a model server to the OOM killer along with anything sharing
+  memory with it. The recommended flags now pin the ceiling explicitly — main LLM
+  `--cache-ram 2048` (bounded prefix reuse), embedding and OCR `--cache-ram 0` —
+  in both language editions of the guide and in the README quick start, with the
+  cost stated: a cached prompt state is roughly 28 KB of host RAM per prompt
+  token.
 
 ### Changed
 

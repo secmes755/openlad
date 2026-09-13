@@ -73,6 +73,7 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 | `--reasoning`    | `off`    | **关键** — Qwen3.5 的思考模式必须禁用      |
 | `--cache-type-k` | `q4_0`   | Q4 KV 缓存量化（256K 时约 2.3 GB）        |
 | `--cache-type-v` | `q4_0`   | Q4 值缓存量化                            |
+| `--cache-ram`    | `2048`   | 主机侧 prompt cache 上限（MiB）——**必须显式设置**，见下方说明 |
 | `-n`             | `-1`     | 生成 token 数无限制                       |
 
 **Embedding — Qwen3-Embedding-0.6B Q8_0：**
@@ -84,6 +85,7 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 | `--embeddings`   | —      | 启用 Embedding 模式              |
 | `--pooling`      | `mean` | Embedding 向量的均值池化           |
 | `--batch-size`   | `2048` | 限制单条输入 token 上限——见下方配对规则 |
+| `--cache-ram`    | `0`    | 关闭 prompt cache——embedding 无复用价值 |
 
 > **Batch-size 配对。** embedding 服务的 `--batch-size` 限制单条输入的
 > token 上限，超限的 chunk 会被拒收并在入库时静默跳过。OpenLAD 依据
@@ -92,6 +94,15 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 > 上的 `512`），请同步设置：`OPENLAD_EMB_MAX_INPUT_TOKENS=512`。
 > 失配不会报错——受影响的 chunk 被静默跳过，文档会"空心"入库。详见
 > [配置参考](../configuration.md#embedding-batch-size-配对)。
+
+> **prompt cache 占用的是主机内存，且默认上限为 8192 MiB／进程。**
+> llama.cpp 的 server 会把最近处理过的 prompt 状态留在主机侧，后续请求命中相同前缀
+> 时即可跳过重复计算。若沿用默认值，三个模型服务最多预留 24 GiB 主机内存，且只要
+> 进程存活就不会归还——32 GB 基线机器上，最终必然是 OOM killer 杀掉某个模型服务，
+> 并连带停掉与它共享内存的服务。因此请显式钉住缓存上限：主 LLM 用 `--cache-ram 2048`
+> （有界，保留前缀复用），embedding 与 OCR 用 `--cache-ram 0`（无复用价值）。
+> 每个 prompt token 的缓存状态约占 28 KB 主机内存，即默认的 8192 MiB 可容纳约
+> 30 万 prompt token。
 
 ### 使用 Ollama 替代
 
@@ -121,7 +132,7 @@ llama-server \
     --model ~/models/ovisocr2-q8_0.gguf \
     --mmproj ~/models/mmproj-f16.gguf \
     --host 127.0.0.1 --port 8082 --alias ovisocr2 \
-    --n-gpu-layers 999 --ctx-size 32768
+    --n-gpu-layers 999 --ctx-size 32768 --cache-ram 0
 
 export OPENLAD_OCR_URL=http://127.0.0.1:8082/v1
 export OPENLAD_OCR_MODEL=ovisocr2
