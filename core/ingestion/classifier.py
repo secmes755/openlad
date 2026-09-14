@@ -9,6 +9,17 @@ from ..plugins import get_plugin_registry
 
 logger = logging.getLogger(__name__)
 
+# Values that mean "this document could not be classified". They are normalized
+# to None (SQL NULL) and never stored as a label: downstream consumers ROUTE on
+# these fields (`category_level1 or industry_package_id or "general"` in the
+# retrieval planner, `resolve_plugin_for_categories` for the extraction pack),
+# so a placeholder string would be treated as a real category and would shadow
+# the industry the caller declared on upload.
+UNKNOWN_LABELS = {
+    "other", "unknown", "unclassified", "uncategorized", "none", "null", "n/a", "na",
+    "其他", "其它", "未知", "未分类", "无",
+}
+
 
 class DocumentClassifier:
     """Universal document classifier
@@ -21,16 +32,28 @@ class DocumentClassifier:
         self.model_client = get_model_client()
 
     def _build_taxonomy_prompt(self) -> str:
-        """Build taxonomy prompt (with examples to assist LLM understanding)"""
+        """Build the candidate list the LLM chooses from.
+
+        Candidates are each pack's ROUTING KEYS — its taxonomy names plus its
+        manifest ``category_mapping`` — i.e. exactly the strings
+        ``resolve_plugin_for_categories`` can match. Deriving candidates from
+        taxonomy.yaml alone tied the vocabulary to which pack happened to ship
+        that file: a pack with a category_mapping but no loaded taxonomy was
+        invisible to the classifier, so documents it handles got force-fitted
+        into whatever taxonomy *was* loaded (measured: every semiconductor
+        datasheet classified as a financial announcement, and then routed to
+        the financial pack for fact extraction).
+        """
         registry = get_plugin_registry()
         plugins = registry.list_plugins()
 
         lines = ["Document classification taxonomy:"]
         for pid, info in plugins.items():
             taxonomy = info.get("taxonomy", {})
-            if not taxonomy:
+            mapping = [str(c).strip() for c in (info.get("categories") or []) if str(c).strip()]
+            if not taxonomy and not mapping:
                 continue
-            l1 = taxonomy.get("level1", info["name"])
+            l1 = taxonomy.get("level1") or info.get("name") or pid
             desc = taxonomy.get("description", "")
             lines.append(f"\n【{l1}】")
             if desc:
@@ -47,20 +70,31 @@ class DocumentClassifier:
                         lines.append(f"    Typical examples: {', '.join(examples[:5])}")
                 else:
                     lines.append(f"  Subcategory: {l2_item}")
+            if mapping:
+                lines.append(f"  Also accepts: {', '.join(mapping)}")
 
         if len(lines) == 1:
             lines.append("\n【General Documents】")
             lines.append("  Subcategories: Report, Manual, Contract, Paper, Announcement, Other")
             lines.append("\n【Sub-subcategory】Company/institution name or specific topic (extracted from document content)")
 
+        lines.append(
+            "\nIf the document does not fit any category above, do NOT pick the "
+            "closest one: return empty strings for all three levels and a "
+            "confidence below 0.5."
+        )
         return "\n".join(lines)
 
     def classify(self, filename: str, title: str, content_sample: str,
                  plugin=None) -> dict[str, str]:
-        """Three-level document classification
-        Directly calls LLM for classification; no content-related hardcoded rules in code
-        FIX: Supports passing industry plugin; uses industry plugin classification prompt when manually specified
-        V5.0: Chinese system prompt, force product model extraction, no 'Other' fallback.
+        """Three-level document classification.
+
+        Directly calls the LLM; no content-related hardcoded rules in code. An
+        industry plugin may supply its own classification prompt. A document the
+        model cannot type is reported as unknown (all levels None) instead of
+        being forced onto the closest category — the stored labels ROUTE
+        downstream (industry pack selection, query-time category routing), so a
+        forced label is a systematic misroute rather than a cosmetic mistake.
         """
         # If industry plugin provided, use its classification prompt first
         if plugin and hasattr(plugin, 'ingestion'):
@@ -76,12 +110,11 @@ class DocumentClassifier:
                 try:
                     result = self.model_client.generate_json(prompt, temperature=0.3, max_tokens=1024)
                     if result and isinstance(result, dict):
-                        return {
-                            "category_level1": result.get("category_level1", "Other"),
-                            "category_level2": result.get("category_level2", "Other"),
-                            "category_level3": result.get("category_level3", ""),
-                            "confidence": result.get("confidence", 0.5)
-                        }
+                        return self._normalize_classification(
+                            result.get("category_level1"),
+                            result.get("category_level2"),
+                            result.get("category_level3"),
+                            result.get("confidence", 0.5))
                 except Exception as e:
                     logger.warning(f"[CLASSIFY] Industry plugin classification failed, falling back to generic classifier: {e}")
                 # On failure, continue with generic classifier
@@ -90,7 +123,9 @@ class DocumentClassifier:
         taxonomy_text = self._build_taxonomy_prompt()
         system_prompt = (
             "你是一个文档分类助手。请根据文档信息提取分类，输出 ONLY JSON。"
-            "三级分类必须包含产品型号或公司名，严禁返回 'Other'。"
+            "三级分类尽量包含产品型号或公司名。"
+            "若文档不属于任何候选类别，三个层级都返回空字符串，"
+            "并把 confidence 设为 0.0-0.4，不要硬套最接近的类别。"
             "格式: {\"category_level1\": \"...\", \"category_level2\": \"...\", \"category_level3\": \"...\", \"confidence\": 0.0}"
         )
         prompt = f"""{taxonomy_text}
@@ -104,11 +139,10 @@ class DocumentClassifier:
 {content_sample[:3000]}
 
 要求:
-1. 一级分类: 从上述主分类中选择一个
-2. 二级分类: 从选定一级下的子分类中选择一个
-3. 三级分类: 必须包含产品型号（如产品型号或公司名称）。"
-   从文件名和文本中提取实际出现的名称，严禁返回 'Other'。
-4. 置信度: 0.0-1.0
+1. 一级分类: 若适用，从上述分类中选择一个；不适用则返回空字符串
+2. 二级分类: 若适用，从选定一级下的子分类中选择一个；不适用则返回空字符串
+3. 三级分类: 尽量包含产品型号或公司名称（从文件名和文本中提取实际出现的名称）
+4. 置信度: 0.0-1.0（无法归类时给 0.0-0.4）
 
 输出 ONLY JSON:
 {{"category_level1": "...", "category_level2": "...", "category_level3": "...", "confidence": 0.0}}
@@ -117,23 +151,16 @@ class DocumentClassifier:
         try:
             result = self.model_client.generate_json(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=1024)
             if result and isinstance(result, dict):
-                l1 = result.get("category_level1", "Other")
-                l2 = result.get("category_level2", "Other")
-                l3 = result.get("category_level3", "Other")
+                l1 = result.get("category_level1", "")
+                l2 = result.get("category_level2", "")
+                l3 = result.get("category_level3", "")
                 # LLM may output old category names; dynamic mapping
                 if l1 == "Financial & Transaction":
                     l1 = "Financial Reports"
                 if l2 in ("Annual Report", "Quarterly Report", "Semi-annual Report", "Audit Report", "Prospectus", "Financial Statements"):
                     l1 = "Financial Reports"
-                # Ensure l3 is not "Other" or empty
-                if l3 == "Other" or not l3:
-                    l3 = self._extract_product_model_from_filename(filename) or "Unknown"
-                return {
-                    "category_level1": l1,
-                    "category_level2": l2,
-                    "category_level3": l3,
-                    "confidence": result.get("confidence", 0.5)
-                }
+                return self._normalize_classification(
+                    l1, l2, l3, result.get("confidence", 0.5))
         except Exception as e:
             logger.error(f"Document classification failed: {e}")
 
@@ -151,11 +178,10 @@ class DocumentClassifier:
 {content_sample[:3000]}
 
 要求:
-1. 一级分类: 从上述主分类中选择一个
-2. 二级分类: 从选定一级下的子分类中选择一个
-3. 三级分类: 必须包含产品型号（如产品型号或公司名称）。"
-   从文件名和文本中提取实际出现的名称，严禁返回 'Other'。
-4. 置信度: 0.0-1.0
+1. 一级分类: 若适用，从上述分类中选择一个；不适用则返回空字符串
+2. 二级分类: 若适用，从选定一级下的子分类中选择一个；不适用则返回空字符串
+3. 三级分类: 尽量包含产品型号或公司名称（从文件名和文本中提取实际出现的名称）
+4. 置信度: 0.0-1.0（无法归类时给 0.0-0.4）
 
 输出 ONLY JSON:
 {{"category_level1": "...", "category_level2": "...", "category_level3": "...", "confidence": 0.0}}
@@ -164,40 +190,52 @@ class DocumentClassifier:
         try:
             result = self.model_client.generate_json(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=1024)
             if result and isinstance(result, dict):
-                l1 = result.get("category_level1", "Other")
-                l2 = result.get("category_level2", "Other")
-                l3 = result.get("category_level3", "Other")
+                l1 = result.get("category_level1", "")
+                l2 = result.get("category_level2", "")
+                l3 = result.get("category_level3", "")
                 if l1 == "Financial & Transaction":
                     l1 = "Financial Reports"
                 if l2 in ("Annual Report", "Quarterly Report", "Semi-annual Report", "Audit Report", "Prospectus", "Financial Statements"):
                     l1 = "Financial Reports"
-                if l3 == "Other" or not l3:
-                    l3 = self._extract_product_model_from_filename(filename) or "Unknown"
-                return {
-                    "category_level1": l1,
-                    "category_level2": l2,
-                    "category_level3": l3,
-                    "confidence": result.get("confidence", 0.5)
-                }
+                return self._normalize_classification(
+                    l1, l2, l3, result.get("confidence", 0.5))
         except Exception as e:
             logger.error(f"Document classification failed: {e}")
 
-        # Fallback: extract from filename
-        l3 = self._extract_product_model_from_filename(filename) or "Unknown"
-        return {
-            "category_level1": "Technical Documentation",
-            "category_level2": "Datasheet",
-            "category_level3": l3,
-            "confidence": 0.5
-        }
+        # No usable answer from the model: report unknown rather than guessing a
+        # type. A wrong type is worse than no type — it selects the wrong
+        # industry pack for extraction and is then stored as if verified.
+        return self._normalize_classification(None, None, None, 0.0)
 
-    def _extract_product_model_from_filename(self, filename: str) -> str | None:
-        """Extract product model from filename (e.g. AB1234_Datasheet.pdf -> AB1234)"""
-        import re
-        # Remove extension
-        name = re.sub(r'\.[^.]+$', '', filename)
-        # Common patterns: product model codes like AB1234, XY567, etc.
-        match = re.search(r'([A-Z][A-Z0-9]{2,})', name)
-        if match:
-            return match.group(1)
-        return None
+    def _normalize_classification(self, level1, level2, level3, confidence) -> dict:
+        """Normalize a classifier answer to the stored shape.
+
+        Unknown collapses to None (SQL NULL) — never the literal
+        "Other"/"Unknown": downstream consumers route on these fields, so a
+        placeholder is indistinguishable from a real category. Levels below a
+        missing level are dropped rather than fabricated (the old code filled
+        level3 with a filename-derived product code).
+        """
+        levels = [self._clean_label(value) for value in (level1, level2, level3)]
+        try:
+            score = float(confidence)
+        except (TypeError, ValueError):
+            score = 0.0
+        top = levels[0]
+        if top is None:
+            # Confidence in "no answer" is meaningless, and a non-zero value here
+            # could slip past the routing floor.
+            return {"category_level1": None, "category_level2": None,
+                    "category_level3": None, "confidence": 0.0, "unknown": True}
+        level2 = levels[1]
+        level3 = levels[2] if level2 is not None else None
+        return {"category_level1": top, "category_level2": level2,
+                "category_level3": level3, "confidence": score, "unknown": False}
+
+    @staticmethod
+    def _clean_label(value) -> str | None:
+        """Return a usable label, or None when the model said 'not classifiable'."""
+        text = str(value).strip() if value is not None else ""
+        if not text or text.lower() in UNKNOWN_LABELS:
+            return None
+        return text

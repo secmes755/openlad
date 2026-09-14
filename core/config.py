@@ -82,6 +82,12 @@ GRID_RECONSTRUCTION_ENABLED = int(os.environ.get("OPENLAD_GRID_RECONSTRUCTION_EN
 # Harvest per-section identifier inventory (e.g. UART0-UART9) into the
 # structure index so chapter selection can match instance-level queries.
 SECTION_ENTITY_HARVEST_ENABLED = int(os.environ.get("OPENLAD_SECTION_ENTITY_HARVEST_ENABLED", "1"))
+# Minimum classifier confidence before an INFERRED document category may
+# select the industry pack used for spec-fact extraction. Below it the document
+# gets no pack specialisation (conservative: guessing the vocabulary is worse
+# than not using one). An industry explicitly declared on upload is unaffected.
+CLASSIFICATION_CONFIDENCE_FLOOR = float(
+    os.environ.get("OPENLAD_CLASSIFICATION_CONFIDENCE_FLOOR", "0.5"))
 
 # =============================================================================
 # Context Window Configuration

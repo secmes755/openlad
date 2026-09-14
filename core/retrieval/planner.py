@@ -16,6 +16,20 @@ from ..models.client import get_model_client
 logger = logging.getLogger(__name__)
 
 
+def _routing_category(doc: dict) -> str:
+    """Category used for query-time routing of one document.
+
+    The industry declared on upload wins over the inferred category: the
+    inferred label used to shadow it (`category_level1 or industry_package_id`),
+    so a document declared as semiconductor but mislabelled 财务报告 was routed
+    as a financial document. Either field may be missing (a document the
+    classifier could not type stores NULL), in which case the other one — or the
+    neutral "general" bucket — is used.
+    """
+    return (doc.get("industry_package_id") or doc.get("category_level1")
+            or doc.get("category_level2") or "general")
+
+
 class QueryPlanner:
     COARSE_TOPK = settings.CONTEXT_CONFIG.get("phase1_coarse_topk", 100)
     DOC_FILTER_CAP = settings.PLANNER_CONFIG.get("doc_filter_cap", 30)
@@ -129,7 +143,7 @@ Available retrieval tools:
             # Count category distribution
             categories = {}
             for doc in all_docs:
-                cat = doc.get("category_level1") or doc.get("industry_package_id") or "general"
+                cat = _routing_category(doc)
                 categories[cat] = categories.get(cat, 0) + 1
 
             if not categories:
@@ -383,7 +397,8 @@ Output JSON:
         lines = []
         for doc in docs:
             title = doc.get("title") or doc.get("filename") or "Unknown document"
-            doc_type = doc.get("doc_type", "Unknown type")
+            # doc_type is NULL for a document the classifier could not type.
+            doc_type = doc.get("doc_type") or "Unknown type"
             lines.append(f"- {doc['id']}: [{doc_type}] {title}")
         return "\n".join(lines)
 

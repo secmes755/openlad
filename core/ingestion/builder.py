@@ -11,7 +11,12 @@ from typing import Any
 
 from PIL import Image
 
-from ..config import INGEST_MAX_WORKERS, SECTION_ENTITY_HARVEST_ENABLED, settings
+from ..config import (
+    CLASSIFICATION_CONFIDENCE_FLOOR,
+    INGEST_MAX_WORKERS,
+    SECTION_ENTITY_HARVEST_ENABLED,
+    settings,
+)
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models import get_model_client
 from ..plugins import get_plugin_registry
@@ -23,6 +28,30 @@ from .preprocessing import DocumentPreprocessor, PagePreprocessResult
 from .text_quality import unmapped_glyph_ratio
 
 logger = logging.getLogger(__name__)
+
+# Values callers pass as `industry=` to mean "no pack in particular" rather than
+# "a pack I expect to exist": they must not raise a resolution warning.
+NO_OP_INDUSTRY_HINTS = {"", "auto", "default", "general", "generic", "none"}
+
+
+def _may_route_by_category(classification: dict, declared_pack_warnings: list[str]) -> bool:
+    """May the extraction pack be picked from the INFERRED document category?
+
+    Only when the caller declared nothing (or declared something that
+    resolved), the classifier actually classified the document, and it was
+    confident enough. An inferred label is a guess, and choosing extraction
+    vocabulary from a guess is how a semiconductor datasheet got processed with
+    financial vocabulary.
+    """
+    if declared_pack_warnings:
+        return False
+    if not classification or classification.get("unknown"):
+        return False
+    try:
+        confidence = float(classification.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return confidence >= CLASSIFICATION_CONFIDENCE_FLOOR
 
 
 class DocumentIndexBuilder:
@@ -177,8 +206,18 @@ class DocumentIndexBuilder:
         # Load industry plugin
         plugin = None
         registry = get_plugin_registry()
+        declared_pack_warnings: list[str] = []
         if industry_hint:
             plugin = registry.get_plugin(industry_hint)
+            if plugin is None and str(industry_hint).strip().lower() not in NO_OP_INDUSTRY_HINTS:
+                # Do not substitute another pack silently. Falling through to
+                # category routing is how every semiconductor datasheet ended up
+                # processed with financial vocabulary; a declaration that cannot
+                # bind is a caller error and must be visible.
+                declared_pack_warnings.append(
+                    f"declared industry {industry_hint!r} matches no loaded pack; "
+                    f"no pack-specific processing was applied "
+                    f"(loaded: {', '.join(sorted(registry.list_plugins())) or 'none'})")
 
         # Auto-detect industry plugin when no explicit hint is provided.
         # This lets industry packages with detect_document_subtype() hooks
@@ -216,12 +255,15 @@ class DocumentIndexBuilder:
         # Spec-fact extraction runs AFTER classification. The extractor's
         # vocabulary lives in the industry pack (core stays industry-agnostic),
         # but documents no detect hook claims (e.g. datasheets) reach this
-        # point with plugin=None. Resolve the plugin from the classified
-        # category — the same category→pack matching as query-time routing —
-        # then run extraction over the L2 page texts. Fully local, rule-based
+        # point with plugin=None. Only then may the classified category pick the
+        # pack (the same category→pack matching as query-time routing) — and only
+        # when the caller declared nothing unresolvable and the classification is
+        # neither unknown nor low-confidence: extraction vocabulary taken from a
+        # guessed label is worse than no vocabulary. Fully local, rule-based
         # (no LLM), and failure never blocks ingest.
         extraction_plugin = plugin
-        if extraction_plugin is None:
+        if extraction_plugin is None and _may_route_by_category(classification,
+                                                                declared_pack_warnings):
             extraction_plugin = registry.resolve_plugin_for_categories(
                 [classification.get("category_level3"),
                  classification.get("category_level2"),
@@ -243,7 +285,9 @@ class DocumentIndexBuilder:
         # Update document status
         _report(95, "Saving index results")
         text_source = self._determine_text_source(preprocessed_pages)
-        doc_type = classification["category_level2"] or "Other"
+        # No placeholder: an unrecognised document stores NULL rather than the
+        # literal "Other", so nothing downstream can mistake it for a category.
+        doc_type = classification.get("category_level2")
         existing_doc = metadata_db.get_document(doc_id)
         logger.info(f"[HASH_DEBUG] build_index save: existing_doc keys={list(existing_doc.keys()) if existing_doc else 'None'}, file_hash={existing_doc.get('file_hash') if existing_doc else 'N/A'}, passed_hash={file_hash}")
         # Prefer passed-in file_hash (from ingest_document, guaranteed non-None)
@@ -262,12 +306,23 @@ class DocumentIndexBuilder:
         # Page-level visual transcription failures (OCR/VLM) also degrade:
         # a scanned page that produced no text is missing content.
         all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata,
-                                                     page_loss_warnings, spec_fact_warnings)
+                                                     page_loss_warnings, spec_fact_warnings,
+                                                     declared_pack_warnings)
         doc_status = "degraded" if all_warnings else "verified"
         doc_metadata = dict(parsed_doc.metadata or {})
         doc_metadata.pop("visual_transcription_warnings", None)
         if all_warnings:
             doc_metadata["ingest_warnings"] = all_warnings
+        # Observability: why this document did or did not get pack-specific
+        # processing, kept next to the stored labels so a wrong or absent
+        # routing decision stays diagnosable after the fact.
+        doc_metadata["classification"] = {
+            "confidence": classification.get("confidence"),
+            "unknown": bool(classification.get("unknown")),
+            "declared_industry": industry_hint,
+            "extraction_pack": (extraction_plugin.manifest.id
+                                if extraction_plugin is not None else None),
+        }
         metadata_db.save_document(
             doc_id=doc_id,
             filename=parsed_doc.filename,
@@ -1964,10 +2019,12 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
     @staticmethod
     def _collect_ingest_warnings(embed_warnings: list | None, parsed_metadata: dict | None,
                                  page_loss_warnings: list | None = None,
-                                 spec_fact_warnings: list | None = None) -> list:
+                                 spec_fact_warnings: list | None = None,
+                                 declaration_warnings: list | None = None) -> list:
         """Merge page losses, embedding-loss warnings and page-level visual
         transcription warnings (OCR/VLM) reported by the parser, plus anything
-        the fact index had to skip. Any non-empty result marks the document
+        the fact index had to skip, plus a caller declaration that could not be
+        honoured. Any non-empty result marks the document
         degraded so retrieval can flag incomplete sources; a page missing from the
         index is lost content in exactly the same sense as a scanned page that
         produced no text, and a page the fact extractor could not read is
@@ -1980,7 +2037,8 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         # page, it is invisible in the stored text.
         text_integrity = list(metadata.get("text_integrity_warnings") or [])
         return (list(page_loss_warnings or []) + list(embed_warnings or []) + visual
-                + text_integrity + list(spec_fact_warnings or []))
+                + text_integrity + list(spec_fact_warnings or [])
+                + list(declaration_warnings or []))
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]

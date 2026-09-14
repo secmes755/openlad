@@ -25,6 +25,12 @@ class IndustryManifest:
     description: str
     author: str = ""
     category_mapping: list[str] = field(default_factory=list)
+    # Short names the pack answers to when a caller declares an industry
+    # (upload `industry=<pack id or alias>`). Pack ids are namespaced
+    # ("sample_semiconductor") while callers naturally say "semiconductor";
+    # without aliases the declaration silently fails to bind and the document
+    # falls through to category-based routing.
+    aliases: list[str] = field(default_factory=list)
     entry_point: str | None = None  # Python entry module (optional)
     path: str = ""
     is_builtin: bool = False
@@ -43,6 +49,7 @@ class IndustryManifest:
                 description=data.get("description", ""),
                 author=data.get("author", ""),
                 category_mapping=data.get("category_mapping", []),
+                aliases=[str(a) for a in (data.get("aliases") or []) if str(a).strip()],
                 entry_point=data.get("entry_point"),
                 path=str(path.parent),
                 is_builtin=data.get("is_builtin", False),
@@ -925,7 +932,26 @@ class PluginRegistry:
         logger.info(f"[PLUGIN_REGISTRY] Registered industry package: {plugin.manifest.id} v{plugin.manifest.version} -> {plugin.manifest.category_mapping}")
 
     def get_plugin(self, plugin_id: str) -> IndustryPlugin | None:
-        return self._plugins.get(plugin_id)
+        """Resolve a pack by declared id, then by any alias it publishes.
+
+        Callers declare an industry with the name they know — the sample pack
+        is "sample_semiconductor" but suite config and the upload API both say
+        "semiconductor". Resolving only the exact id made that declaration
+        fail silently: the document then fell through to category-based
+        routing, which (with the classification taxonomy gap) routed every
+        datasheet to the financial pack.
+        """
+        if not plugin_id:
+            return None
+        exact = self._plugins.get(plugin_id)
+        if exact is not None:
+            return exact
+        wanted = plugin_id.strip().lower()
+        for candidate in self._plugins.values():
+            for alias in getattr(candidate.manifest, "aliases", None) or []:
+                if str(alias).strip().lower() == wanted:
+                    return candidate
+        return None
 
     def _plugin_match_keys(self, plugin: "IndustryPlugin") -> list[str]:
         """All strings a pack can be routed by: manifest.category_mapping

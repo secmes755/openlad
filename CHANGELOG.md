@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A document type the classifier cannot determine is now reported as
+  unknown instead of being forced onto the closest known category, and an
+  inferred category can no longer override the industry declared on upload.**
+  Three separate wiring gaps made every semiconductor datasheet in a
+  financial-enabled deployment get classified as a financial announcement and
+  then processed with financial-pack vocabulary (measured: 0 extracted facts on
+  a 156-page datasheet, and `doc_type` stored as a financial announcement):
+
+  1. the sample semiconductor pack read `shared/taxonomy.yaml` into a module
+     variable that nothing ever referenced and never published it as its
+     `taxonomy`, so its categories (数据手册/技术手册/原理图/规格书) never
+     reached the classifier prompt;
+  2. the candidate list was built from `taxonomy.yaml` files alone, so a pack
+     that declares only `category_mapping` was invisible to the classifier even
+     though the pack resolver matches on those keys — and the prompt forbade
+     returning "Other", leaving a foreign category as the only usable answer;
+  3. an industry declared on upload was resolved by exact pack id, so
+     `industry=semiconductor` never bound to pack `sample_semiconductor` and the
+     document silently fell through to category routing (which, in turn, read the
+     inferred category *before* the declared one).
+
+  Candidates are now each pack's routing keys (taxonomy names + manifest
+  `category_mapping`), unknown collapses to NULL rather than the literal
+  "Other" — nothing downstream can mistake it for a category — levels below a
+  missing level are no longer fabricated from the filename, packs may publish
+  `aliases` so a short declared name resolves, and a declaration that matches no
+  loaded pack marks the document degraded instead of substituting another pack.
+  An *inferred* category may only pick the extraction pack when the caller
+  declared nothing unresolvable and the classification is neither unknown nor
+  below `CLASSIFICATION_CONFIDENCE_FLOOR` (0.5, env
+  `OPENLAD_CLASSIFICATION_CONFIDENCE_FLOOR`); the chosen pack and the
+  confidence are recorded in the document metadata.
+
 - **A rotated watermark on the PDF text layer no longer destroys the body text
   it is drawn over.** Such a watermark is emitted as one rotated text object
   repeated across the page, and line-based extraction sorts every character by

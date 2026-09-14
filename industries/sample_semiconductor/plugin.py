@@ -396,3 +396,15 @@ class SemiconductorPlugin(IndustryPlugin):
     @property
     def retrieval(self) -> SemiconductorRetrievalPlugin:
         return self._retrieval
+
+    @property
+    def taxonomy(self) -> Dict[str, Any]:
+        """Document-classification taxonomy (shared/taxonomy.yaml).
+
+        The base class defaults to {} so Python packs that declare no taxonomy
+        are unaffected — but then the pack's own categories (数据手册/技术手册/
+        原理图/规格书) never reach the classifier prompt, and documents this
+        pack can handle get classified against whichever *other* pack happens
+        to ship a taxonomy.yaml.
+        """
+        return _shared_taxonomy or {}

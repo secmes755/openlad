@@ -9,5 +9,11 @@ category_mapping:
   - Technical Manuals
   - Datasheets
   - Circuit Schematics
+# Short names callers may declare (`industry=` on upload). The suite config and
+# the upload API both say "semiconductor"; the pack id is "sample_semiconductor",
+# so without aliases the declaration never bound to this pack.
+aliases:
+  - semiconductor
+  - 半导体
 entry_point: "plugin:SemiconductorPlugin"
 is_builtin: true
