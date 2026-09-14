@@ -6,6 +6,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from .preprocessing.pdf_watermark import (
+    drop_rotated_characters,
+    sanitize_pdf_watermark,
+    text_integrity_warnings,
+)
+
 logger = logging.getLogger(__name__)
 
 # Attempt to import parsing libraries
@@ -268,6 +274,28 @@ class DocumentParser:
             doc.pages.append(ParsedPage(page_num=1, raw_text="PDF parsing failed: pypdf/pdfplumber not installed"))
             return doc
 
+        # Rotated repeated text (watermarks) is removed from the PDF *before* any
+        # extraction. Line-based assembly interleaves those glyphs into body
+        # words (`S<glyph>upply`), which destroys the tokens the exact-match
+        # channel needs; cleaning the extracted text afterwards is too late.
+        # Cleaning the file also covers extract_tables() and every page render
+        # the OCR/VLM paths consume. The original path is kept for the record.
+        rotated_watermark_pages: set[int] = set()
+        try:
+            cleaned_path, watermark_report = sanitize_pdf_watermark(str(path))
+            doc.metadata["watermark_removal"] = watermark_report
+            if watermark_report.get("cleaned") and cleaned_path != str(path):
+                path = Path(cleaned_path)
+            if watermark_report.get("detected") and not watermark_report.get("cleaned"):
+                # The PDF-level pass could not act: fall back to dropping rotated
+                # characters at extraction time, for exactly those pages.
+                rotated_watermark_pages = set(watermark_report.get("affected_pages") or [])
+            integrity_warnings = text_integrity_warnings(watermark_report)
+            if integrity_warnings:
+                doc.metadata["text_integrity_warnings"] = integrity_warnings
+        except Exception as exc:  # noqa: BLE001 - ingestion must survive this pass
+            logger.warning(f"PDF watermark pre-pass skipped for {path.name}: {exc}")
+
         vlm_analyses = {}
 
         # ── Two-pass VLM classification (pre-filter before VLM) ──
@@ -429,7 +457,13 @@ class DocumentParser:
                 plumber_page = None
                 try:
                     plumber_page = plumber_doc.pages[page_num]
-                    text = plumber_page.extract_text() or ""
+                    text_page = plumber_page
+                    if pdf_page_num in rotated_watermark_pages and drop_rotated_characters:
+                        # Fallback for pages the PDF-level pass could not clean:
+                        # drop rotated characters *before* line assembly so the
+                        # remaining body text is not shredded into fragments.
+                        text_page = drop_rotated_characters(plumber_page)
+                    text = text_page.extract_text() or ""
                 except Exception:
                     text = ""
                 text = text.replace('\x00', '')

@@ -1972,9 +1972,15 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         index is lost content in exactly the same sense as a scanned page that
         produced no text, and a page the fact extractor could not read is
         unreadable content in exactly the same sense."""
-        visual = list((parsed_metadata or {}).get("visual_transcription_warnings") or [])
+        metadata = parsed_metadata or {}
+        visual = list(metadata.get("visual_transcription_warnings") or [])
+        # Text-integrity losses: a rotated repeated watermark that was detected
+        # but could not be removed leaves the page's tokens shredded, which is
+        # unreadable content in exactly the same sense -- and, unlike a missing
+        # page, it is invisible in the stored text.
+        text_integrity = list(metadata.get("text_integrity_warnings") or [])
         return (list(page_loss_warnings or []) + list(embed_warnings or []) + visual
-                + list(spec_fact_warnings or []))
+                + text_integrity + list(spec_fact_warnings or []))
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]

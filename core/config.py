@@ -492,6 +492,42 @@ CHART_CONFIG = {
 }
 
 # =============================================================================
+# PDF Watermark Removal Configuration (ingestion pre-pass)
+# =============================================================================
+# Rotated, page-repeated text on the PDF text layer (watermarks) is interleaved
+# inside body words by line-based extraction, which silently breaks word tokens
+# and with them the exact-match retrieval channel. Cleaning the PDF itself
+# before extraction covers text, tables and page renders at once.
+#   OPENLAD_PDF_WATERMARK_REMOVAL=0   disable the pre-pass (kill switch)
+# The rails below bound what a single cleaning pass may remove; anything that
+# trips a rail leaves the page (or the document) untouched and is reported as a
+# text-integrity warning so the document is marked degraded instead of serving
+# silently broken text.
+PDF_WATERMARK_CONFIG = {
+    "enabled": os.environ.get("OPENLAD_PDF_WATERMARK_REMOVAL", "1").strip().lower()
+               in ("1", "on", "true"),
+    # A signature must appear on at least this fraction of pages (and never on
+    # fewer than min_pages) before it is treated as a watermark.
+    "min_repetition_ratio": 0.6,
+    "min_pages": 2,
+    # Repetition must be geometric too: same position (points) and same angle.
+    "position_tolerance": 5.0,
+    "min_angle_consistency": 0.7,
+    # Text more than this far from horizontal/vertical counts as rotated.
+    "angle_threshold_deg": 15.0,
+    # A single group larger than this is never considered a watermark.
+    "max_block_bytes": 4096,
+    # Within one signature, text volume may vary (a watermark drawn twice inside
+    # its group doubles the count) but not by more than this factor.
+    "max_size_ratio": 3.0,
+    # Per-document ceiling on removed text volume, and the minimum text a page
+    # must keep: a page that would be emptied or left with a negligible
+    # remainder is not cleaned (it is reported instead).
+    "min_remaining_page_bytes": 64,
+    "max_document_text_loss": 0.5,
+}
+
+# =============================================================================
 # Text Quality Configuration
 # =============================================================================
 TEXT_QUALITY_CONFIG = {
@@ -587,6 +623,7 @@ class Settings:
     LAYOUT_CONFIG = LAYOUT_CONFIG
     FORMULA_CONFIG = FORMULA_CONFIG
     CHART_CONFIG = CHART_CONFIG
+    PDF_WATERMARK_CONFIG = PDF_WATERMARK_CONFIG
     TEXT_QUALITY_CONFIG = TEXT_QUALITY_CONFIG
     CONTEXT_CONFIG = CONTEXT_CONFIG
     EMBEDDING_CONFIG = EMBEDDING_CONFIG

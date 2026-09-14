@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rotated watermark on the PDF text layer no longer destroys the body text
+  it is drawn over.** Such a watermark is emitted as one rotated text object
+  repeated across the page, and line-based extraction sorts every character by
+  `(top, x0)` before gluing it back together — so the watermark's glyphs land
+  *inside* body words (`S<glyph>upply`, `DDR3/DD<glyph>R3L/...`). The page stays
+  structurally valid, so nothing downstream could tell: the stored text was
+  silently wrong. The exact-match channel loses the affected tokens outright
+  (`2160` no longer existed on that page), the vector channel is diluted by the
+  watermark volume, chunk counts inflate (14.4/page on the document measured,
+  against 6–7 for a comparable datasheet), and the document was still recorded
+  `verified` with no `ingest_warnings` — the user sees "the document does not
+  say that" rather than "this document parsed wrong".
+  The existing line-level sanitizer cannot catch this class: it needs complete
+  repeated lines over 15 characters, while a rotated watermark arrives shredded
+  into short fragments, so it silently did nothing.
+  Fixed in `core/ingestion/preprocessing/pdf_watermark.py`, a pre-pass that runs
+  before any extraction (text, `extract_tables()` and the page renders the
+  OCR/VLM paths use all read the cleaned file afterwards):
+  - each page's *decoded* content stream is walked into `BT … ET` text groups,
+    described by their effective matrix (`Tm` × current transformation matrix,
+    so both `Tm` and `cm` rotations are honoured), their raw text volume, font
+    and fill colour;
+  - a group is a watermark when its signature — angle and coarse position, i.e.
+    geometry only, because `/Tf` resource names are page-local and inherited
+    fill colour is not page-stable — repeats across most pages at a consistent
+    angle *and* position;
+  - **rotation is required**, so repeated horizontal headers/footers keep going
+    through the line sanitizer, which handles them without breaking tokens.
+  Removal is bounded: a group over the size cap is never a candidate; a page is
+  left alone if cleaning would empty it or leave under 64 bytes of text; the
+  document is left alone if removal would exceed half its text volume; the
+  uploaded file is never modified (the cleaned copy is written to a
+  content-addressed path next to the data dir); and every failure mode —
+  unparsable stream, pypdf missing, rail tripped — returns the original path
+  plus a report instead of a half-cleaned document. `OPENLAD_PDF_WATERMARK_REMOVAL=0`
+  disables the pass.
+  When a watermark is *detected but cannot be removed*, the affected pages now
+  fall back to dropping rotated characters during extraction, and either way the
+  document is marked `degraded` with a readable `ingest_warnings` entry
+  (summarised by reason, not hundreds of page numbers) — this is the
+  text-integrity loss category the spec-fact bypass comment asked for.
+  Measured on a 156-page vendor datasheet: 156/156 pages cleaned, 32% of text
+  bytes removed (exactly the watermark volume), per-page CJK 168 → 0, and the
+  exact strings that had been destroyed (`DDR3/DDR3L/LPDDR3/DDR4/LPDDR4/LPDDR4`,
+  `3840x2160@15fps`, `LPDDR4 and LPDDR4x Power Supply 1.06 1.1 1.17`) read back
+  correctly. Against PyMuPDF ground truth 99.87% of body tokens are retained —
+  the residual is line-wrap/superscript formatting — and of the tokens the
+  polluted extraction loses, every one is watermark debris (`Documengts`,
+  `Elecntgr`, `MuPa`), i.e. garbage that only existed because of the pollution.
+  A 29-document sweep (datasheets, a schematic, a restructuring plan, quarterly
+  and annual reports up to 373 pages) modified only the watermarked file.
+  Regression coverage synthesises its own watermarked PDFs, so the suite carries
+  no third-party document.
 - **Only industry vocabulary opens the spec-fact table, and a fact is only
   attributed to a real entity.** Two ways the assertion index took on content it
   could not support:
