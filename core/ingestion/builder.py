@@ -54,6 +54,18 @@ def _may_route_by_category(classification: dict, declared_pack_warnings: list[st
     return confidence >= CLASSIFICATION_CONFIDENCE_FLOOR
 
 
+def _unreadable_text_layer(text: str) -> bool:
+    """Is this page's text layer font glyph codes instead of words?
+
+    ``(cid:NNN)`` is what a reader shows for a glyph with no ToUnicode mapping —
+    ordinary ASCII, so the garbled-character checks cannot see it. The threshold
+    is the one the fact extractor already uses, so a page is unreadable in
+    exactly one sense across ingestion.
+    """
+    ratio = unmapped_glyph_ratio(text)
+    return ratio >= settings.TEXT_QUALITY_CONFIG["unmapped_glyph_page_threshold"]
+
+
 class DocumentIndexBuilder:
     """Document index builder (two layers: L2 content index + vector embeddings)"""
 
@@ -549,8 +561,21 @@ class DocumentIndexBuilder:
             page_text = self._sanitize_page_text(page_text)
             original_page_text = page_text
 
-            page_summary = self._generate_page_summary(page_text, page.page_num)
-            entities = self._extract_entities(page_text, plugin)
+            # A page whose text layer holds font glyph codes instead of words
+            # ((cid:NNN), from a font with no ToUnicode map) has nothing readable
+            # to index: storing it would put garbage into the page text, the chunk
+            # FTS and the vector index at once, and because glyph codes are valid
+            # ASCII no character-shape check notices. Derive and store no text for
+            # such a page, and name it in the ingest warnings, so the gap is
+            # visible instead of silently polluting retrieval. The fact extractor
+            # applies the same rule — this is the same door, one stage earlier.
+            text_layer_unreadable = _unreadable_text_layer(page_text)
+            if text_layer_unreadable:
+                page_text = ""
+
+            page_summary = ("" if text_layer_unreadable
+                            else self._generate_page_summary(page_text, page.page_num))
+            entities = [] if text_layer_unreadable else self._extract_entities(page_text, plugin)
 
             ocr_results = preprocessed.ocr_results if preprocessed else []
             layout_result = self.layout_analyzer.analyze(
@@ -605,8 +630,10 @@ class DocumentIndexBuilder:
             if content_dict.get("vlm_analysis"):
                 content_json["vlm_analysis"] = content_dict["vlm_analysis"]
 
-            # For blank pages, clear any derived text/summary to keep downstream data clean
-            if page_class == 'BLANK':
+            # Blank pages and pages with an unreadable text layer have no text to
+            # index: clear anything derived from it, so no garbage reaches the
+            # page index, the structure index or the chunks.
+            if page_class == 'BLANK' or text_layer_unreadable:
                 page_text = ""
                 page_summary = ""
                 entities = []
@@ -656,6 +683,7 @@ class DocumentIndexBuilder:
                 "formulas": formulas,
                 "charts_count": len(charts),
                 "extra_data": extra_data,
+                "text_layer_unreadable": text_layer_unreadable,
             }
 
         max_workers = min(INGEST_MAX_WORKERS, len(parsed_doc.pages))
@@ -685,9 +713,12 @@ class DocumentIndexBuilder:
         # Phase 2: serial writes
         structure_index, explicit_sections = self._build_structure_index(doc_id, page_results, parsed_doc)
         l2_results = []
+        unreadable_pages: list[int] = []
 
         for page_num in sorted(page_results.keys()):
             r = page_results[page_num]
+            if r.get("text_layer_unreadable"):
+                unreadable_pages.append(r["page_num"])
             page_structure = structure_index.get(page_num, {})
             structure_title = page_structure.get("title", "")
             section_title = structure_title if structure_title else r["section_title"]
@@ -732,6 +763,15 @@ class DocumentIndexBuilder:
             page_loss_warnings.append(
                 f"{len(failed_pages)} of {len(parsed_doc.pages)} page(s) failed analysis and are "
                 f"missing from the index: {sorted(failed_pages)}"
+            )
+        # A page whose text layer is glyph codes holds no indexable text: it is
+        # content missing from the index in the same sense as a failed page, and
+        # naming it is what keeps the loss visible instead of silent.
+        if unreadable_pages:
+            page_loss_warnings.append(
+                f"{len(unreadable_pages)} of {len(parsed_doc.pages)} page(s) have an unreadable "
+                f"text layer (unmapped font glyphs, no ToUnicode map) and hold no indexable "
+                f"text: {sorted(unreadable_pages)}"
             )
         return l2_results, page_loss_warnings
 

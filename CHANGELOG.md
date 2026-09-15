@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A page whose text layer is font glyph codes (`(cid:NNN)`) no longer reaches
+  the index.** Such a page holds no readable words — the font has no ToUnicode
+  map — but the codes are valid ASCII, so the garbled-character checks saw
+  nothing wrong and the page was stored as-is. Its chunks then entered both the
+  FTS and the vector index: measured 20 polluted chunks in one tenant and 89 in
+  another, and the values behind them were unreachable (a benchmark question on
+  such a document answered "cannot find"). The fact extractor already skipped
+  these pages, so the fact table was clean while retrieval was not; the same
+  check now runs one stage earlier, where the page is written: no text is stored
+  for such a page, nothing is derived from it (summary/entities are not even
+  generated), it contributes no chunks, and the page numbers are named in the
+  ingest warnings, which marks the document `degraded` so retrieval can flag the
+  gap instead of returning glyph soup. The page row itself and its image are
+  kept, so page numbering, citations and the structure index stay intact, and
+  OCR-recovered text is unaffected (the check matches `(cid:NNN)` literally).
+  Re-ingesting a document is required for already-indexed pages; recovered
+  content for these pages (OCR fallback) remains future work.
+
 - **A document type the classifier cannot determine is now reported as
   unknown instead of being forced onto the closest known category, and an
   inferred category can no longer override the industry declared on upload.**
