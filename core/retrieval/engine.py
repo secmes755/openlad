@@ -463,7 +463,8 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             # (routes/query.py), which always runs after engine.query returns.
             # Engine-level log_query here would double-write the audit trail.
             return {"query": query_text, "answer": answer, "sources": [],
-                    "confidence": "none", "elapsed_ms": elapsed_ms}
+                    "confidence": "none", "elapsed_ms": elapsed_ms,
+                    "retrieval_trace": retrieval_result.get("retrieval_trace")}
 
         answer = synthesis_result.get("answer", "")
         # Evidence appendix: when authoritative spec facts were injected, attach
@@ -504,7 +505,13 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
                     "answer": answer,
                     "sources": synthesis_result.get("sources", [])
                 }
-            }
+            },
+            # Retrieval diagnostics collected by the agentic retriever. A missing
+            # trace is itself informative: it means the decomposed path answered
+            # (agentic failed, was incomplete, or was never tried).
+            "retrieval_trace": retrieval_result.get("retrieval_trace") or {
+                "agentic": {"note": "no agentic trace for this query; answered via the decomposed path"}
+            },
         }
 
         return result

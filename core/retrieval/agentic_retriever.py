@@ -13,6 +13,7 @@ import numpy as np
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db
 from ..models.client import get_model_client
+from .retrieval_trace import RetrievalTrace
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,12 @@ class AgenticRetriever:
 
     def __init__(self, tenant_id: str, config_path: str = None, spec_facts_plan: dict = None):
         self.tenant_id = tenant_id
+        # Per-request diagnostics. Instance state is safe here because the engine
+        # constructs this object once per query (engine._execute_agentic) and
+        # releases it afterwards; unlike the executor it is NOT a tenant-cached
+        # component shared by concurrent requests. Always read it through the
+        # `trace` property, which materialises the collector on first use.
+        self._trace = RetrievalTrace()
         # Planner output threaded from the engine so per-document spec-fact
         # lookups resolve the same industry pack terms as other retrieval paths.
         self.spec_facts_plan = spec_facts_plan or {}
@@ -38,6 +45,21 @@ class AgenticRetriever:
 
         # Build catalog
         self.catalog = self._build_catalog()
+
+    @property
+    def trace(self) -> RetrievalTrace:
+        """Per-request retrieval diagnostics.
+
+        Materialised lazily: ``__init__`` is deliberately bypassed by the
+        contract tests (it loads the tenant's whole vector index and catalog),
+        and an instance built that way must still run the search path.
+        Diagnostics must never be the reason retrieval fails.
+        """
+        collector = self.__dict__.get("_trace")
+        if collector is None:
+            collector = RetrievalTrace()
+            self.__dict__["_trace"] = collector
+        return collector
 
     def _load_config(self, config_path: str = None) -> dict:
         """Load configuration file, no defaults"""
@@ -194,7 +216,10 @@ Output as JSON:
         keywords = data.get("keywords", []) if data else []
         # Cap at configured max
         kw_max = settings.AGENTIC_CONFIG.get('expand_keywords_max', 5)
-        return keywords[:kw_max]
+        keywords = keywords[:kw_max]
+        self.trace.record("keywords", doc=doc_title, expanded=keywords,
+                          source="llm" if data else "model_returned_nothing")
+        return keywords
 
     def _fts_search(self, query: str, doc_id: str = None, top_k: int = 10, keywords: list = None) -> list:
         """FTS search - using model-generated keywords"""
@@ -268,6 +293,12 @@ Output as JSON:
                     'source': 'fts'
                 })
 
+        self.trace.record(
+            "fts",
+            query=fts_query,
+            scoped_to_doc=bool(doc_id),
+            hits=[{"page": r["page_num"], "score": round(r["score"], 3)} for r in results],
+        )
         return results
 
     def _semantic_search(self, query: str, doc_id: str = None, top_k: int = 10) -> list:
@@ -285,7 +316,13 @@ Output as JSON:
             results.append((score, chunk))
 
         results.sort(key=lambda x: x[0], reverse=True)
-        return results[:top_k]
+        top = results[:top_k]
+        self.trace.record(
+            "vector",
+            scoped_to_doc=bool(doc_id),
+            hits=[{"page": c.get("page_num"), "score": round(s, 4)} for s, c in top],
+        )
+        return top
 
     def _hybrid_search(self, query: str, doc_id: str = None, top_k: int = 10,
                        strategy: dict = None, keywords: list = None) -> list:
@@ -308,6 +345,14 @@ Output as JSON:
         has_exact = any(r.get('score', 0) > fts_threshold for r in fts_results)
 
         if fts_first and has_exact and len(fts_results) >= min_fts_results:
+            self.trace.record(
+                "merge",
+                branch="fts_first",
+                has_exact=has_exact,
+                fts_count=len(fts_results),
+                topk=[{"page": r.get("page_num"), "source": r.get("source"),
+                       "score": r.get("score")} for r in fts_results],
+            )
             return fts_results
 
         # 3. Supplement with vector search
@@ -333,6 +378,15 @@ Output as JSON:
                     }
 
             results = sorted(combined.values(), key=lambda x: x['score'], reverse=True)
+            self.trace.record(
+                "merge",
+                branch="hybrid_merge",
+                has_exact=has_exact,
+                fts_count=len(fts_results),
+                vector_count=len(vec_results),
+                topk=[{"page": r.get("page_num"), "source": r.get("source"),
+                       "score": round(r.get("score", 0.0), 3)} for r in results[:top_k]],
+            )
             return results[:top_k]
 
         return fts_results
@@ -635,7 +689,8 @@ Answering rules:
             "total_results": sum(len(s.get("pages", [])) for s in all_sources),
             "total_chars": len(context),
             "strategy": "agentic_retrieve",
-            "answer": answer
+            "answer": answer,
+            "retrieval_trace": self.trace.to_dict(),
         }
 
     def release(self):

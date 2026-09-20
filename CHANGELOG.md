@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Each query now records what retrieval actually did, so an answer can be
+  explained after the fact.** The audit row carried only the session id, which
+  left the pipeline a black box: when a document in the knowledge base clearly
+  contained the value and the answer still said the document did not mention it,
+  there was no way to tell whether the query terms, one of the two retrieval
+  channels, or the way they were merged was responsible. A query now stores the
+  keywords expanded for each document, the full-text hits with their ranks, the
+  vector hits with their scores, the merged result and which branch the hybrid
+  search took. The record is bounded — lists are head-truncated and carry their
+  true length alongside, so a truncated list cannot be mistaken for the whole
+  result — and it is request-scoped: the engine caches its components per tenant,
+  so the collector is created per query on the agentic retriever and never lives
+  on a shared object. A query answered without the agentic path stores an
+  explicit note rather than no trace at all, keeping "no diagnostics" and
+  "nothing to report" distinguishable in the audit trail.
+
 ### Fixed
 
 - **A page whose text layer is font glyph codes (`(cid:NNN)`) no longer reaches

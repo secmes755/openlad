@@ -249,7 +249,14 @@ def _persist_query_result(ctx, req: QueryRequest, result: dict, elapsed_ms: int)
             elapsed_ms=elapsed_ms,
             results_count=len(result.get("sources", [])),
             answer_length=len(result.get("answer", "")),
-            trace={"session_id": session_id, "auto_created": not req.session_id}
+            trace={
+                "session_id": session_id,
+                "auto_created": not req.session_id,
+                # What retrieval actually did (keywords, FTS/vector hits, merged
+                # top-k, branch). Collected request-scoped in the agentic
+                # retriever; None when the decomposed path answered instead.
+                "retrieval": result.get("retrieval_trace"),
+            }
         )
     except Exception as e:
         logger.warning(f"Failed to record query log: {e}")
