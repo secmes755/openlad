@@ -268,9 +268,14 @@ class HierarchicalRetriever:
                 # vocabulary silently; "no match" is the normal path, not this.
                 logger.warning(f"[RETRIEVER] industry detection failed for query: {e}")
                 plugin = None
-            if plugin is not None and hasattr(plugin, "get_spec_query_terms"):
+            # The vocabulary lives on the pack's retrieval side: every other hook
+            # in the codebase reads plugin.retrieval.<hook>. The composite plugin
+            # the registry hands out does not expose it, so asking the composite
+            # left this expansion switched off for every pack, without a warning.
+            retrieval = getattr(plugin, "retrieval", None) if plugin is not None else None
+            if retrieval is not None and hasattr(retrieval, "get_spec_query_terms"):
                 try:
-                    for k, v in (plugin.get_spec_query_terms() or {}).items():
+                    for k, v in (retrieval.get_spec_query_terms() or {}).items():
                         merged.setdefault(k, [])
                         for item in v:
                             if item not in merged[k]:
@@ -284,12 +289,21 @@ class HierarchicalRetriever:
         if not merged:
             return keywords
 
+        # Packs declare their terms in lowercase ("gpu") while queries are written
+        # "GPU", so the match is case-insensitive and the appended synonyms keep
+        # the pack's own spelling. Deduplication follows the same rule: a query
+        # that already carries the term gains no case variant of it. What is
+        # appended is only appended -- the query's own keywords stay first, so the
+        # exact matches FTS is relied on are never diluted or reordered.
+        query_lower = query.lower()
         expanded = list(keywords)
+        seen = {t.lower() for t in expanded}
         for term, synonyms in merged.items():
-            if term in query:
+            if term.lower() in query_lower:
                 for syn in synonyms:
-                    if syn and syn not in expanded:
+                    if syn and syn.lower() not in seen:
                         expanded.append(syn)
+                        seen.add(syn.lower())
         # Bound expansion: keep original keywords first, cap total length to
         # avoid diluting FTS trigram matching with too many broad terms.
         if len(expanded) > 24:

@@ -1,5 +1,6 @@
 """Retrieval pipeline pure-logic checks (synthetic inputs, no LLM/DB/services)."""
 from pathlib import Path
+from types import SimpleNamespace
 
 from core.retrieval.planner import QueryPlanner
 from core.retrieval.retriever import HierarchicalRetriever, SegmentMerger
@@ -178,3 +179,41 @@ def test_expand_query_terms_returns_original_when_empty():
     r = _retriever()
     kw = r._expand_query_terms([], "no terms")
     assert kw == []
+
+
+def test_expand_query_terms_asks_the_retrieval_side_of_the_pack(monkeypatch):
+    """A pack's vocabulary lives on its retrieval plugin, not on the composite
+    plugin the registry hands out (true of every shipped pack: the composite does
+    not expose ``get_spec_query_terms``). Asking the composite made the hasattr()
+    guard false, which disabled the expansion for every pack, silently."""
+    pack = SimpleNamespace(retrieval=SimpleNamespace(
+        get_spec_query_terms=lambda: {"gpu": ["graphics engine"]}))
+    registry = SimpleNamespace(detect_plugin_for_text=lambda text: pack)
+    monkeypatch.setattr("core.plugins.get_plugin_registry", lambda: registry)
+
+    assert _retriever()._expand_query_terms(["GPU"], "GPU 型号") == ["GPU", "graphics engine"]
+
+
+def test_expand_query_terms_matches_declared_terms_case_insensitively():
+    """Packs declare the term in lowercase ("gpu"); queries are written "GPU".
+    The pack's own comment states the match is case-insensitive."""
+    r = _retriever()
+
+    lower = [t.lower() for t in r._expand_query_terms(["RK3562", "gpu"], "RK3562 的 gpu 型号是什么")]
+    upper = [t.lower() for t in r._expand_query_terms(["RK3562", "GPU"], "RK3562 的 GPU 型号是什么")]
+
+    assert "graphics engine" in lower
+    assert "graphics engine" in upper, (
+        "the declared term is lowercase, so an uppercase query must reach it too"
+    )
+
+
+def test_expand_query_terms_keeps_the_original_keywords_first():
+    """Expansion appends; it must never reorder or replace the query's own terms,
+    because those carry the exact matches FTS is relied on for."""
+    expanded = _retriever()._expand_query_terms(["RK3562", "GPU"], "RK3562 的 GPU 型号是什么")
+
+    assert expanded[:2] == ["RK3562", "GPU"]
+    assert "graphics engine" in [t.lower() for t in expanded], (
+        "the chapter title that states the value must become reachable"
+    )

@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An industry pack's declared query terms are actually applied now.** The
+  expansion that feeds a pack's term vocabulary into full-text search read that
+  vocabulary off the composite pack object, which does not expose it — the hook
+  lives on the pack's retrieval side, as every other hook site in the project
+  assumes. The guard therefore evaluated false for every pack and the expansion
+  returned the query's keywords untouched, silently: a pack could declare a term
+  and its synonyms and none of them would ever reach retrieval, so a page whose
+  wording differs from the question's stayed out of reach. The lookup now reads
+  the retrieval side, and the term match is case-insensitive, which is what the
+  pack format documents (packs declare `gpu`, queries are written `GPU`).
+  Synonyms are still only appended — the query's own keywords stay first, keep
+  their exact matches and are never reordered — and the 24-term bound is
+  unchanged. Packs are unaffected: no vocabulary had to be added anywhere.
+
 - **A page whose text layer is font glyph codes (`(cid:NNN)`) no longer reaches
   the index.** Such a page holds no readable words — the font has no ToUnicode
   map — but the codes are valid ASCII, so the garbled-character checks saw
