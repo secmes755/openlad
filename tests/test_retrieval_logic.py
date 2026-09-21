@@ -2,6 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.config import settings
 from core.retrieval.planner import QueryPlanner
 from core.retrieval.retriever import HierarchicalRetriever, SegmentMerger
 from core.retrieval.router import IntentRouter, IntentType, QueryPlan
@@ -217,3 +218,19 @@ def test_expand_query_terms_keeps_the_original_keywords_first():
     assert "graphics engine" in [t.lower() for t in expanded], (
         "the chapter title that states the value must become reachable"
     )
+
+
+def test_expand_query_terms_can_be_switched_off(monkeypatch):
+    """The rollback switch restores the pack-independent keyword set exactly, so
+    the expansion can be A/B'd and reverted without a rebuild (used by the
+    2026-09-20 attribution run)."""
+    monkeypatch.setitem(settings.CONTEXT_CONFIG, "pack_term_expansion", False)
+
+    kw = _retriever()._expand_query_terms(["RK3562", "GPU"], "RK3562 的 GPU 型号是什么")
+
+    assert kw == ["RK3562", "GPU"], "off means the caller's keywords, untouched"
+
+
+def test_expand_query_terms_is_on_by_default():
+    """A missing key must not silently disable the expansion."""
+    assert settings.CONTEXT_CONFIG.get("pack_term_expansion", True) is True

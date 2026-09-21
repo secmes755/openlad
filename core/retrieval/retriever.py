@@ -256,6 +256,12 @@ class HierarchicalRetriever:
         Any term appearing in the query adds its synonyms to the keyword
         list, bounded to avoid diluting FTS scores.
         """
+        # Rollback switch: with the expansion off the keyword set is exactly what
+        # the caller passed in — the behaviour before a pack's vocabulary became
+        # reachable. Used to A/B the expansion and to revert it without a rebuild.
+        if not settings.CONTEXT_CONFIG.get("pack_term_expansion", True):
+            return keywords
+
         try:
             from ..plugins import get_plugin_registry
             registry = get_plugin_registry()

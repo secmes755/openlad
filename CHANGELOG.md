@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit note rather than no trace at all, keeping "no diagnostics" and
   "nothing to report" distinguishable in the audit trail.
 
+### Changed
+
+- **The industry-pack term expansion can be switched off and measured.** The
+  expansion changes which pages full-text search reaches, so it has to be
+  revertible without a rebuild and comparable arm against arm:
+  `CONTEXT_CONFIG["pack_term_expansion"]` (or `OPENLAD_PACK_TERM_EXPANSION=0`)
+  turns it off, and with it off the keyword set is exactly what the caller passed
+  in — the behaviour before a pack's vocabulary became reachable. Default stays
+  on.
+
 ### Fixed
 
 - **An industry pack's declared query terms are actually applied now.** The

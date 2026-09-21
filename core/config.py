@@ -146,6 +146,14 @@ CONTEXT_CONFIG = {
     # the only page that literally mentions the queried parameter.
     # Set False to roll back to pure document-order truncation.
     "chapter_exact_match_pinning": True,
+    # Industry-pack query-term expansion: append the pack's declared term synonyms
+    # (retrieval/rules.yaml -> spec_query_terms) to the FTS keywords when the query
+    # names the declared term, so a question written in everyday words can reach the
+    # page that states the value under the industry's own term. Set False (or
+    # OPENLAD_PACK_TERM_EXPANSION=0) to roll back to the pack-independent keywords.
+    "pack_term_expansion": os.environ.get(
+        "OPENLAD_PACK_TERM_EXPANSION", "1").strip().lower()
+    not in ("0", "false", "no", "off"),
     # Single-step query quota cap (for 128K context models)
     "single_step_quota_max": 80000,
     # Multi-step query total quota cap
