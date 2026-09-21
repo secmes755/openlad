@@ -79,6 +79,12 @@ CHART_VLM_MAX_WORKERS = int(os.environ.get("OPENLAD_CHART_VLM_MAX_WORKERS", "1")
 # Rebuild labeled ruled-grid diagrams (ball maps, register maps) as clean
 # tables during ingestion (deterministic, model-free). 1=on, 0=off.
 GRID_RECONSTRUCTION_ENABLED = int(os.environ.get("OPENLAD_GRID_RECONSTRUCTION_ENABLED", "1"))
+# Fold spaces between consecutive single CJK characters (e.g. pdfplumber
+# emitting "瑞 芯 微" for "瑞芯微") back together at ingestion time.
+# Only runs of 3+ spaced CJK chars are touched, so table cells like
+# "是 否" (two adjacent single chars) are preserved. Disable with 0 to
+# store extracted text verbatim.
+CJK_SPACE_NORMALIZATION_ENABLED = int(os.environ.get("OPENLAD_CJK_SPACE_NORMALIZATION_ENABLED", "1"))
 # Harvest per-section identifier inventory (e.g. UART0-UART9) into the
 # structure index so chapter selection can match instance-level queries.
 SECTION_ENTITY_HARVEST_ENABLED = int(os.environ.get("OPENLAD_SECTION_ENTITY_HARVEST_ENABLED", "1"))

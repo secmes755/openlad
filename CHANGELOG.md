@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ingestion-time spaced-CJK normalization** (`normalize_spaced_cjk` in
+  `core/ingestion/parser.py`, gated by `OPENLAD_CJK_SPACE_NORMALIZATION_ENABLED`,
+  default on). Some extractors emit one character per text run
+  ("瑞 芯 微" for "瑞芯微"), which the trigram FTS tokenizer cannot match
+  against normal query terms. Page text is now folded before storage and
+  section-title derivation. The rule is deliberately narrow: only runs of
+  3+ single CJK characters separated by ASCII or U+3000 spaces are folded,
+  per line — two adjacent single characters ("是 否" in a table) are left
+  untouched, and folding never crosses line boundaries. Applies to newly
+  ingested documents; existing corpora are unaffected until re-ingested.
 - **Each query now records what retrieval actually did, so an answer can be
   explained after the fact.** The audit row carried only the session id, which
   left the pipeline a black box: when a document in the knowledge base clearly

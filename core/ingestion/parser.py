@@ -3,6 +3,7 @@ Universal document parser - supports PDF, Excel, PPT, Word, Images, Markdown, HT
 Fully generalized, no industry-specific content
 """
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -64,8 +65,35 @@ try:
 except ImportError:
     HAS_PDFPLUMBER = False
 
-from ..config import GRID_RECONSTRUCTION_ENABLED, INGEST_MAX_WORKERS, settings
+from ..config import (
+    CJK_SPACE_NORMALIZATION_ENABLED,
+    GRID_RECONSTRUCTION_ENABLED,
+    INGEST_MAX_WORKERS,
+    settings,
+)
 from ..models import get_model_client
+
+# Runs of 3+ single CJK characters separated by ASCII or full-width spaces.
+# pdfplumber sometimes emits one character per text run ("瑞 芯 微" for
+# "瑞芯微"); the trigram FTS tokenizer cannot match a normal query term
+# against such text. Two adjacent single characters ("是 否" in a table)
+# are deliberately NOT matched — those are separate cells, not spacing
+# artefacts. Applied per line so folding never crosses line boundaries.
+_SPACED_CJK_RUN = re.compile(r"(?:[一-鿿][ 　]){2,}[一-鿿]")
+
+
+def normalize_spaced_cjk(text: str) -> str:
+    """Fold spaces inside runs of 3+ consecutive single CJK characters.
+
+    Line-scoped (never folds across "\n"), handles ASCII and U+3000 spaces.
+    Text without such runs is returned unchanged.
+    """
+    if not text:
+        return text
+    return "\n".join(
+        _SPACED_CJK_RUN.sub(lambda m: m.group(0).replace(" ", "").replace("　", ""), ln)
+        for ln in text.split("\n")
+    )
 
 
 def _trim_exact_period_repeats(text: str, min_text_len: int = 1500,
@@ -603,6 +631,13 @@ class DocumentParser:
                             "author": getattr(meta, "author", None) or (meta.get("/Author") if isinstance(meta, dict) else None),
                             "subject": getattr(meta, "subject", None) or (meta.get("/Subject") if isinstance(meta, dict) else None),
                         })
+
+                # Fold pdfplumber's spaced single-character CJK runs
+                # ("瑞 芯 微") back into normal text before the page text is
+                # stored and section titles are derived from it. Covers every
+                # source appended above (pdfplumber text, tables, OCR, VLM).
+                if CJK_SPACE_NORMALIZATION_ENABLED:
+                    full_text = normalize_spaced_cjk(full_text)
 
                 parsed_page = ParsedPage(
                     page_num=pdf_page_num,
