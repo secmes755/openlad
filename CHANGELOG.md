@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Retrieval planning and answer synthesis no longer invent constraints the
+  user never stated.** The planner prompts carried the current date and were
+  allowed to turn any "relative time reference" into an absolute range, so a
+  vague word like "new" or "latest" could be anchored to today and handed
+  downstream as a strict filter; the answer then reported the information as
+  absent "within" a window the user had never asked about. The coarse filter
+  and the fine planner now derive a time range only when the query contains
+  an explicit time reference and otherwise leave it empty, and the answer
+  prompts — the base synthesizer and both agentic stages — forbid
+  introducing constraints the user did not state and forbid reporting
+  content as absent when it was excluded only by such a self-imposed
+  constraint.
+
 ### Added
 
 - **Each query now records what retrieval actually did, so an answer can be

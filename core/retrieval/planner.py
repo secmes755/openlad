@@ -197,8 +197,9 @@ Document list ({len(all_docs)} total):
 Filtering requirements:
 - Pay attention to the short IDs in square brackets
 - Select at most {self.COARSE_TOPK} documents
-- If the user query contains relative time references, infer absolute date ranges
-- Strictly verify that candidate document time attributes fall within the range
+- Only when the user query contains an **explicit** time reference (a year, a date, a quarter, "last year", "recent N months", etc.) may you infer an absolute date range and output it as time_range
+- **Never invent a time range the user did not state.** Vague words like "new / latest / recent product" without an explicit time bound are NOT time references — do not anchor them to the current date; output an empty time_range ({{"start":"","end":"","label":""}}). When in doubt, do not constrain by time.
+- Strictly verify that candidate document time attributes fall within the range **only when a time_range was actually inferred from an explicit reference**
 - Judge document relevance based on titles and filenames
 
 Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":"","time_range":{{"start":"YYYY-MM-DD","end":"YYYY-MM-DD","label":"time range description"}}}}"""
@@ -363,10 +364,11 @@ User query: {query}
 Analysis and planning requirements:
 1. Analyze the core needs of the user's question
 2. Do NOT assume relationships between entities in the query and documents based on candidate documents
-3. Strictly validate time ranges
+3. Strictly validate time ranges **only when the user query contains an explicit time reference (a year, a date, a quarter, "last year", "recent N months", etc.)**
 4. Determine the question type (simple / multi-entity / multi-period / ambiguous / full context)
 5. Comparison queries (containing "compare", "difference", "vs", etc.) MUST use decomposed_retrieve
 6. Sub-queries MUST use the same language as the original documents (Chinese documents → Chinese queries, English documents → English queries)
+7. **Never invent a time range or date constraint the user did not state.** Vague words like "new / latest / recent" without an explicit time bound are NOT time references — do not anchor them to the current date, and do not inject the current date or any invented time window into rewritten_query or step queries. Output an empty time_range in that case.
 
 Output JSON:
 {{

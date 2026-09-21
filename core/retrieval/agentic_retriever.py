@@ -500,6 +500,7 @@ Document content:
 Please extract all technical parameters, performance metrics, supported standards/protocols, etc. from this document that are relevant to the question.
 If the document truly does not contain relevant information, please reply only with "No relevant information found".
 You are consulting the documentation for {doc_title}. Please only extract information from this document; the query may involve multiple entities, but you only need to cover the portions covered by this document.
+**Do not introduce any constraint the user did not state (time window, scope, standard, comparator): if the question has no time limit, extract from the entire document content without narrowing it yourself. Reply "No relevant information found" only when this document genuinely lacks the queried information — content you excluded because of a constraint you invented yourself does not count as "not found".**
 请用中文回答。"""
 
         answer = self.model_client.generate(prompt, max_tokens=2000, temperature=0)
@@ -675,6 +676,7 @@ Answering rules:
 6. **Key judgment: If the retrieved document content truly lacks the specific information the user is looking for, objectively state "Based on the document content in the current knowledge base, no relevant information was found." This is a data completeness issue in the knowledge base, not a limitation of your capability. Never fabricate, guess, or mix in your own knowledge.**
 **Note: Cross-document synthesis is NOT fabrication — putting parameters documented separately in different documents into a single comparison table is expected behavior, as long as the data comes from the actual content of each document.**
 7. Do not simply declare "insufficient information" just because a document doesn't directly list a certain parameter — if the document contains indirectly relevant parameters (e.g., image processing capability, maximum resolution), these can serve as supplementary references, but you must clearly state in the answer that they are indirect inferences
+8. **Never introduce a constraint the user did not state (time window, scope, standard, comparator). If the question has no time limit, synthesize from all per-document results without narrowing them yourself. "No relevant information found" applies only when all retrieved content genuinely lacks the queried information — results excluded because of a constraint you invented yourself do not count as "not found".**
 
 请用中文回答。"""
 
