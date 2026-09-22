@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Retrieval candidates are now scoped to the report epoch the user
+  explicitly named** (gated by `OPENLAD_REPORT_EPOCH_SCOPING_ENABLED`,
+  default on). A query like "…2025年年度报告显示…较2024年下降了百分之多少"
+  names one document — the 2025 annual report — while "2024年" is a
+  comparison period whose data lives in the comparative columns of that
+  same report. The coarse filter kept both years' documents, so retrieval
+  could build the answer from the wrong year's report. The planner now
+  extracts the epochs the query pins to a report noun (年度报告 / 半年报 /
+  季度报告 / 财报 etc.) and prunes candidate documents whose own epoch is a
+  different one. A bare year with no report noun never prunes anything,
+  documents with no parseable epoch are never pruned, and pruning that
+  would empty the candidate set is refused.
+
 - **Retrieval planning and answer synthesis no longer invent constraints the
   user never stated.** The planner prompts carried the current date and were
   allowed to turn any "relative time reference" into an absolute range, so a

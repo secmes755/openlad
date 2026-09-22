@@ -9,7 +9,7 @@ from typing import Any
 # corpus_taxonomy / corpus_overview not yet available; functionality temporarily simplified
 # from ..ingestion.corpus_taxonomy import CorpusTaxonomyBuilder, get_taxonomy_text
 # from ..ingestion.corpus_overview import get_candidate_details
-from ..config import settings
+from ..config import REPORT_EPOCH_SCOPING_ENABLED, settings
 from ..db.tenant_db import get_tenant_metadata_db
 from ..models.client import get_model_client
 
@@ -28,6 +28,90 @@ def _routing_category(doc: dict) -> str:
     """
     return (doc.get("industry_package_id") or doc.get("category_level1")
             or doc.get("category_level2") or "general")
+
+
+# ---------------------------------------------------------------------------
+# Report-epoch scoping (module-level, pure functions — unit-testable without
+# LLM or DB).
+#
+# A query like "中兴通讯2025年年度报告显示…较2024年下降了百分之多少" names ONE
+# document (the 2025 annual report); "2024年" is a comparison *period* whose
+# data lives in the comparative columns of that same report. The coarse filter
+# has no notion of this distinction and routinely keeps both the 2025 and 2024
+# documents, so retrieval can build the answer from the wrong year's document.
+# These helpers extract the epochs the user explicitly pinned to a report
+# noun and prune candidate documents whose own epoch is a different one.
+# ---------------------------------------------------------------------------
+
+# A year directly attached to a report noun names a document epoch.
+# Covers: 2025年年度报告 / 2025年度报告 / 2025年报 / 2025年半年报 /
+# 2025财年报告 / 2025年第四季度报告 etc. A bare "2024年" with no report
+# noun (e.g. "较2024年下降") must NOT match.
+_REPORT_EPOCH_RE = re.compile(
+    r"((?:19|20)\d{2})\s*(?:年|财年)?\s*"
+    r"(?:年度报告|年报(?!告)|半年度报告|半年报|中期报告|第[一二三四1234]季度报告"
+    r"|季度报告|季报|财报|报告(?!期))"
+)
+# Candidate year inside a title/filename.
+_DOC_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+# UUID prefix uploaded filenames carry ("<uuid>_原名.pdf"); hex digits can
+# otherwise collide with the year pattern.
+_FILENAME_UUID_RE = re.compile(
+    r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_?"
+)
+
+
+def query_report_epochs(query: str) -> set[str]:
+    """Epochs the query explicitly pins to a report noun (may be empty)."""
+    if not query:
+        return set()
+    return set(_REPORT_EPOCH_RE.findall(query))
+
+
+def doc_report_epoch(doc: dict | None) -> str | None:
+    """The document's own epoch: last year in the title, else last year in
+    the (UUID-stripped) filename, else None for epoch-less documents."""
+    if not doc:
+        return None
+    title_years = _DOC_YEAR_RE.findall(doc.get("title") or "")
+    if title_years:
+        return title_years[-1]
+    filename = _FILENAME_UUID_RE.sub("", doc.get("filename") or "")
+    filename_years = _DOC_YEAR_RE.findall(filename)
+    return filename_years[-1] if filename_years else None
+
+
+def scope_candidates_by_report_epoch(query: str, candidate_ids: list[str],
+                                     docs: list[dict], enabled: bool = True) -> list[str]:
+    """Prune candidate documents whose epoch differs from every epoch the
+    query explicitly named.
+
+    Conservative by construction:
+    - no epoch in the query            -> candidates unchanged
+    - document has no parseable epoch  -> always kept
+    - pruning would empty the set      -> refused (original list returned)
+    """
+    if not enabled or not candidate_ids:
+        return candidate_ids
+    epochs = query_report_epochs(query)
+    if not epochs:
+        return candidate_ids
+    doc_by_id = {d.get("id"): d for d in docs if isinstance(d, dict)}
+    kept, pruned = [], []
+    for cid in candidate_ids:
+        epoch = doc_report_epoch(doc_by_id.get(cid))
+        (kept if epoch is None or epoch in epochs else pruned).append(cid)
+    if not kept:
+        logger.warning(
+            "[PHASE-1] Report-epoch scoping to %s would empty the candidate "
+            "set; keeping all %d candidates", sorted(epochs), len(candidate_ids))
+        return candidate_ids
+    if pruned:
+        logger.info(
+            "[PHASE-1] Report-epoch scoping: query named epoch(s) %s; kept %d, "
+            "pruned %d off-epoch candidate(s) %s",
+            sorted(epochs), len(kept), len(pruned), [c[:8] for c in pruned])
+    return kept
 
 
 class QueryPlanner:
@@ -104,6 +188,14 @@ Available retrieval tools:
         coarse_result = self._coarse_filter(query, routed_category, chat_history)
         candidate_ids = coarse_result[0] if isinstance(coarse_result, tuple) else coarse_result
         time_range = coarse_result[1] if isinstance(coarse_result, tuple) and len(coarse_result) > 1 else {}
+
+        # Report-epoch scoping: when the query pins a year to a report noun
+        # ("2025年年度报告"), drop same-entity documents of other epochs — a
+        # comparison period ("较2024年") lives in the named report's own
+        # comparative columns, not in the other year's document.
+        candidate_ids = scope_candidates_by_report_epoch(
+            query, candidate_ids, self._list_retrievable_documents(),
+            enabled=bool(REPORT_EPOCH_SCOPING_ENABLED))
 
         if not candidate_ids:
             # FIX: Even if coarse filter yields no candidates, don't return no_matching_docs directly.
