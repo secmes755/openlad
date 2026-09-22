@@ -30,8 +30,12 @@ class TestExactPeriodRepeats:
 
 
 class TestNumberedPseudoRepeats:
+    # Observed degeneration shape: real blocks on their own lines, then a
+    # fabricated lead-in line ending with a list colon, then the numbered
+    # repeat loop.
     DEGEN = (
-        "## RK1820实测\n\n正文内容。以下是一些常见的方法：\n\n"
+        "## RK1820实测\n\n正文内容。\n\n"
+        "这段是编造的引入语。以下是一些常见的方法：\n\n"
         + "\n\n".join(f"{i}. 音频采样和采样，使用音频采样和采样"
                      f"（如 Audacity, Adobe Audition 等）进行音频采样处理，"
                      f"可以减少采样频率。" for i in range(1, 20))
@@ -43,6 +47,19 @@ class TestNumberedPseudoRepeats:
         assert len(out) < len(self.DEGEN)
         assert "正文内容" in out
         assert "20." not in out  # no surviving repeat lines
+        # The fabricated introducer line is cut together with its list.
+        assert "以下是一些常见的方法" not in out
+
+    def test_same_line_introducer_fully_cut(self):
+        # Trade-off: real content sharing a line with a fabricated colon
+        # clause cannot be told apart from a fabricated lead-in — the whole
+        # line is cut. OCR separates visual blocks with newlines, so this
+        # shape is virtually always pure fabrication.
+        text = ("## 标题\n\n混在同一行的内容。以下是一些方法：\n\n"
+                + "\n\n".join(f"{i}. " + "重复内容句子" * 8 for i in range(1, 6)))
+        out = _trim_numbered_pseudo_repeats(text)
+        assert "以下是一些方法" not in out
+        assert "混在同一行的内容" not in out
 
     def test_handles_truncated_final_line(self):
         text = self.DEGEN + "20. 音频采样和采样，使用音频采样和采样"  # cut mid-sentence

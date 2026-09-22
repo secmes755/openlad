@@ -81,6 +81,10 @@ from ..models import get_model_client
 # artefacts. Applied per line so folding never crosses line boundaries.
 _SPACED_CJK_RUN = re.compile(r"(?:[一-鿿][ 　]){2,}[一-鿿]")
 
+# Characters of the accumulated OCR transcription echoed back as the resume
+# cue when a continuation round is needed (finish_reason == "length").
+OCR_CONTINUATION_TAIL_CHARS = 200
+
 
 def normalize_spaced_cjk(text: str) -> str:
     """Fold spaces inside runs of 3+ consecutive single CJK characters.
@@ -180,6 +184,25 @@ def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
     else:
         first = min(i for i, b in numbered
                     if SequenceMatcher(None, dominant, b).ratio() >= similarity)
+    # The degeneration loop is usually announced by a hallucinated lead-in
+    # paragraph ending with a list colon ("以下是一些常见的…方法：") sitting
+    # directly above the numbered run. The colon's referent is the degenerate
+    # list itself, so the introducer is part of the fabrication — cut it too
+    # (repeatedly, for nested introducers). A legitimate list is never cut, so
+    # its introducer is never examined.
+    while first > 0:
+        prev = first - 1
+        while prev > 0 and not lines[prev].strip():
+            prev -= 1
+        if lines[prev].strip().endswith(("：", ":")):
+            # The whole introducer line goes: its colon-clause references the
+            # degenerate list, and in observed degenerations the lead-in
+            # sentence(s) on the same line are part of the same fabrication
+            # (OCR output separates visual blocks with newlines, so real
+            # content and a fabricated lead-in virtually never share a line).
+            first = prev
+        else:
+            break
     return "\n".join(lines[:first]).rstrip() + "\n"
 
 
@@ -857,6 +880,12 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         chart/image classification split is needed. Returns "" on failure —
         the caller records an ingest warning so hollow pages never ship
         silently.
+
+        If a response hits the token budget (finish_reason == "length"),
+        the page is re-sent with a resume cue (llama.cpp requests are
+        stateless) and the continuation appended, up to
+        `ocr_transcription_max_continuations` rounds. A page still truncated
+        after the cap keeps the caller's truncation warning.
         """
         try:
             import os
@@ -874,16 +903,62 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     "Transcribe ALL text content from this document page image "
                     "exactly as it appears. Preserve structure: tables as "
                     "markup, headings, lists, figure labels and captions. "
-                    "Output only the transcribed content, no commentary."
+                    "Output only the transcribed content, no commentary. "
+                    "When every visible word has been transcribed, stop "
+                    "immediately — never add explanations, interpretations, "
+                    "or invented content."
                 )
                 max_tokens = img_cfg.get("ocr_transcription_max_tokens", 4096)
+                temperature = img_cfg.get("ocr_transcription_temperature", 0.0)
+                max_continuations = img_cfg.get("ocr_transcription_max_continuations", 2)
+                parts = []
                 text = client.generate_with_image(
                     prompt=prompt,
                     image_path=tmp_path,
                     max_tokens=max_tokens,
-                    temperature=img_cfg.get("ocr_transcription_temperature", 0.0),
+                    temperature=temperature,
                     endpoint="ocr",
                 )
+                if text:
+                    parts.append(text)
+                for _ in range(max_continuations):
+                    if not parts or getattr(client, "last_finish_reason", None) != "length":
+                        break
+                    # Degeneration gate: if cleanup trims anything from what we
+                    # have so far, the model has drifted into fabrication — a
+                    # continuation would only append more fabrication, so stop
+                    # instead of spending another OCR round.
+                    accumulated = "".join(parts)
+                    if len(_clean_ocr_transcription(accumulated)) < len(accumulated):
+                        logger.warning(
+                            f"PDF page {page_num} OCR output degenerated; "
+                            "skipping continuation")
+                        break
+                    tail = accumulated[-OCR_CONTINUATION_TAIL_CHARS:]
+                    continuation_prompt = (
+                        "The transcription of this same page was cut off at the "
+                        "output token limit. Continue transcribing EXACTLY from "
+                        "where it stopped. The previous output ended with:\n"
+                        f"\"\"\"{tail}\"\"\"\n"
+                        "Output only the continuation — no commentary, and do "
+                        "not repeat earlier content."
+                    )
+                    more = client.generate_with_image(
+                        prompt=continuation_prompt,
+                        image_path=tmp_path,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        endpoint="ocr",
+                    )
+                    if not more or not more.strip():
+                        break
+                    if more.strip() in "".join(parts)[-OCR_CONTINUATION_TAIL_CHARS * 10:]:
+                        logger.warning(
+                            f"PDF page {page_num} OCR continuation repeated "
+                            "earlier content; stopping")
+                        break
+                    parts.append(more)
+                text = "".join(parts)
                 if text:
                     text = _clean_ocr_transcription(text)
                 return text.strip() if text else ""

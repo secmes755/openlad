@@ -516,6 +516,11 @@ CHART_CONFIG = {
     # with the reference config (llama-server ctx must be >= this value).
     "ocr_transcription_max_tokens": 16384,
     "ocr_transcription_temperature": 0.0,
+    # Continuation rounds when a page transcription hits the token budget
+    # (finish_reason == "length"): the page image is resent with a resume
+    # cue and the output appended, so a dense page is no longer shipped
+    # truncated. 0 restores the old detect-and-warn-only behaviour.
+    "ocr_transcription_max_continuations": int(os.environ.get("OPENLAD_OCR_MAX_CONTINUATIONS", "2")),
 }
 
 # =============================================================================

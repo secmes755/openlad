@@ -37,6 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OCR page transcription now continues past the token budget instead of
+  shipping truncated text, and refuses to continue when the model
+  degenerates.** A dense page whose transcription hit the token limit was
+  previously stored cut off mid-content. When a transcription ends with
+  `finish_reason == "length"`, the page image is re-sent with a resume cue
+  and the output appended, for at most `OPENLAD_OCR_MAX_CONTINUATIONS`
+  rounds (default 2; 0 restores the old detect-and-warn-only behaviour).
+  Continuation stops immediately when degeneration is detected
+  (near-identical numbered filler), so an over-generating model cannot
+  amplify its own noise across rounds. The transcription prompt now
+  instructs verbatim transcription with an explicit stop condition, and
+  the degenerate-run trimmer also removes the fabricated lead-in clause
+  (a list-introduction line ending in a colon) sitting directly above a
+  cut numbered run.
 - **Ingestion-time spaced-CJK normalization** (`normalize_spaced_cjk` in
   `core/ingestion/parser.py`, gated by `OPENLAD_CJK_SPACE_NORMALIZATION_ENABLED`,
   default on). Some extractors emit one character per text run
