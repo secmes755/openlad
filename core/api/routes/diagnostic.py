@@ -6,9 +6,11 @@ Provides system-level diagnostic functions, including:
 - Tenant information
 - Database health check
 """
+import json
 import logging
 import os
 import sqlite3
+from contextlib import closing
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -49,27 +51,25 @@ async def list_all_users():
         get_system_db()
         # Query all users directly from SQLite
         db_path = str(settings.SYSTEM_DB_PATH)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        with closing(sqlite3.connect(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT username, role, tenant_id, api_key, created_at
-            FROM users
-            ORDER BY tenant_id, username
-        """)
+            cursor.execute("""
+                SELECT username, role, tenant_id, api_key, created_at
+                FROM users
+                ORDER BY tenant_id, username
+            """)
 
-        users = []
-        for row in cursor.fetchall():
-            users.append({
-                "username": row["username"],
-                "role": row["role"],
-                "tenant_id": row["tenant_id"],
-                "api_key_prefix": row["api_key"][:8] + "..." if row["api_key"] else None,
-                "created_at": row["created_at"]
-            })
-
-        conn.close()
+            users = []
+            for row in cursor.fetchall():
+                users.append({
+                    "username": row["username"],
+                    "role": row["role"],
+                    "tenant_id": row["tenant_id"],
+                    "api_key_prefix": row["api_key"][:8] + "..." if row["api_key"] else None,
+                    "created_at": row["created_at"]
+                })
 
         return {
             "status": "ok",
@@ -91,44 +91,41 @@ async def list_all_tenants():
     try:
         get_system_db()
         db_path = str(settings.SYSTEM_DB_PATH)
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        with closing(sqlite3.connect(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-        # Get all tenants
-        cursor.execute("SELECT id, name, description, storage_quota_mb FROM tenants")
-        tenants = []
+            # Get all tenants
+            cursor.execute("SELECT id, name, description, storage_quota_mb FROM tenants")
+            tenants = []
 
-        for row in cursor.fetchall():
-            tenant_id = row["id"]
+            for row in cursor.fetchall():
+                tenant_id = row["id"]
 
-            # Count documents for this tenant
-            doc_count = 0
-            try:
-                metadata_db_path = str(settings.TENANTS_DIR / tenant_id / "metadata.db")
-                if os.path.exists(metadata_db_path):
-                    meta_conn = sqlite3.connect(metadata_db_path)
-                    meta_cursor = meta_conn.cursor()
-                    meta_cursor.execute("SELECT COUNT(*) FROM documents")
-                    doc_count = meta_cursor.fetchone()[0]
-                    meta_conn.close()
-            except Exception:
-                pass
+                # Count documents for this tenant
+                doc_count = 0
+                try:
+                    metadata_db_path = str(settings.TENANTS_DIR / tenant_id / "metadata.db")
+                    if os.path.exists(metadata_db_path):
+                        with closing(sqlite3.connect(metadata_db_path)) as meta_conn:
+                            meta_cursor = meta_conn.cursor()
+                            meta_cursor.execute("SELECT COUNT(*) FROM documents")
+                            doc_count = meta_cursor.fetchone()[0]
+                except Exception:
+                    pass
 
-            # Count users for this tenant
-            cursor.execute("SELECT COUNT(*) FROM users WHERE tenant_id = ?", (tenant_id,))
-            user_count = cursor.fetchone()[0]
+                # Count users for this tenant
+                cursor.execute("SELECT COUNT(*) FROM users WHERE tenant_id = ?", (tenant_id,))
+                user_count = cursor.fetchone()[0]
 
-            tenants.append({
-                "tenant_id": tenant_id,
-                "name": row["name"],
-                "description": row["description"],
-                "document_count": doc_count,
-                "user_count": user_count,
-                "storage_quota_mb": row["storage_quota_mb"]
-            })
-
-        conn.close()
+                tenants.append({
+                    "tenant_id": tenant_id,
+                    "name": row["name"],
+                    "description": row["description"],
+                    "document_count": doc_count,
+                    "user_count": user_count,
+                    "storage_quota_mb": row["storage_quota_mb"]
+                })
 
         return {
             "status": "ok",
@@ -161,11 +158,10 @@ async def list_all_documents(
             target_tenants = [tenant_id]
         else:
             db_path = str(settings.SYSTEM_DB_PATH)
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM tenants")
-            target_tenants = [row[0] for row in cursor.fetchall()]
-            conn.close()
+            with closing(sqlite3.connect(db_path)) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM tenants")
+                target_tenants = [row[0] for row in cursor.fetchall()]
 
         all_documents = []
         tenant_stats = {}
@@ -177,83 +173,80 @@ async def list_all_documents(
                 continue
 
             try:
-                meta_conn = sqlite3.connect(metadata_db_path)
-                meta_conn.row_factory = sqlite3.Row
-                meta_cursor = meta_conn.cursor()
+                with closing(sqlite3.connect(metadata_db_path)) as meta_conn:
+                    meta_conn.row_factory = sqlite3.Row
+                    meta_cursor = meta_conn.cursor()
 
-                # Get tenant name
-                system_db_path = str(settings.SYSTEM_DB_PATH)
-                sys_conn = sqlite3.connect(system_db_path)
-                sys_conn.row_factory = sqlite3.Row
-                sys_cursor = sys_conn.cursor()
-                sys_cursor.execute("SELECT name FROM tenants WHERE id = ?", (tid,))
-                tenant_row = sys_cursor.fetchone()
-                tenant_name = tenant_row["name"] if tenant_row else tid
-                sys_conn.close()
+                    # Get tenant name
+                    system_db_path = str(settings.SYSTEM_DB_PATH)
+                    with closing(sqlite3.connect(system_db_path)) as sys_conn:
+                        sys_conn.row_factory = sqlite3.Row
+                        sys_cursor = sys_conn.cursor()
+                        sys_cursor.execute("SELECT name FROM tenants WHERE id = ?", (tid,))
+                        tenant_row = sys_cursor.fetchone()
+                    tenant_name = tenant_row["name"] if tenant_row else tid
 
-                # Build query conditions
-                query = """
-                    SELECT id, title, filename, doc_type, status,
-                           category_level1, category_level2, category_level3,
-                           metadata_json, created_at, updated_at
-                    FROM documents
-                    WHERE 1=1
-                """
-                params = []
+                    # Build query conditions
+                    query = """
+                        SELECT id, title, filename, doc_type, status,
+                               category_level1, category_level2, category_level3,
+                               metadata_json, created_at, updated_at
+                        FROM documents
+                        WHERE 1=1
+                    """
+                    params = []
 
-                if category:
-                    # Support filtering by any category level
-                    query += " AND (category_level1 = ? OR category_level2 = ? OR category_level3 = ?)"
-                    params.extend([category, category, category])
+                    if category:
+                        # Support filtering by any category level
+                        query += " AND (category_level1 = ? OR category_level2 = ? OR category_level3 = ?)"
+                        params.extend([category, category, category])
 
-                query += " ORDER BY category_level1, category_level2, category_level3, title"
+                    query += " ORDER BY category_level1, category_level2, category_level3, title"
 
-                meta_cursor.execute(query, params)
+                    meta_cursor.execute(query, params)
 
-                for row in meta_cursor.fetchall():
-                    # Parse metadata_json to get page count
-                    page_count = None
-                    chunk_count = None
-                    try:
-                        metadata = json.loads(row["metadata_json"] or "{}")
-                        page_count = metadata.get("num_pages")
-                    except Exception:
-                        pass
+                    for row in meta_cursor.fetchall():
+                        # Parse metadata_json to get page count
+                        page_count = None
+                        chunk_count = None
+                        try:
+                            metadata = json.loads(row["metadata_json"] or "{}")
+                            page_count = metadata.get("num_pages")
+                        except Exception:
+                            pass
 
-                    # Get chunk count
-                    try:
-                        meta_cursor.execute(
-                            "SELECT COUNT(*) FROM doc_chunks WHERE doc_id = ?",
-                            (row["id"],)
-                        )
-                        chunk_count = meta_cursor.fetchone()[0]
-                    except Exception:
-                        pass
+                        # Get chunk count
+                        try:
+                            meta_cursor.execute(
+                                "SELECT COUNT(*) FROM doc_chunks WHERE doc_id = ?",
+                                (row["id"],)
+                            )
+                            chunk_count = meta_cursor.fetchone()[0]
+                        except Exception:
+                            pass
 
-                    doc_info = {
-                        "id": row["id"],
-                        "title": row["title"] or "Untitled",
-                        "filename": row["filename"],
-                        "doc_type": row["doc_type"],
-                        "status": row["status"],
-                        "page_count": page_count,
-                        "chunk_count": chunk_count,
-                        "category_level1": row["category_level1"],
-                        "category_level2": row["category_level2"],
-                        "category_level3": row["category_level3"],
-                        "tenant_id": tid,
-                        "tenant_name": tenant_name,
-                        "created_at": row["created_at"],
-                        "updated_at": row["updated_at"]
+                        doc_info = {
+                            "id": row["id"],
+                            "title": row["title"] or "Untitled",
+                            "filename": row["filename"],
+                            "doc_type": row["doc_type"],
+                            "status": row["status"],
+                            "page_count": page_count,
+                            "chunk_count": chunk_count,
+                            "category_level1": row["category_level1"],
+                            "category_level2": row["category_level2"],
+                            "category_level3": row["category_level3"],
+                            "tenant_id": tid,
+                            "tenant_name": tenant_name,
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"]
+                        }
+                        all_documents.append(doc_info)
+
+                    tenant_stats[tid] = {
+                        "name": tenant_name,
+                        "document_count": len([d for d in all_documents if d["tenant_id"] == tid])
                     }
-                    all_documents.append(doc_info)
-
-                tenant_stats[tid] = {
-                    "name": tenant_name,
-                    "document_count": len([d for d in all_documents if d["tenant_id"] == tid])
-                }
-
-                meta_conn.close()
             except Exception as e:
                 logger.warning(f"[DIAGNOSTIC] Failed to query documents for tenant {tid}: {e}")
                 continue
@@ -344,11 +337,10 @@ async def system_health():
         system_db_path = str(settings.SYSTEM_DB_PATH)
         if os.path.exists(system_db_path):
             try:
-                conn = sqlite3.connect(system_db_path)
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM users")
-                user_count = cursor.fetchone()[0]
-                conn.close()
+                with closing(sqlite3.connect(system_db_path)) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM users")
+                    user_count = cursor.fetchone()[0]
                 health_status["databases"]["system_db"] = {
                     "status": "ok",
                     "users": user_count
@@ -365,11 +357,10 @@ async def system_health():
                 metadata_db = os.path.join(tenants_dir, tenant_dir, "metadata.db")
                 if os.path.exists(metadata_db):
                     try:
-                        conn = sqlite3.connect(metadata_db)
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM documents")
-                        doc_count = cursor.fetchone()[0]
-                        conn.close()
+                        with closing(sqlite3.connect(metadata_db)) as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT COUNT(*) FROM documents")
+                            doc_count = cursor.fetchone()[0]
                         health_status["databases"][f"tenant_{tenant_dir}"] = {
                             "status": "ok",
                             "documents": doc_count
@@ -402,83 +393,78 @@ async def get_document_detail(doc_id: str, tenant_id: str):
         if not os.path.exists(metadata_db_path):
             raise HTTPException(status_code=404, detail="Tenant database does not exist")
 
-        conn = sqlite3.connect(metadata_db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        with closing(sqlite3.connect(metadata_db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-        # Get document basic info
-        cursor.execute("""
-            SELECT id, title, filename, doc_type, status,
-                   category_level1, category_level2, category_level3,
-                   metadata_json, created_at, updated_at
-            FROM documents WHERE id = ?
-        """, (doc_id,))
+            # Get document basic info
+            cursor.execute("""
+                SELECT id, title, filename, doc_type, status,
+                       category_level1, category_level2, category_level3,
+                       metadata_json, created_at, updated_at
+                FROM documents WHERE id = ?
+            """, (doc_id,))
 
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Document not found")
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Document not found")
 
-        # Get page statistics
-        cursor.execute("SELECT COUNT(*) FROM doc_pages WHERE doc_id = ?", (doc_id,))
-        page_count = cursor.fetchone()[0]
+            # Get page statistics
+            cursor.execute("SELECT COUNT(*) FROM doc_pages WHERE doc_id = ?", (doc_id,))
+            page_count = cursor.fetchone()[0]
 
-        # Get chunk statistics
-        cursor.execute("SELECT COUNT(*) FROM doc_chunks WHERE doc_id = ?", (doc_id,))
-        chunk_count = cursor.fetchone()[0]
+            # Get chunk statistics
+            cursor.execute("SELECT COUNT(*) FROM doc_chunks WHERE doc_id = ?", (doc_id,))
+            chunk_count = cursor.fetchone()[0]
 
-        # Get page type distribution
-        cursor.execute("""
-            SELECT page_type, COUNT(*) as count
-            FROM doc_pages
-            WHERE doc_id = ?
-            GROUP BY page_type
-        """, (doc_id,))
-        page_types = {row[0]: row[1] for row in cursor.fetchall()}
+            # Get page type distribution
+            cursor.execute("""
+                SELECT page_type, COUNT(*) as count
+                FROM doc_pages
+                WHERE doc_id = ?
+                GROUP BY page_type
+            """, (doc_id,))
+            page_types = {row[0]: row[1] for row in cursor.fetchall()}
 
-        # Get section structure
-        cursor.execute("""
-            SELECT DISTINCT section_path, section_title, page_num
-            FROM doc_pages
-            WHERE doc_id = ? AND section_path IS NOT NULL
-            ORDER BY page_num
-        """, (doc_id,))
-        sections = []
-        for sec_row in cursor.fetchall():
-            sections.append({
-                "path": sec_row[0],
-                "title": sec_row[1],
-                "page": sec_row[2]
-            })
+            # Get section structure
+            cursor.execute("""
+                SELECT DISTINCT section_path, section_title, page_num
+                FROM doc_pages
+                WHERE doc_id = ? AND section_path IS NOT NULL
+                ORDER BY page_num
+            """, (doc_id,))
+            sections = []
+            for sec_row in cursor.fetchall():
+                sections.append({
+                    "path": sec_row[0],
+                    "title": sec_row[1],
+                    "page": sec_row[2]
+                })
 
-        conn.close()
-
-        return {
-            "status": "ok",
-            "document": {
-                "id": row["id"],
-                "title": row["title"],
-                "filename": row["filename"],
-                "doc_type": row["doc_type"],
-                "status": row["status"],
-                "category": {
-                    "level1": row["category_level1"],
-                    "level2": row["category_level2"],
-                    "level3": row["category_level3"]
-                },
-                "page_count": page_count,
-                "chunk_count": chunk_count,
-                "page_types": page_types,
-                "sections": sections[:50],  # Limit return count
-                "metadata": json.loads(row["metadata_json"] or "{}"),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"]
+            return {
+                "status": "ok",
+                "document": {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "filename": row["filename"],
+                    "doc_type": row["doc_type"],
+                    "status": row["status"],
+                    "category": {
+                        "level1": row["category_level1"],
+                        "level2": row["category_level2"],
+                        "level3": row["category_level3"]
+                    },
+                    "page_count": page_count,
+                    "chunk_count": chunk_count,
+                    "page_types": page_types,
+                    "sections": sections[:50],  # Limit return count
+                    "metadata": json.loads(row["metadata_json"] or "{}"),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
             }
-        }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[DIAGNOSTIC] Failed to query document details: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to query document details: {str(e)}")
-
-
-import json  # Add json import at end of file

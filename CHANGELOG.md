@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Diagnostic routes no longer leak sqlite connections.** `get_document_detail`
+  raised its 404 (document not found) and 500 (mid-query error) responses
+  while the metadata.db connection was still open, and the users / tenants /
+  documents / health endpoints leaked theirs on any mid-query exception.
+  Every connection in the diagnostic router is now wrapped in
+  `contextlib.closing` so the close is guaranteed on success, 4xx, and
+  error paths alike.
+
 - **The rate limiter no longer grows its caller table without bound.**
   Every distinct credential/IP/username added a permanent entry to the
   middleware's `_records` dict and only the accessed key's timestamps were
