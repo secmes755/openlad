@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`generate_with_image` no longer flattens failures into an empty string.**
+  The vision call wrapped image loading, encoding and endpoint routing in a
+  single blanket `except` that logged "Image parsing failed" and returned
+  `""`, so a corrupt or unreadable image was indistinguishable from the
+  model returning no content. Image load/encode problems now raise
+  `RuntimeError` with the real reason (all eight call sites already wrap
+  the call per-element and degrade with their own logging); a returned
+  `""` now means only that the endpoint produced no content, which the
+  endpoint layer already logs loudly.
+
 - **Text-like parsers no longer fail on legacy Chinese encodings.**
   `_parse_text`, `_parse_markdown` and `_parse_html` opened files with a
   hardcoded `encoding='utf-8'`; a GBK/GB18030 file (the default output of

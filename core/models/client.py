@@ -129,34 +129,39 @@ class ModelClient:
         callers should use this). endpoint="llm"|"ocr" force a specific
         backend ("ocr" falls back to LLM when unset). No default: a new
         call site without an explicit endpoint fails loudly at import time
-        instead of silently being routed to the OCR model."""
+        instead of silently being routed to the OCR model.
+
+        Failure contract: image load/encode problems raise RuntimeError
+        with the real reason — callers wrap per-element and decide how to
+        degrade. A returned "" means ONLY that the endpoint produced no
+        content (the endpoint layer logs permanent rejections loudly);
+        it never masks a local image failure anymore."""
         import base64 as b64
         from io import BytesIO as Bio
 
+        lower_path = image_path.lower()
+        if lower_path.endswith('.png'):
+            mime_type = "image/png"
+            output_format = "PNG"
+        elif lower_path.endswith('.jpg') or lower_path.endswith('.jpeg'):
+            mime_type = "image/jpeg"
+            output_format = "JPEG"
+        elif lower_path.endswith('.gif'):
+            mime_type = "image/gif"
+            output_format = "JPEG"
+        elif lower_path.endswith('.bmp'):
+            mime_type = "image/bmp"
+            output_format = "JPEG"
+        else:
+            mime_type = "image/jpeg"
+            output_format = "JPEG"
+
         try:
-            lower_path = image_path.lower()
-            if lower_path.endswith('.png'):
-                mime_type = "image/png"
-                output_format = "PNG"
-            elif lower_path.endswith('.jpg') or lower_path.endswith('.jpeg'):
-                mime_type = "image/jpeg"
-                output_format = "JPEG"
-            elif lower_path.endswith('.gif'):
-                mime_type = "image/gif"
-                output_format = "JPEG"
-            elif lower_path.endswith('.bmp'):
-                mime_type = "image/bmp"
-                output_format = "JPEG"
-            else:
-                mime_type = "image/jpeg"
-                output_format = "JPEG"
+            from PIL import Image
+        except ImportError as e:
+            raise RuntimeError("PIL/Pillow not installed") from e
 
-            try:
-                from PIL import Image
-            except ImportError:
-                logger.error("PIL/Pillow not installed")
-                return ""
-
+        try:
             with Image.open(image_path) as img:
                 if img.mode in ('RGBA', 'P'):
                     img = img.convert('RGB')
@@ -171,30 +176,29 @@ class ModelClient:
                 buffer = Bio()
                 img.save(buffer, format=output_format, quality=85)
                 image_data = buffer.getvalue()
-
-            base64_image = b64.b64encode(image_data).decode('utf-8')
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:{mime_type};base64,{base64_image}"
-                    }}
-                ]
-            })
-            use_ocr = endpoint == "ocr" or (endpoint == "auto" and self.ocr_endpoint_available)
-            if use_ocr and self.ocr_endpoint_available:
-                return self._chat_completion(
-                    messages, max_tokens, temperature,
-                    base_url=self.ocr_base_url, model=self.ocr_model or None,
-                    api_key=self.ocr_api_key)
-            return self._chat_completion(messages, max_tokens, temperature)
         except Exception as e:
-            logger.error(f"Image parsing failed {image_path}: {e}")
-            return ""
+            raise RuntimeError(f"Image load/encode failed {image_path}: {e}") from e
+
+        base64_image = b64.b64encode(image_data).decode('utf-8')
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime_type};base64,{base64_image}"
+                }}
+            ]
+        })
+        use_ocr = endpoint == "ocr" or (endpoint == "auto" and self.ocr_endpoint_available)
+        if use_ocr and self.ocr_endpoint_available:
+            return self._chat_completion(
+                messages, max_tokens, temperature,
+                base_url=self.ocr_base_url, model=self.ocr_model or None,
+                api_key=self.ocr_api_key)
+        return self._chat_completion(messages, max_tokens, temperature)
 
     def _chat_completion(self, messages: list, max_tokens: int = 2048,
                          temperature: float = 0.7, json_mode: bool = False,
