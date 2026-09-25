@@ -919,38 +919,40 @@ class TenantVectorDB:
     def _init_vec_db(self):
         try:
             conn = sqlite3.connect(self.vec_db_path)
-            conn.enable_load_extension(True)
             try:
-                import sqlite_vec
-                sqlite_vec.load(conn)
-            except Exception as e:
-                logger.warning(f"sqlite-vec extension not available: {e}")
-            cursor = conn.cursor()
-            for table_sql in [
-                # Legacy tables (existing data untouched)
-                "CREATE TABLE IF NOT EXISTS l2_pages (page_id INTEGER PRIMARY KEY, doc_id TEXT, embedding BLOB)",
-                "CREATE TABLE IF NOT EXISTS l2_formulas (formula_id TEXT PRIMARY KEY, page_id INTEGER, doc_id TEXT, embedding BLOB)",
-                # New chunk-level vector table
-                """CREATE TABLE IF NOT EXISTS l2_chunks (
-                    page_id INTEGER NOT NULL,
-                    chunk_idx INTEGER NOT NULL DEFAULT 0,
-                    doc_id TEXT NOT NULL,
-                    embedding BLOB NOT NULL,
-                    chunk_text_preview TEXT,
-                    chunk_text TEXT,
-                    PRIMARY KEY (page_id, chunk_idx)
-                )""",
-            ]:
-                cursor.execute(table_sql)
-            # Migration: older dbs created before chunk_text column existed.
-            try:
-                cols = [r[1] for r in cursor.execute("PRAGMA table_info(l2_chunks)").fetchall()]
-                if "chunk_text" not in cols:
-                    cursor.execute("ALTER TABLE l2_chunks ADD COLUMN chunk_text TEXT")
-            except Exception as mig_e:
-                logger.warning(f"l2_chunks chunk_text migration failed (non-critical): {mig_e}")
-            conn.commit()
-            conn.close()
+                conn.enable_load_extension(True)
+                try:
+                    import sqlite_vec
+                    sqlite_vec.load(conn)
+                except Exception as e:
+                    logger.warning(f"sqlite-vec extension not available: {e}")
+                cursor = conn.cursor()
+                for table_sql in [
+                    # Legacy tables (existing data untouched)
+                    "CREATE TABLE IF NOT EXISTS l2_pages (page_id INTEGER PRIMARY KEY, doc_id TEXT, embedding BLOB)",
+                    "CREATE TABLE IF NOT EXISTS l2_formulas (formula_id TEXT PRIMARY KEY, page_id INTEGER, doc_id TEXT, embedding BLOB)",
+                    # New chunk-level vector table
+                    """CREATE TABLE IF NOT EXISTS l2_chunks (
+                        page_id INTEGER NOT NULL,
+                        chunk_idx INTEGER NOT NULL DEFAULT 0,
+                        doc_id TEXT NOT NULL,
+                        embedding BLOB NOT NULL,
+                        chunk_text_preview TEXT,
+                        chunk_text TEXT,
+                        PRIMARY KEY (page_id, chunk_idx)
+                    )""",
+                ]:
+                    cursor.execute(table_sql)
+                # Migration: older dbs created before chunk_text column existed.
+                try:
+                    cols = [r[1] for r in cursor.execute("PRAGMA table_info(l2_chunks)").fetchall()]
+                    if "chunk_text" not in cols:
+                        cursor.execute("ALTER TABLE l2_chunks ADD COLUMN chunk_text TEXT")
+                except Exception as mig_e:
+                    logger.warning(f"l2_chunks chunk_text migration failed (non-critical): {mig_e}")
+                conn.commit()
+            finally:
+                conn.close()
         except Exception as e:
             logger.error(f"sqlite-vec init failed: {e}")
 
@@ -964,16 +966,18 @@ class TenantVectorDB:
         """Store chunk-level embedding"""
         try:
             conn = sqlite3.connect(self.vec_db_path)
-            import struct
-            emb_bytes = struct.pack(f'{len(embedding)}f', *embedding)
-            conn.execute(
-                """INSERT OR REPLACE INTO l2_chunks
-                   (page_id, chunk_idx, doc_id, embedding, chunk_text_preview, chunk_text)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (page_id, chunk_idx, doc_id, emb_bytes, chunk_text_preview[:200], chunk_text)
-            )
-            conn.commit()
-            conn.close()
+            try:
+                import struct
+                emb_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+                conn.execute(
+                    """INSERT OR REPLACE INTO l2_chunks
+                       (page_id, chunk_idx, doc_id, embedding, chunk_text_preview, chunk_text)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (page_id, chunk_idx, doc_id, emb_bytes, chunk_text_preview[:200], chunk_text)
+                )
+                conn.commit()
+            finally:
+                conn.close()
         except Exception as e:
             logger.error(f"L2 chunk store failed: {e}")
 
@@ -1016,31 +1020,32 @@ class TenantVectorDB:
         """Chunk-level semantic search, returns page_id-level aggregated results (multiple chunks in the same page take the highest score)"""
         try:
             conn = sqlite3.connect(self.vec_db_path)
-            conn.enable_load_extension(True)
             try:
-                import sqlite_vec
-                sqlite_vec.load(conn)
-            except Exception:
-                conn.close()
-                return []
-            import struct
-            emb_bytes = struct.pack(f'{len(query_embedding)}f', *query_embedding)
-            max_distance = 1.0 - min_score
+                conn.enable_load_extension(True)
+                try:
+                    import sqlite_vec
+                    sqlite_vec.load(conn)
+                except Exception:
+                    return []
+                import struct
+                emb_bytes = struct.pack(f'{len(query_embedding)}f', *query_embedding)
+                max_distance = 1.0 - min_score
 
-            if doc_id_filter is not None and len(doc_id_filter) > 0 and "__ALL__" not in doc_id_filter:
-                ph = ",".join("?" * len(doc_id_filter))
-                results = conn.execute(f"""
-                    SELECT page_id, doc_id, vec_distance_cosine(embedding, ?) as distance
-                    FROM l2_chunks WHERE doc_id IN ({ph}) AND distance < ?
-                    ORDER BY distance LIMIT ?
-                """, (emb_bytes,) + tuple(doc_id_filter) + (max_distance, limit * 3)).fetchall()
-            else:
-                results = conn.execute("""
-                    SELECT page_id, doc_id, vec_distance_cosine(embedding, ?) as distance
-                    FROM l2_chunks WHERE distance < ?
-                    ORDER BY distance LIMIT ?
-                """, (emb_bytes, max_distance, limit * 3)).fetchall()
-            conn.close()
+                if doc_id_filter is not None and len(doc_id_filter) > 0 and "__ALL__" not in doc_id_filter:
+                    ph = ",".join("?" * len(doc_id_filter))
+                    results = conn.execute(f"""
+                        SELECT page_id, doc_id, vec_distance_cosine(embedding, ?) as distance
+                        FROM l2_chunks WHERE doc_id IN ({ph}) AND distance < ?
+                        ORDER BY distance LIMIT ?
+                    """, (emb_bytes,) + tuple(doc_id_filter) + (max_distance, limit * 3)).fetchall()
+                else:
+                    results = conn.execute("""
+                        SELECT page_id, doc_id, vec_distance_cosine(embedding, ?) as distance
+                        FROM l2_chunks WHERE distance < ?
+                        ORDER BY distance LIMIT ?
+                    """, (emb_bytes, max_distance, limit * 3)).fetchall()
+            finally:
+                conn.close()
 
             # Multiple chunks in the same page take the highest similarity
             page_best = {}
@@ -1062,10 +1067,12 @@ class TenantVectorDB:
     def delete_doc_vectors(self, doc_id: str) -> bool:
         try:
             conn = sqlite3.connect(self.vec_db_path)
-            for table in ["l2_pages", "l2_formulas", "l2_chunks"]:
-                conn.execute(f"DELETE FROM {table} WHERE doc_id = ?", (doc_id,))
-            conn.commit()
-            conn.close()
+            try:
+                for table in ["l2_pages", "l2_formulas", "l2_chunks"]:
+                    conn.execute(f"DELETE FROM {table} WHERE doc_id = ?", (doc_id,))
+                conn.commit()
+            finally:
+                conn.close()
             return True
         except Exception as e:
             logger.error(f"Delete doc vectors failed: {e}")

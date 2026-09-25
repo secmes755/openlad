@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TenantVectorDB no longer leaks sqlite connections on error paths.**
+  `search_l2_chunks` returned `[]` from its outer `except` without closing
+  the vec-db connection whenever embedding packing or the query raised —
+  a leak on the hot query path; `store_l2_chunk`, `delete_doc_vectors`,
+  and `_init_vec_db` had the same unprotected pattern. All four now use
+  the `try`/`finally` close that `store_l2_chunks` already demonstrated,
+  with query results and error-return semantics unchanged.
+
 - **Diagnostic routes no longer leak sqlite connections.** `get_document_detail`
   raised its 404 (document not found) and 500 (mid-query error) responses
   while the metadata.db connection was still open, and the users / tenants /
