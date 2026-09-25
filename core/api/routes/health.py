@@ -1,6 +1,7 @@
 """
 Health check routes
 """
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -44,10 +45,15 @@ def _check_model_service(url: str, name: str) -> dict:
 async def health_check():
     from ...services.model_config import get_model_settings
 
-    db_status = _check_db()
     cfg = get_model_settings()
-    llm_status = _check_model_service(cfg["llm_url"], "llm")
-    emb_status = _check_model_service(cfg["emb_url"], "embedding")
+    # The probes are synchronous (sqlite / requests.get with timeout=3);
+    # running them inline would stall the event loop for up to 6s per poll.
+    # Dispatch to worker threads — also lets the three probes overlap.
+    db_status, llm_status, emb_status = await asyncio.gather(
+        asyncio.to_thread(_check_db),
+        asyncio.to_thread(_check_model_service, cfg["llm_url"], "llm"),
+        asyncio.to_thread(_check_model_service, cfg["emb_url"], "embedding"),
+    )
 
     overall = "ok"
     if db_status["status"] != "ok":

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/health` no longer blocks the event loop on synchronous probes.**
+  `health_check` is an async handler but ran `_check_db` and two
+  `_check_model_service` probes inline — each a `requests.get` with
+  `timeout=3`, so a dead model service stalled every other request for up
+  to 6 seconds per health poll. The probes are now dispatched via
+  `asyncio.to_thread` and gathered concurrently (worst case 3s, off the
+  event loop). Response shape and aggregation logic are unchanged.
+
 - **`generate_with_image` no longer flattens failures into an empty string.**
   The vision call wrapped image loading, encoding and endpoint routing in a
   single blanket `except` that logged "Image parsing failed" and returned
