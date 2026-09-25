@@ -198,10 +198,6 @@ class DocumentIndexBuilder:
         metadata_db, vector_db = self._get_dbs(tid)
         logger.info(f"[HASH_DEBUG] build_index: tenant_id={tid}, db_path={metadata_db.db_path}")
 
-        # Set chart analyzer's images_dir (based on current tenant)
-        if tid:
-            self.chart_analyzer.images_dir = settings.get_tenant_images_dir(tid)
-
         _report(10, "Parsing document")
         if parsed_doc is None:
             doc = metadata_db.get_document(doc_id)
@@ -612,7 +608,8 @@ class DocumentIndexBuilder:
                                 layout_result=layout_result,
                                 page_text=page_text,
                                 doc_id=doc_id,
-                                page_num=page.page_num
+                                page_num=page.page_num,
+                                images_dir=settings.get_tenant_images_dir(tid)
                             )
                             if charts and settings.CHART_CONFIG.get("append_to_raw_text", True):
                                 enhanced_text = self.chart_analyzer.build_enhanced_text(page_text, charts)

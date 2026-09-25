@@ -89,7 +89,8 @@ class ChartAnalyzer:
         self.max_image_size = self.config.get("max_image_size", 1024)     # Max side length of image sent to LLM
 
     def analyze_page(self, page_image: Image.Image, layout_result: LayoutResult,
-                     page_text: str, doc_id: str, page_num: int) -> list[ChartDescription]:
+                     page_text: str, doc_id: str, page_num: int,
+                     images_dir: Path | None = None) -> list[ChartDescription]:
         """
         Analyze all charts on a page
 
@@ -142,7 +143,8 @@ class ChartAnalyzer:
             for idx, region in enumerate(regions[:self.max_regions_per_page]):
                 future = executor.submit(
                     self._analyze_region,
-                    page_image, region, page_text, doc_id, page_num, idx
+                    page_image, region, page_text, doc_id, page_num, idx,
+                    images_dir=images_dir
                 )
                 futures[future] = idx
 
@@ -417,7 +419,8 @@ class ChartAnalyzer:
 
     def _analyze_region(self, page_image: Image.Image, region: dict[str, Any],
                         page_text: str, doc_id: str, page_num: int,
-                        region_idx: int) -> ChartDescription | None:
+                        region_idx: int,
+                        images_dir: Path | None = None) -> ChartDescription | None:
         """
         Use multimodal LLM to analyze a single chart region
         """
@@ -455,10 +458,13 @@ class ChartAnalyzer:
             # Crop chart region
             chart_image = page_image.crop(bbox)
 
-            # Save cropped image
+            # Save cropped image. The per-call directory wins over the
+            # instance attribute: this analyzer is a shared singleton and
+            # per-ingest mutation of self.images_dir races across tenants.
             chart_filename = f"{doc_id}_p{page_num}_chart{region_idx}.png"
-            if self.images_dir:
-                chart_path = self.images_dir / chart_filename
+            save_dir = images_dir if images_dir is not None else self.images_dir
+            if save_dir:
+                chart_path = save_dir / chart_filename
                 chart_image.save(chart_path, "PNG")
             else:
                 chart_path = None

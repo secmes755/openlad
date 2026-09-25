@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Chart crops no longer race across tenants.** The builder holds one
+  shared `ChartAnalyzer` (app-state singleton) and mutated its
+  `images_dir` at the start of every ingest; two concurrent ingests for
+  different tenants could write tenant A's charts into tenant B's
+  directory — a cross-tenant data leak. `analyze_page`/`_analyze_region`
+  now take `images_dir` as a per-call parameter (per-call wins over the
+  instance attribute, which stays as a fallback), the builder passes the
+  current ingest's tenant directory, and the shared-instance mutation is
+  gone.
+
 - **`/health` no longer blocks the event loop on synchronous probes.**
   `health_check` is an async handler but ran `_check_db` and two
   `_check_model_service` probes inline — each a `requests.get` with
