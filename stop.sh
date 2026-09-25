@@ -10,7 +10,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PORT="${OPENLAD_PORT:-11296}"
+# Canonical pair first (matches start.sh/start.ps1), legacy OPENLAD_PORT as fallback
+PORT="${OPENLAD_API_PORT:-${OPENLAD_PORT:-11296}}"
 
 echo "Stopping OpenLAD..."
 

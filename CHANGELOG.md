@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **start.sh/stop.sh honor the canonical port variables.** start.sh
+  derived `OPENLAD_API_HOST`/`OPENLAD_API_PORT` (canonical, what
+  start.ps1 binds) but then launched uvicorn with the legacy
+  `OPENLAD_HOST`/`OPENLAD_PORT`, so setting the documented canonical
+  pair had no effect on Linux/macOS, and stop.sh only read the legacy
+  port. start.sh now binds and prints the canonical pair and stop.sh
+  resolves canonical-first with the legacy variable as fallback; legacy
+  deployments keep working unchanged.
+
 - **FTS reserved words in queries are searchable again.** Chunk FTS built
   its MATCH expressions by joining raw tokens with AND/OR, so a query
   containing an uppercase FTS5 keyword ("RAM AND ROM 区别", "NOT …")

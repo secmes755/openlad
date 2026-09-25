@@ -55,7 +55,7 @@ echo " OpenLAD (External Mode)"
 echo "=============================================="
 echo " LLM backend:   $OPENLAD_LLM_URL"
 echo " Embedding:     $OPENLAD_EMB_URL"
-echo " API listening: http://$OPENLAD_HOST:$OPENLAD_PORT"
+echo " API listening: http://$OPENLAD_API_HOST:$OPENLAD_API_PORT"
 echo " Data dir:      $OPENLAD_DATA_DIR"
 echo " Concurrency:   $OPENLAD_QUERY_CONCURRENCY_MODE (max $OPENLAD_QUERY_MAX_CONCURRENT)"
 echo "=============================================="
@@ -73,8 +73,9 @@ else
     echo "Using system Python: $PYTHON_BIN"
 fi
 
-# Start API
+# Start API (bind the canonical OPENLAD_API_* pair, which already falls
+# back to the legacy OPENLAD_HOST/OPENLAD_PORT above — same as start.ps1)
 exec "$PYTHON_BIN" -m uvicorn core.api.main:app \
-    --host "$OPENLAD_HOST" \
-    --port "$OPENLAD_PORT" \
+    --host "$OPENLAD_API_HOST" \
+    --port "$OPENLAD_API_PORT" \
     --log-level info
