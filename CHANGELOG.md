@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The rate limiter no longer grows its caller table without bound.**
+  Every distinct credential/IP/username added a permanent entry to the
+  middleware's `_records` dict and only the accessed key's timestamps were
+  pruned, so the table grew monotonically over the process lifetime. The
+  dict is now capped (10,000 keys): keys whose window has fully expired —
+  semantically dead — are evicted first, then least-recently-active
+  callers; rate decisions for active callers are unchanged.
+
 - **smoke.sh no longer interpolates filenames into Python source.** The
   already-ingested check embedded `$DOCNAME` inside a `python3 -c` string,
   so a manifest filename containing a quote could inject Python code.

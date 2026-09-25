@@ -32,6 +32,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Higher capacity → lower per-user quota (more users, must be stricter).
     """
 
+    # Upper bound on tracked caller keys. Each distinct credential/IP/username
+    # adds one entry; without a bound the dict grew for the process lifetime.
+    _MAX_TRACKED_KEYS = 10000
+
     def __init__(self, app):
         super().__init__(app)
         # In-memory request records: {key: [timestamp, ...]}
@@ -88,8 +92,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         ip = request.client.host if request.client else "unknown"
         return f"ip:{ip}"
 
+    def _evict_if_overgrown(self, now: float, window_seconds: int) -> None:
+        """Keep _records bounded.
+
+        First drop semantically dead keys — their window has fully expired,
+        so removing them cannot change any future rate decision. If the dict
+        is still over the cap (pathological many-active-callers case), evict
+        the least-recently-active callers; bounding memory wins over keeping
+        their window state.
+        """
+        if len(self._records) <= self._MAX_TRACKED_KEYS:
+            return
+        stale = [k for k, ts in self._records.items()
+                 if not ts or now - ts[-1] >= window_seconds]
+        for k in stale:
+            del self._records[k]
+        overflow = len(self._records) - self._MAX_TRACKED_KEYS
+        if overflow > 0:
+            by_activity = sorted(
+                self._records.items(),
+                key=lambda kv: kv[1][-1] if kv[1] else 0.0,
+            )
+            for k, _ in by_activity[:overflow]:
+                del self._records[k]
+
     def _is_allowed(self, key: str, limit: int, window_seconds: int = 60) -> bool:
         now = time.time()
+        self._evict_if_overgrown(now, window_seconds)
         if key not in self._records:
             self._records[key] = []
         # Clean expired records
