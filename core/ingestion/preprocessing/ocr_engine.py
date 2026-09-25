@@ -226,7 +226,9 @@ class OCREngine:
             }]
 
             # Call VLM API via configured endpoint
-            from ....config import settings
+            # Lazy import from core.config (three levels up from
+            # core.ingestion.preprocessing) — keep it importable.
+            from ...config import settings
             vlm_url = f"{settings.CHART_VLM_BASE_URL}/chat/completions"
             response = requests.post(
                 vlm_url,

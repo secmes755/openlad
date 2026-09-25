@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The VLM OCR fallback engine is reachable again.** `_recognize_vlm`
+  imported `settings` with a relative import one package level too deep
+  (`....config` from `core.ingestion.preprocessing`), which raises
+  `ImportError` beyond the top-level package; the blanket `except`
+  swallowed it, so whenever Tesseract was unavailable the fallback
+  returned an error payload instead of transcribing, and scanned pages
+  could be ingested hollow. The import now resolves to `core.config`,
+  and the fallback's success/error paths are pinned by tests.
+
 - **Retrieval candidates are now scoped to the report epoch the user
   explicitly named** (gated by `OPENLAD_REPORT_EPOCH_SCOPING_ENABLED`,
   default on). A query like "…2025年年度报告显示…较2024年下降了百分之多少"
