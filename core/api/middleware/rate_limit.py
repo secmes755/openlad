@@ -52,7 +52,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         caller = self._caller_key(request)
         query_limit, upload_limit = self._get_limits()
 
-        if path in ("/api/v1/query", "/api/v1/skill/query", "/api/v1/skill/search"):
+        if path in ("/api/v1/query", "/api/v1/query/stream",
+                    "/api/v1/skill/query", "/api/v1/skill/search"):
             return f"query:{caller}", query_limit
         if path == "/api/v1/documents/upload":
             return f"upload:{caller}", upload_limit

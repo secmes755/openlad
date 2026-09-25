@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The streaming query endpoint is rate limited.** `/api/v1/query/stream`
+  runs the same retrieval pipeline as `/query` under the same global query
+  lock, but the rate-limit path list only named `/query`, so the stream
+  variant was unmetered and a throttled caller could still queue an
+  unbounded number of heavy requests. Stream requests now draw from the
+  same per-caller query bucket.
+
 - **The VLM OCR fallback engine is reachable again.** `_recognize_vlm`
   imported `settings` with a relative import one package level too deep
   (`....config` from `core.ingestion.preprocessing`), which raises
