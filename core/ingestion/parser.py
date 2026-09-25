@@ -1326,14 +1326,32 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
     # Markdown / Text / HTML / DOCX
     # ========================================================================
 
+    @staticmethod
+    def _read_text_with_fallback(path: Path) -> str:
+        """Read a text file tolerant of legacy encodings.
+
+        Try UTF-8 first (utf-8-sig also strips a BOM), then GB18030 — the
+        superset of GBK/GB2312 that legacy Chinese enterprise tooling emits
+        by default. A document must never fail ingestion solely because of
+        its encoding; as a last resort decode with replacement so the
+        salvageable text still lands in the index.
+        """
+        raw = Path(path).read_bytes()
+        for encoding in ("utf-8-sig", "gb18030"):
+            try:
+                return raw.decode(encoding)
+            except (UnicodeDecodeError, ValueError):
+                continue
+        logger.warning(f"Encoding fallback exhausted for {path}; decoding with replacement")
+        return raw.decode("utf-8", errors="replace")
+
     def _parse_markdown(self, path: Path) -> ParsedDocument:
         doc = ParsedDocument()
         doc.filename = path.name
         doc.original_path = str(path.absolute())
         doc.file_size = path.stat().st_size
 
-        with open(path, encoding='utf-8') as f:
-            content = f.read()
+        content = self._read_text_with_fallback(path)
 
         chunk_texts = self._simple_chunk_by_heading(content)
         for i, chunk in enumerate(chunk_texts, 1):
@@ -1350,8 +1368,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         doc.original_path = str(path.absolute())
         doc.file_size = path.stat().st_size
 
-        with open(path, encoding='utf-8') as f:
-            content = f.read()
+        content = self._read_text_with_fallback(path)
 
         chunk_texts = self._chunk_by_structure(content, max_chunk_size=2000)
         if len(chunk_texts) <= 1 and len(content) > 2000:
@@ -1373,8 +1390,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
 
         text = ""
         if HAS_BS4:
-            with open(path, encoding='utf-8') as f:
-                content = f.read()
+            content = self._read_text_with_fallback(path)
             soup = BeautifulSoup(content, 'html.parser')
             text = soup.get_text()
 

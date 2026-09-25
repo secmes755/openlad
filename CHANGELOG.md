@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Text-like parsers no longer fail on legacy Chinese encodings.**
+  `_parse_text`, `_parse_markdown` and `_parse_html` opened files with a
+  hardcoded `encoding='utf-8'`; a GBK/GB18030 file (the default output of
+  legacy Chinese enterprise tooling) raised `UnicodeDecodeError` and the
+  whole document failed ingestion. A shared `_read_text_with_fallback` now
+  tries UTF-8 (stripping any BOM), then GB18030, and finally decodes with
+  replacement so salvageable text still lands in the index.
+
 - **Merger context cuts now carry the canonical truncation marker.**
   `SegmentMerger.merge` had two cuts that bypassed `mark_truncated()`: the
   per-document budget cut appended a bare "..." and the final safety
