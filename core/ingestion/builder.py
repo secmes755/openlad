@@ -2037,7 +2037,14 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
                     f"{lost}/{len(chunk_items)} chunks not embedded ({buckets})"
                 )
         except Exception as e:
+            # Wholesale failure (page fetch, chunking, or an error class the
+            # per-batch retry layer does not classify): no chunk-accounting
+            # warning was appended, but the document may now hold zero
+            # vectors. Surface it so build_index marks the document degraded
+            # instead of verified — silent hollow ingestion is the worst
+            # possible outcome for a knowledge base.
             logger.error(f"Failed to build embeddings: {e}")
+            warnings.append(f"embedding pipeline failed: {e}")
         return warnings
 
     def _get_content_sample_for_doc(self, doc_id: str, parsed_doc: ParsedDocument) -> str:

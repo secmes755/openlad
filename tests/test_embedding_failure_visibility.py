@@ -235,3 +235,20 @@ def test_full_success_returns_no_warnings(caplog):
     with caplog.at_level(logging.INFO):
         warnings = b._build_embeddings("doc1", [], "t1")
     assert warnings == []
+
+
+def test_wholesale_embedding_failure_returns_warning(caplog):
+    """BUG-7.1: an exception escaping the per-batch accounting (e.g. the page
+    fetch itself fails, or the embedding client raises something the retry
+    layer does not classify) must still surface as an ingest warning —
+    otherwise the document is stored with zero vectors yet marked
+    "verified", which is silent hollow ingestion at the wholesale level."""
+    b, metadata_db, _ = _make_builder(3, _ok_embeddings)
+    metadata_db.get_document_pages.side_effect = RuntimeError("db gone")
+    with caplog.at_level(logging.WARNING):
+        warnings = b._build_embeddings("doc1", [], "t1")
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "wholesale failure must still be logged at ERROR"
+    assert warnings, ("wholesale failure must produce an ingest warning so the "
+                      "document is degraded, not verified with zero vectors")
+    assert any("embedding" in w.lower() for w in warnings)

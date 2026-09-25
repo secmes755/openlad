@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Wholesale embedding failure no longer marks the document verified.**
+  `_build_embeddings` caught any exception escaping the per-batch accounting
+  (page fetch, chunking, unclassified client errors) and merely logged it,
+  returning an empty warning list — so a document could land in the index
+  with zero vectors yet status `verified`. The exception now also appends an
+  ingest warning, which drives the existing `degraded` status so retrieval
+  can flag the incomplete source.
+
 - **TenantVectorDB no longer leaks sqlite connections on error paths.**
   `search_l2_chunks` returned `[]` from its outer `except` without closing
   the vec-db connection whenever embedding packing or the query raised —
