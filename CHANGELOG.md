@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Excel/PPT parse failures no longer ship as empty verified documents.**
+  `_parse_excel` and `_parse_ppt` logged parse exceptions and returned the
+  document as-is — often with zero pages/slides — which the builder then
+  stored as verified with no retrievable content and no signal. Both handlers
+  now record the failure through the `parse_warnings` channel, so the
+  document is stored as degraded instead.
+
 - **PDF parse failures no longer ship silently as verified.** The outer
   exception handler in `_parse_pdf` returned whatever it had — partial pages
   after a mid-document crash, MuPDF-fallback pages, or a single placeholder

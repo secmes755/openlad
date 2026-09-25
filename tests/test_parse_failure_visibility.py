@@ -157,6 +157,44 @@ def test_pdf_total_crash_without_fallback_carries_parse_warning(monkeypatch, tmp
 
 
 # --------------------------------------------------------------------------
+# BUG-7.2: Excel/PPT parse failure returns an empty document silently
+# --------------------------------------------------------------------------
+
+def test_excel_failure_carries_parse_warning(monkeypatch, tmp_path):
+    f = tmp_path / "book.xlsx"
+    f.write_bytes(b"fake workbook bytes")
+    monkeypatch.setattr(parser_mod, "HAS_EXCEL", True)
+
+    def _raise_excel_file(path):
+        raise RuntimeError("corrupt workbook")
+
+    monkeypatch.setattr(
+        parser_mod, "pd", types.SimpleNamespace(ExcelFile=_raise_excel_file),
+        raising=False,
+    )
+    doc = parser_mod.DocumentParser()._parse_excel(f)
+    assert doc.pages == []
+    assert doc.metadata.get("parse_warnings"), \
+        "a 0-page Excel document must not ship verified"
+
+
+def test_ppt_failure_carries_parse_warning(monkeypatch, tmp_path):
+    f = tmp_path / "slides.pptx"
+    f.write_bytes(b"fake deck bytes")
+    monkeypatch.setattr(parser_mod, "HAS_PPT", True)
+
+    def _raise_presentation(path):
+        raise RuntimeError("corrupt deck")
+
+    monkeypatch.setattr(parser_mod, "Presentation", _raise_presentation,
+                        raising=False)
+    doc = parser_mod.DocumentParser()._parse_ppt(f)
+    assert doc.pages == []
+    assert doc.metadata.get("parse_warnings"), \
+        "a 0-slide deck must not ship verified"
+
+
+# --------------------------------------------------------------------------
 # Builder wiring: parse_warnings must drive the degraded status
 # --------------------------------------------------------------------------
 

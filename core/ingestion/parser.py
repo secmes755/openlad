@@ -1016,6 +1016,9 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     doc.pages.append(parsed_page)
             except Exception as e:
                 logger.error(f"Excel parsing failed {path}: {e}")
+                doc.metadata.setdefault("parse_warnings", []).append(
+                    f"Excel parsing failed: {e}"
+                )
 
         return doc
 
@@ -1088,6 +1091,9 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     doc.pages.append(parsed_page)
             except Exception as e:
                 logger.error(f"PPT parsing failed {path}: {e}")
+                doc.metadata.setdefault("parse_warnings", []).append(
+                    f"PPT parsing failed: {e}"
+                )
 
         return doc
 
