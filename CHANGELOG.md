@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Concurrent ingests for one tenant now serialize.** The builder is an
+  app-state singleton with no serialization, and ingestion mutates shared
+  per-ingest state — two uploads for the same tenant raced each other's
+  OCR temp files and metadata writes. `ingest_document` and `build_index`
+  now run under a per-tenant `threading.RLock` (re-entrant because
+  `build_index` nests inside `ingest_document`; a direct `build_index`
+  caller can no longer interleave with an in-flight ingest either).
+  Blocking wait, no timeout — uploads run in background tasks, so queuing
+  does not degrade the request path — and different tenants remain fully
+  parallel.
+
 - **OCR temp files no longer collide across concurrent same-tenant ingests.**
   `_ocr_pipeline` wrote `temp_p{page}.png` / `ocr_p{page}.png` — names
   derived only from the tenant images dir and page number, so two documents

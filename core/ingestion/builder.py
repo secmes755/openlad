@@ -5,6 +5,7 @@ Multi-tenant + industry plugin system adapter
 import gc
 import hashlib
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,28 @@ class DocumentIndexBuilder:
         self.layout_analyzer = LayoutAnalyzer(settings.LAYOUT_CONFIG)
         self.formula_recognizer = FormulaRecognizer()
         self.chart_analyzer = ChartAnalyzer(settings.CHART_CONFIG)
+        # Per-tenant ingestion locks. The builder is an app-state
+        # singleton and ingestion mutates shared per-ingest state, so
+        # concurrent ingests for one tenant must serialize; different
+        # tenants still run fully in parallel. Entries are never evicted
+        # — one lock per tenant is negligible.
+        self._ingest_locks = {}
+        self._ingest_locks_guard = threading.Lock()
+
+    def _ingest_lock(self, tid: str) -> threading.RLock:
+        """Return the tenant's ingestion lock.
+
+        RLock because build_index nests inside ingest_document on the
+        same thread; a different thread blocks until the tenant's
+        in-flight ingest finishes. Blocking wait, no timeout: uploads run
+        in background tasks, so queuing does not degrade the request path.
+        """
+        with self._ingest_locks_guard:
+            lock = self._ingest_locks.get(tid)
+            if lock is None:
+                lock = threading.RLock()
+                self._ingest_locks[tid] = lock
+            return lock
 
     def _get_dbs(self, tenant_id: str = None):
         """Get tenant databases"""
@@ -91,10 +114,27 @@ class DocumentIndexBuilder:
                         title: str | None = None) -> dict[str, Any]:
         """Complete document ingestion workflow
 
+        Serialized per tenant: concurrent ingests for one tenant queue on
+        a per-tenant lock instead of racing shared ingestion state (chart
+        analyzer wiring, OCR temp files, metadata writes). Different
+        tenants run fully in parallel. Blocking wait, no timeout: uploads
+        run in background tasks, so queuing does not degrade requests.
+
         title: optional explicit document title. When provided it takes
         highest priority; otherwise the title is derived from filename +
         L1 summary via structured LLM extraction (see build_index).
         """
+        tid = tenant_id or self.tenant_id or "default"
+        with self._ingest_lock(tid):
+            return self._ingest_document_impl(
+                file_path, tenant_id, industry_hint, auto_confirm,
+                progress_callback, title)
+
+    def _ingest_document_impl(self, file_path: str, tenant_id: str,
+                              industry_hint: str,
+                              auto_confirm: bool,
+                              progress_callback,
+                              title: str | None) -> dict[str, Any]:
         tid = tenant_id or self.tenant_id or "default"
         # Store for backward compat (some downstream code may read self.tenant_id)
         self.tenant_id = tid
@@ -184,7 +224,25 @@ class DocumentIndexBuilder:
         title: optional explicit document title (highest priority). When absent,
         derived from filename + L1 summary via structured LLM extraction,
         falling back to filename-derived title.
+
+        Runs under the tenant's ingestion lock (RLock — re-entrant when
+        reached from ingest_document on the same thread) so a direct caller
+        cannot interleave with an in-flight ingest for the same tenant.
         """
+        tid = tenant_id or self.tenant_id or "default"
+        with self._ingest_lock(tid):
+            return self._build_index_impl(
+                doc_id, parsed_doc, preprocessed_pages, industry_hint,
+                progress_callback, file_hash=file_hash, tenant_id=tenant_id,
+                title=title)
+
+    def _build_index_impl(self, doc_id: str, parsed_doc: ParsedDocument = None,
+                    preprocessed_pages: list = None,
+                    industry_hint: str = None,
+                    progress_callback=None,
+                    file_hash: str = None,
+                    tenant_id: str = None,
+                    title: str | None = None) -> dict[str, Any]:
         tid = tenant_id or self.tenant_id or "default"
 
         def _report(p, msg):
