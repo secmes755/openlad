@@ -3,6 +3,7 @@ V4 Document Preprocessing Pipeline
 Integrates image correction, OCR, and text quality validation
 """
 import logging
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -130,13 +131,18 @@ class DocumentPreprocessor:
         OCR processing pipeline
         """
         # 1. Image correction
+        # Temp names carry a unique suffix: two documents ingested
+        # concurrently for the same tenant hit identical page numbers, and
+        # a fixed temp_p{n}.png would let one pipeline overwrite (then
+        # delete) the other's OCR input mid-read.
+        uniq = uuid.uuid4().hex[:8]
         temp_path = None  # Ensure scope safety, avoids NameError when enable_deskew=False
         if settings.OCR_CONFIG.get("enable_deskew", True):
             # Convert PIL Image to numpy array for OpenCV
             np.array(page_image.convert('RGB'))
 
             # Save temp file for corrector
-            temp_path = self.images_dir / f"temp_p{page_num}.png"
+            temp_path = self.images_dir / f"temp_p{page_num}_{uniq}.png"
             page_image.save(temp_path, "PNG")
 
             corrected_array, metrics = self.corrector.correct(str(temp_path))
@@ -149,7 +155,7 @@ class DocumentPreprocessor:
 
         # 2. Run OCR
         # Save corrected image for OCR
-        ocr_input_path = self.images_dir / f"ocr_p{page_num}.png"
+        ocr_input_path = self.images_dir / f"ocr_p{page_num}_{uniq}.png"
         corrected_image.save(ocr_input_path, "PNG")
 
         full_text, ocr_results, metadata = self.ocr_engine.recognize(

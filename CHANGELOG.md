@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OCR temp files no longer collide across concurrent same-tenant ingests.**
+  `_ocr_pipeline` wrote `temp_p{page}.png` / `ocr_p{page}.png` — names
+  derived only from the tenant images dir and page number, so two documents
+  ingested concurrently for the same tenant overwrote (then deleted) each
+  other's OCR input mid-read. Temp names now carry a unique per-call
+  suffix; write-read-delete lifecycles are otherwise unchanged.
+
 - **Chart crops no longer race across tenants.** The builder holds one
   shared `ChartAnalyzer` (app-state singleton) and mutated its
   `images_dir` at the start of every ingest; two concurrent ingests for
