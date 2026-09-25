@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 CJK_START = '\u4e00'  # U+4E00 (CJK start)
 CJK_END = '\u9fff'
 
+
+def _fts5_quote(token: str) -> str:
+    """Quote one token as an FTS5 phrase.
+
+    FTS5 parses uppercase AND/OR/NOT as operators, so a raw token that
+    happens to be a reserved word (datasheet terms like "RAM AND ROM")
+    produced a syntax error and the channel returned nothing. Quoting
+    turns every token into literal text while leaving match semantics
+    unchanged for ordinary tokens. Embedded double quotes are escaped by
+    doubling.
+    """
+    return '"' + token.replace('"', '""') + '"'
+
 # =============================================================================
 # Tenant-level Metadata Database
 # =============================================================================
@@ -558,7 +571,7 @@ class TenantMetadataDB:
         if trigram_tokens and not force_bigram_only:
             # Try AND search first
             if len(trigram_tokens) >= 2:
-                and_query = ' AND '.join(trigram_tokens)
+                and_query = ' AND '.join(_fts5_quote(t) for t in trigram_tokens)
                 try:
                     with self.get_connection() as conn:
                         rows = conn.execute(f"""
@@ -583,7 +596,7 @@ class TenantMetadataDB:
 
             # If AND results are less than 30% of limit, supplement with OR
             if len(all_results) < int(max(limit * 0.3, 3)):
-                match_query = ' OR '.join(trigram_tokens)
+                match_query = ' OR '.join(_fts5_quote(t) for t in trigram_tokens)
                 try:
                     with self.get_connection() as conn:
                         rows = conn.execute(f"""

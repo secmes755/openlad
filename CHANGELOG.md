@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FTS reserved words in queries are searchable again.** Chunk FTS built
+  its MATCH expressions by joining raw tokens with AND/OR, so a query
+  containing an uppercase FTS5 keyword ("RAM AND ROM 区别", "NOT …")
+  produced `RAM AND AND AND ROM` — a syntax error in both the AND and OR
+  channels, logged and swallowed, ending in a silent "not found" for
+  documents containing the exact terms. Every token is now quoted as an
+  FTS5 phrase (`"RAM" AND "AND" AND "ROM"`), the same pattern the agentic
+  retriever already used, so reserved words match as literal text and
+  ordinary-token matching is unchanged.
+
 - **The streaming query endpoint is rate limited.** `/api/v1/query/stream`
   runs the same retrieval pipeline as `/query` under the same global query
   lock, but the rate-limit path list only named `/query`, so the stream
