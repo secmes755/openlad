@@ -11,7 +11,7 @@ from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models.client import EmbeddingError, get_model_client
 from .router import IntentType, QueryPlan
-from .truncation import mark_truncated
+from .truncation import MARKER, mark_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -1548,11 +1548,15 @@ class SegmentMerger:
                 total_len = len(section) + len(content)
                 if current_chars + total_len > max_context_chars or doc_chars_used + total_len > max_per_doc:
                     if current_chars + total_len <= max_context_chars and doc_chars_used < max_per_doc:
-                        remaining = min(max_per_doc - doc_chars_used - len(section) - 10,
-                                       max_context_chars - current_chars - len(section) - 10)
+                        # Reserve room for the canonical truncation marker so
+                        # the cut stays within both budgets — the confidence
+                        # signal can only downgrade what it can see (#20).
+                        marker_reserve = len(MARKER) + 1
+                        remaining = min(max_per_doc - doc_chars_used - len(section) - marker_reserve,
+                                       max_context_chars - current_chars - len(section) - marker_reserve)
                         if remaining > 100:
                             merged_parts.append(section)
-                            merged_parts.append(content[:remaining] + "...")
+                            merged_parts.append(mark_truncated(content[:remaining]))
                             included_pages.append(result.page_num)
                     break
                 merged_parts.append(section)
@@ -1598,6 +1602,6 @@ class SegmentMerger:
         result = "".join(merged_parts)
         # FIX: Final safety truncation to ensure returned context does not exceed max_context_chars
         if len(result) > max_context_chars:
-            result = result[:max_context_chars]
             logger.warning(f"[MERGER] final truncation: {len(result)} -> {max_context_chars}")
+            result = mark_truncated(result[:max_context_chars])
         return result, sources

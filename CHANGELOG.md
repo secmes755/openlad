@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Merger context cuts now carry the canonical truncation marker.**
+  `SegmentMerger.merge` had two cuts that bypassed `mark_truncated()`: the
+  per-document budget cut appended a bare "..." and the final safety
+  truncation appended nothing. Neither is detectable by `is_truncated()`, so
+  the confidence signal could report "high" for answers synthesized from
+  cut-short context. Both cuts now go through `mark_truncated()`, and the
+  per-doc budget computation reserves room for the marker so the cut stays
+  within budget. (The final safety truncation is unreachable through the
+  current budget arithmetic; it is fixed defensively.)
+
 - **Candidate-page rendering no longer materializes the whole PDF.**
   `_render_pdf_pages` called `convert_from_path` without page bounds and the
   caller discarded every non-candidate image, so ingesting a large PDF with
