@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Candidate-page rendering no longer materializes the whole PDF.**
+  `_render_pdf_pages` called `convert_from_path` without page bounds and the
+  caller discarded every non-candidate image, so ingesting a large PDF with
+  a few visual pages rendered hundreds of pages into memory at once (OOM on
+  big datasheets). The renderer now takes the candidate page list, batches
+  contiguous pages into one pdftoppm invocation per run, and retries a failed
+  multi-page run page-by-page so one corrupt page cannot silently drop its
+  healthy neighbors. `pages=None` keeps whole-document rendering.
+
 - **Excel/PPT parse failures no longer ship as empty verified documents.**
   `_parse_excel` and `_parse_ppt` logged parse exceptions and returned the
   document as-is — often with zero pages/slides — which the builder then

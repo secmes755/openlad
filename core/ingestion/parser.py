@@ -48,7 +48,7 @@ except ImportError:
     HAS_DOCX = False
 
 try:
-    from pdf2image import convert_from_path
+    import pdf2image  # noqa: F401 - availability probe; call sites import locally
     HAS_PDF2IMAGE = True
 except ImportError:
     HAS_PDF2IMAGE = False
@@ -437,7 +437,10 @@ class DocumentParser:
         # Pass 2: VLM classification only for candidate pages (with images + minimal text)
         page_images = {}
         if vlm_candidate_pages:
-            page_images = self._render_pdf_pages(str(path), dpi=150 if ocr_mode else 72)
+            page_images = self._render_pdf_pages(
+                str(path), dpi=150 if ocr_mode else 72,
+                pages=vlm_candidate_pages,
+            )
             candidate_images = {
                 pn: page_images[pn] for pn in vlm_candidate_pages if pn in page_images
             }
@@ -773,19 +776,68 @@ class DocumentParser:
 
         return None
 
-    def _render_pdf_pages(self, pdf_path: str, dpi: int = 100) -> dict[int, Any]:
-        """Render PDF pages to PIL Images via pdf2image"""
-        page_images = {}
-        if HAS_PDF2IMAGE:
-            try:
-                images = convert_from_path(pdf_path, dpi=dpi)
-                for i, img in enumerate(images, 1):
-                    page_images[i] = img
-                logger.info(f"pdf2image rendered {len(images)} pages")
-                return page_images
-            except Exception as e:
-                logger.warning(f"pdf2image failed: {e}")
+    def _render_pdf_pages(self, pdf_path: str, dpi: int = 100,
+                          pages: list | None = None) -> dict[int, Any]:
+        """Render PDF pages to PIL Images via pdf2image.
 
+        When ``pages`` is given, only those pages are rendered: contiguous
+        runs are batched into one pdftoppm invocation per run, so memory is
+        bounded by the largest run instead of the whole document (BUG-9 —
+        rendering a 500-page datasheet to classify 3 visual pages OOMs the
+        ingestion worker). ``pages=None`` renders the whole document.
+        """
+        page_images: dict[int, Any] = {}
+        if not HAS_PDF2IMAGE:
+            return page_images
+        try:
+            from pdf2image import convert_from_path
+        except ImportError:
+            return page_images
+        if pages is None:
+            runs = [(None, None)]  # whole document
+        else:
+            wanted = sorted(set(pages))
+            if not wanted:
+                return page_images
+            runs = []
+            start = prev = wanted[0]
+            for pn in wanted[1:]:
+                if pn == prev + 1:
+                    prev = pn
+                else:
+                    runs.append((start, prev))
+                    start = prev = pn
+            runs.append((start, prev))
+        for first, last in runs:
+            try:
+                kwargs: dict[str, Any] = {"dpi": dpi}
+                if first is not None:
+                    kwargs["first_page"] = first
+                    kwargs["last_page"] = last
+                images = convert_from_path(pdf_path, **kwargs)
+                base = first if first is not None else 1
+                for i, img in enumerate(images):
+                    page_images[base + i] = img
+            except Exception as e:
+                # A multi-page run failing wholesale must not silently lose
+                # its healthy pages: retry page-by-page so only the truly
+                # broken pages are dropped.
+                if first is None or last is None or first == last:
+                    logger.warning(f"pdf2image failed (pages {first}-{last}): {e}")
+                    continue
+                logger.warning(
+                    f"pdf2image run {first}-{last} failed ({e}); retrying per page"
+                )
+                for pn in range(first, last + 1):
+                    try:
+                        imgs = convert_from_path(
+                            pdf_path, dpi=dpi, first_page=pn, last_page=pn
+                        )
+                        if imgs:
+                            page_images[pn] = imgs[0]
+                    except Exception as e2:
+                        logger.warning(f"pdf2image failed (page {pn}): {e2}")
+        logger.info(f"pdf2image rendered {len(page_images)} pages")
         return page_images
 
     def _analyze_pdf_page_with_vlm(self, page_image, page_num: int, page_text: str = "") -> str:
