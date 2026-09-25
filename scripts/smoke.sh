@@ -55,7 +55,7 @@ while IFS= read -r DOC; do
 
   echo "  [upload] check existing / upload ..."
   EXISTING=$(curl -fsS -m 30 "${AUTH[@]}" "$BASE_URL/api/v1/documents" | \
-    python3 -c "import json,sys; docs=json.load(sys.stdin).get('documents',[]); print(next((d['id'] for d in docs if d.get('filename','').endswith('$DOCNAME')), ''))")
+    python3 -c "import json,sys; docs=json.load(sys.stdin).get('documents',[]); print(next((d['id'] for d in docs if d.get('filename','').endswith(sys.argv[1])), ''))" "$DOCNAME")
   if [ -n "$EXISTING" ]; then
     echo "  already ingested (id=${EXISTING:0:8}), skipping upload"
   else
