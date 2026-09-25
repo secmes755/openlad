@@ -690,6 +690,10 @@ class DocumentParser:
                 # indexing for exactly the documents that need this fallback.
                 page_texts = self._extract_pages_with_pymupdf(str(path))
                 if page_texts:
+                    doc.metadata.setdefault("parse_warnings", []).append(
+                        f"primary PDF extraction failed ({e}); recovered "
+                        f"{len(page_texts)} pages via MuPDF fallback"
+                    )
                     for i, text in enumerate(page_texts, start=1):
                         doc.pages.append(ParsedPage(
                             page_num=i,
@@ -697,7 +701,19 @@ class DocumentParser:
                             content_dict={"pdf_text": text, "fallback": "pymupdf"},
                         ))
                 else:
+                    doc.metadata.setdefault("parse_warnings", []).append(
+                        f"PDF parsing failed entirely: {e}"
+                    )
                     doc.pages.append(ParsedPage(page_num=1, raw_text=f"PDF parsing failed: {e}"))
+            else:
+                # Mid-document crash: the pages completed so far are real
+                # content, but everything after the failure point is missing.
+                # Without a warning the document would ship as "verified"
+                # while silently truncated.
+                doc.metadata.setdefault("parse_warnings", []).append(
+                    f"PDF parsing aborted: {len(doc.pages)} of "
+                    f"{total_pages or '?'} pages extracted ({e})"
+                )
 
         # Page-level visual transcription issues (OCR mode) — surfaced to the
         # builder so they become document-level ingest_warnings / degraded

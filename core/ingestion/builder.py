@@ -323,6 +323,7 @@ class DocumentIndexBuilder:
         doc_status = "degraded" if all_warnings else "verified"
         doc_metadata = dict(parsed_doc.metadata or {})
         doc_metadata.pop("visual_transcription_warnings", None)
+        doc_metadata.pop("parse_warnings", None)
         if all_warnings:
             doc_metadata["ingest_warnings"] = all_warnings
         # Observability: why this document did or did not get pack-specific
@@ -2078,13 +2079,17 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         unreadable content in exactly the same sense."""
         metadata = parsed_metadata or {}
         visual = list(metadata.get("visual_transcription_warnings") or [])
+        # Structural parse failures (mid-document PDF crash, Excel/PPT parse
+        # failure, MuPDF fallback recovery): the document is present but
+        # incomplete, which is lost content in exactly the same sense.
+        parse_warnings = list(metadata.get("parse_warnings") or [])
         # Text-integrity losses: a rotated repeated watermark that was detected
         # but could not be removed leaves the page's tokens shredded, which is
         # unreadable content in exactly the same sense -- and, unlike a missing
         # page, it is invisible in the stored text.
         text_integrity = list(metadata.get("text_integrity_warnings") or [])
         return (list(page_loss_warnings or []) + list(embed_warnings or []) + visual
-                + text_integrity + list(spec_fact_warnings or [])
+                + parse_warnings + text_integrity + list(spec_fact_warnings or [])
                 + list(declaration_warnings or []))
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:

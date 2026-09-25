@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **PDF parse failures no longer ship silently as verified.** The outer
+  exception handler in `_parse_pdf` returned whatever it had — partial pages
+  after a mid-document crash, MuPDF-fallback pages, or a single placeholder
+  page — without any signal, so the builder marked the document verified
+  while content was missing. Parser failures now record a `parse_warnings`
+  metadata entry (new general channel, consumed by
+  `_collect_ingest_warnings` alongside the existing page-loss / embedding /
+  visual / text-integrity channels), so partial, fallback-recovered, and
+  placeholder documents are stored as degraded with the failure description
+  visible to retrieval-time source flagging. Regression tests simulate a
+  mid-loop crash (page 2 of 3), total corruption with and without MuPDF
+  fallback, and the builder wiring.
+
 - **Wholesale embedding failure no longer marks the document verified.**
   `_build_embeddings` caught any exception escaping the per-batch accounting
   (page fetch, chunking, unclassified client errors) and merely logged it,
