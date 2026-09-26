@@ -1500,8 +1500,12 @@ class SegmentMerger:
             doc_title = doc.get("title", doc_results[0].filename) if doc else doc_results[0].filename
             doc_degraded = bool(doc and doc.get("status") == "degraded")
             doc_warnings = []
-            if doc_degraded:
-                doc_warnings = (doc.get("metadata") or {}).get("ingest_warnings") or []
+            if doc_degraded and doc:
+                metadata = (doc.get("metadata") or {})
+                categories = metadata.get("ingest_warning_categories") or {}
+                # Prefer the categorised channel; legacy documents only carry the
+                # flat content-warning list.
+                doc_warnings = categories.get("content") or metadata.get("ingest_warnings") or []
             doc_header = f"\n\n===== Document: {doc_title} =====\n"
             if doc_degraded:
                 detail = "; ".join(doc_warnings) if doc_warnings else "some content failed to ingest"

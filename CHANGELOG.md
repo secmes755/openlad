@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Declaration/config mismatches no longer mark a document degraded.**
+  `build_index` merged `declared_pack_warnings` (e.g. a declared industry
+  with no installed pack) into `ingest_warnings`, so any non-empty routing
+  notice flipped the document to `degraded` and the retrieval side narrated
+  it as missing content. Ingest warnings are now categorised: only
+  content-affecting losses (page loss, OCR/transcription failure, parse
+  loss, embedding loss, fact-index skips) degrade a document; declaration
+  warnings are stored separately under
+  `metadata.classification.declaration_warnings` and
+  `ingest_warning_categories.config`, and the SegmentMerger reads only the
+  content category when flagging incomplete sources.
+
 - **Concurrent ingests for one tenant now serialize.** The builder is an
   app-state singleton with no serialization, and ingestion mutates shared
   per-ingest state — two uploads for the same tenant raced each other's

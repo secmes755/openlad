@@ -366,20 +366,19 @@ class DocumentIndexBuilder:
         #   3. filename-derived title (existing behavior, unchanged fallback)
         doc_title = self._derive_title(parsed_doc.filename, doc_summary, classification, title)
         logger.info(f"[TITLE] doc={doc_id[:8]} final_title={doc_title!r}")
-        # verified = ingested with zero anomalies; degraded = pipeline
-        # completed but some chunks were lost (details in ingest_warnings,
-        # consumed by retrieval so answers can flag incomplete sources).
-        # Page-level visual transcription failures (OCR/VLM) also degrade:
-        # a scanned page that produced no text is missing content.
-        all_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata,
-                                                     page_loss_warnings, spec_fact_warnings,
-                                                     declared_pack_warnings)
-        doc_status = "degraded" if all_warnings else "verified"
+        # verified = ingested with zero *content* anomalies; degraded = the
+        # pipeline completed but indexable content was lost (details in
+        # ingest_warnings, consumed by retrieval so answers can flag incomplete
+        # sources). Declaration/config warnings are observability only: they must
+        # not flip a document with complete content to degraded.
+        content_warnings = self._collect_ingest_warnings(embed_warnings, parsed_doc.metadata,
+                                                         page_loss_warnings, spec_fact_warnings)
+        config_warnings = list(declared_pack_warnings or [])
+        doc_status, warning_metadata = self._ingest_warning_metadata(content_warnings, config_warnings)
         doc_metadata = dict(parsed_doc.metadata or {})
         doc_metadata.pop("visual_transcription_warnings", None)
         doc_metadata.pop("parse_warnings", None)
-        if all_warnings:
-            doc_metadata["ingest_warnings"] = all_warnings
+        doc_metadata.update(warning_metadata)
         # Observability: why this document did or did not get pack-specific
         # processing, kept next to the stored labels so a wrong or absent
         # routing decision stays diagnosable after the fact.
@@ -390,6 +389,8 @@ class DocumentIndexBuilder:
             "extraction_pack": (extraction_plugin.manifest.id
                                 if extraction_plugin is not None else None),
         }
+        if config_warnings:
+            doc_metadata["classification"]["declaration_warnings"] = config_warnings
         metadata_db.save_document(
             doc_id=doc_id,
             filename=parsed_doc.filename,
@@ -2120,18 +2121,43 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         return hashlib.md5(content.encode()).hexdigest()
 
     @staticmethod
+    def _ingest_warning_metadata(content_warnings: list | None,
+                                 config_warnings: list | None) -> tuple[str, dict]:
+        """Build the document status + warning metadata from categorised warnings.
+
+        Only content warnings degrade a document; config/declaration warnings are
+        kept in a separate category so retrieval never narrates a routing notice
+        as missing content.
+        """
+        content = list(content_warnings or [])
+        config = list(config_warnings or [])
+        status = "degraded" if content else "verified"
+        metadata: dict = {}
+        if content:
+            metadata["ingest_warnings"] = content
+        categories = {}
+        if content:
+            categories["content"] = content
+        if config:
+            categories["config"] = config
+        if categories:
+            metadata["ingest_warning_categories"] = categories
+        return status, metadata
+
+    @staticmethod
     def _collect_ingest_warnings(embed_warnings: list | None, parsed_metadata: dict | None,
                                  page_loss_warnings: list | None = None,
-                                 spec_fact_warnings: list | None = None,
-                                 declaration_warnings: list | None = None) -> list:
-        """Merge page losses, embedding-loss warnings and page-level visual
-        transcription warnings (OCR/VLM) reported by the parser, plus anything
-        the fact index had to skip, plus a caller declaration that could not be
-        honoured. Any non-empty result marks the document
-        degraded so retrieval can flag incomplete sources; a page missing from the
-        index is lost content in exactly the same sense as a scanned page that
-        produced no text, and a page the fact extractor could not read is
-        unreadable content in exactly the same sense."""
+                                 spec_fact_warnings: list | None = None) -> list:
+        """Merge *content-affecting* ingest warnings.
+
+        A non-empty result marks the document degraded so retrieval can flag an
+        incomplete source: page losses, embedding losses, page-level visual
+        transcription failures (OCR/VLM), structural parse failures, text-integrity
+        losses, and fact-index skips. Declaration/config mismatches are excluded
+        on purpose — they describe routing observability, not missing content, and
+        are stored separately under ``metadata.classification`` /
+        ``ingest_warning_categories``.
+        """
         metadata = parsed_metadata or {}
         visual = list(metadata.get("visual_transcription_warnings") or [])
         # Structural parse failures (mid-document PDF crash, Excel/PPT parse
@@ -2144,8 +2170,7 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         # page, it is invisible in the stored text.
         text_integrity = list(metadata.get("text_integrity_warnings") or [])
         return (list(page_loss_warnings or []) + list(embed_warnings or []) + visual
-                + parse_warnings + text_integrity + list(spec_fact_warnings or [])
-                + list(declaration_warnings or []))
+                + parse_warnings + text_integrity + list(spec_fact_warnings or []))
 
     def _determine_text_source(self, preprocessed_pages: list) -> str:
         sources = [p.text_source for p in preprocessed_pages]
