@@ -26,7 +26,7 @@ from .classifier import DocumentClassifier
 from .layout import ChartAnalyzer, FormulaRecognizer, LayoutAnalyzer
 from .parser import DocumentParser, ParsedDocument, ParsedPage
 from .preprocessing import DocumentPreprocessor, PagePreprocessResult
-from .text_quality import unmapped_glyph_ratio
+from .text_quality import strip_unmapped_glyphs, unmapped_glyph_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +55,25 @@ def _may_route_by_category(classification: dict, declared_pack_warnings: list[st
     return confidence >= CLASSIFICATION_CONFIDENCE_FLOOR
 
 
-def _unreadable_text_layer(text: str) -> bool:
-    """Is this page's text layer font glyph codes instead of words?
+def _strip_unmapped_glyph_layer(text: str) -> tuple[str, bool, float]:
+    """Remove unmapped glyph codes and decide whether anything readable remains.
 
     ``(cid:NNN)`` is what a reader shows for a glyph with no ToUnicode mapping —
-    ordinary ASCII, so the garbled-character checks cannot see it. The threshold
-    is the one the fact extractor already uses, so a page is unreadable in
-    exactly one sense across ingestion.
+    ordinary ASCII, so the garbled-character checks cannot see it. Annual-report
+    pages often mix dense glyph-code figure labels with real prose, so the page
+    is cleaned first; it is dropped only when the readable remainder is too small
+    to index. Returns ``(text_to_index, unreadable, glyph_ratio)``.
     """
     ratio = unmapped_glyph_ratio(text)
-    return ratio >= settings.TEXT_QUALITY_CONFIG["unmapped_glyph_page_threshold"]
+    threshold = settings.TEXT_QUALITY_CONFIG["unmapped_glyph_page_threshold"]
+    if ratio < threshold:
+        return text, False, ratio
+    stripped = strip_unmapped_glyphs(text)
+    remaining = len("".join(stripped.split()))
+    min_remaining = settings.TEXT_QUALITY_CONFIG.get("unmapped_glyph_min_remaining_chars", 50)
+    if remaining < min_remaining:
+        return "", True, ratio
+    return stripped, False, ratio
 
 
 class DocumentIndexBuilder:
@@ -617,17 +626,18 @@ class DocumentIndexBuilder:
             page_text = self._sanitize_page_text(page_text)
             original_page_text = page_text
 
-            # A page whose text layer holds font glyph codes instead of words
-            # ((cid:NNN), from a font with no ToUnicode map) has nothing readable
-            # to index: storing it would put garbage into the page text, the chunk
-            # FTS and the vector index at once, and because glyph codes are valid
-            # ASCII no character-shape check notices. Derive and store no text for
-            # such a page, and name it in the ingest warnings, so the gap is
-            # visible instead of silently polluting retrieval. The fact extractor
-            # applies the same rule — this is the same door, one stage earlier.
-            text_layer_unreadable = _unreadable_text_layer(page_text)
-            if text_layer_unreadable:
-                page_text = ""
+            # A text layer can mix real prose with font glyph codes ((cid:NNN),
+            # from a font with no ToUnicode map). Strip only the glyph tokens and
+            # keep the readable remainder; drop the page only when the remainder
+            # is too small to index. This keeps figure-label debris out of FTS /
+            # vectors without deleting the body text around it.
+            page_text, text_layer_unreadable, glyph_ratio = _strip_unmapped_glyph_layer(page_text)
+            glyph_codes_stripped = page_text != original_page_text
+            if glyph_codes_stripped and not text_layer_unreadable:
+                logger.info(
+                    "Page %s: stripped unmapped glyph codes (ratio=%.2f), kept %d readable chars",
+                    page.page_num, glyph_ratio, len("".join(page_text.split()))
+                )
 
             page_summary = ("" if text_layer_unreadable
                             else self._generate_page_summary(page_text, page.page_num))
@@ -642,16 +652,20 @@ class DocumentIndexBuilder:
 
             # parser.py's page_class (CHART/IMAGE/TEXT/BLANK) is the authoritative
             # page type, so use it to override the layout analyzer's page_type
-            # when available.
+            # when available. A glyph-only text layer is not a blank page: the
+            # page exists, its text layer is unreadable.
             page_class = getattr(page, 'content_dict', {}).get('page_class')
             if page_class == 'BLANK':
                 layout_result.page_type = 'blank'
+            elif text_layer_unreadable:
+                layout_result.page_type = 'unreadable_text_layer'
 
             # Semantic-vision enrichment (formula->LaTeX, chart-region
             # description) runs on the MAIN LLM and is off by default
             # (text-only main LLM); OPENLAD_CHART_ANALYSIS=1 enables it on
             # deployments whose main LLM carries vision (mmproj).
-            semantic_vision = page_class != 'BLANK' and settings.CHART_CONFIG.get("enabled", False)
+            semantic_vision = (page_class != 'BLANK' and not text_layer_unreadable
+                               and settings.CHART_CONFIG.get("enabled", False))
 
             formulas = self._extract_formulas(layout_result, doc_id) if semantic_vision else []
 
@@ -677,6 +691,8 @@ class DocumentIndexBuilder:
                     logger.warning(f"Chart analysis failed for page {page.page_num}: {e}")
 
             content_json = layout_result.to_dict()
+            content_json["unmapped_glyph_ratio"] = round(glyph_ratio, 4)
+            content_json["unmapped_glyphs_stripped"] = glyph_codes_stripped
             content_json["formulas"] = formulas
             content_json["charts"] = [c.to_dict() for c in charts]
 
@@ -821,14 +837,15 @@ class DocumentIndexBuilder:
                 f"{len(failed_pages)} of {len(parsed_doc.pages)} page(s) failed analysis and are "
                 f"missing from the index: {sorted(failed_pages)}"
             )
-        # A page whose text layer is glyph codes holds no indexable text: it is
-        # content missing from the index in the same sense as a failed page, and
-        # naming it is what keeps the loss visible instead of silent.
+        # A page whose text layer still has no readable text after unmapped glyph
+        # codes are removed is content missing from the index in the same sense
+        # as a failed page; naming it keeps the loss visible instead of silent.
         if unreadable_pages:
+            min_remaining = settings.TEXT_QUALITY_CONFIG.get("unmapped_glyph_min_remaining_chars", 50)
             page_loss_warnings.append(
                 f"{len(unreadable_pages)} of {len(parsed_doc.pages)} page(s) have an unreadable "
-                f"text layer (unmapped font glyphs, no ToUnicode map) and hold no indexable "
-                f"text: {sorted(unreadable_pages)}"
+                f"text layer (unmapped font glyphs, no ToUnicode map; fewer than "
+                f"{min_remaining} readable characters remain after cleanup): {sorted(unreadable_pages)}"
             )
         return l2_results, page_loss_warnings
 

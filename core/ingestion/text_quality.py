@@ -30,3 +30,19 @@ def unmapped_glyph_ratio(text: str) -> float:
         return 0.0
     covered = sum(match.end() - match.start() for match in UNMAPPED_GLYPH_RE.finditer(text))
     return covered / len(text)
+
+
+def strip_unmapped_glyphs(text: str) -> str:
+    """Remove ``(cid:NNN)`` tokens while keeping the readable remainder.
+
+    The tokens come from embedded fonts without a ToUnicode map; on annual-report
+    pages they usually label vector figures while the body text around them is
+    perfectly good prose. Removing only the tokens preserves that prose. Lines
+    left empty by the removal are dropped so downstream chunking does not see
+    artificial blank runs.
+    """
+    if not text:
+        return ""
+    stripped = UNMAPPED_GLYPH_RE.sub("", text)
+    lines = [line.strip() for line in stripped.splitlines()]
+    return "\n".join(line for line in lines if line)

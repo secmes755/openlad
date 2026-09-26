@@ -1,11 +1,10 @@
-"""A page whose text layer is font glyph codes must not reach the index.
+"""Unmapped font glyph codes must not reach the index, but readable prose around
+them must be kept.
 
 ``(cid:NNN)`` is what a reader shows for a glyph with no ToUnicode mapping. It is
-ordinary ASCII, so the garbled-character checks see nothing wrong with it, and the
-page used to be stored as-is — its chunks then went into the FTS *and* the vector
-index. The fact extractor already skipped such pages, so facts stayed clean while
-retrieval was polluted. They are now dropped at the door and named in the ingest
-warnings, which is what keeps the loss visible instead of silent.
+ordinary ASCII, so the garbled-character checks see nothing wrong with it. The
+builder strips the glyph tokens; only when the readable remainder is too small to
+be a real page is the page dropped and named in the ingest warnings.
 """
 from types import SimpleNamespace
 
@@ -81,6 +80,23 @@ def test_unreadable_page_is_not_indexed_and_is_named(monkeypatch):
 
     assert any("unreadable text layer" in w and "[2]" in w for w in warnings), warnings
     assert ("degraded" if builder._collect_ingest_warnings([], {}, warnings) else "verified") == "degraded"
+
+
+def test_mixed_page_strips_glyph_codes_and_keeps_readable_text(monkeypatch):
+    """A glyph flood next to real prose is dirty text, not a lost page."""
+    builder, meta, summary_calls = _builder(monkeypatch)
+    mixed = GOOD_PAGE + "\n" + GLYPH_PAGE
+    pages = [SimpleNamespace(page_num=1, section_title="S", raw_text=mixed, content_dict={})]
+    preprocessed = [SimpleNamespace(raw_text=mixed, text_source="direct_extract",
+                                    ocr_results=[], ocr_confidence=None, page_image_path=None)]
+    parsed_doc = SimpleNamespace(filename="d.pdf", pages=pages)
+
+    _, warnings = builder._build_l2("doc-1", parsed_doc, preprocessed, "admin")
+
+    assert meta.saved[0]["raw_text"] == GOOD_PAGE.strip()
+    assert "(cid:" not in meta.saved[0]["raw_text"]
+    assert [page_num for page_num, _ in summary_calls] == [1]
+    assert warnings == []
 
 
 def test_prose_that_merely_mentions_a_glyph_code_keeps_its_text(monkeypatch):

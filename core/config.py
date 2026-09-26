@@ -567,10 +567,13 @@ TEXT_QUALITY_CONFIG = {
     "min_dictionary_hit_rate": 0.3,
     "enable_ocr_fallback": True,
     # Unmapped font glyphs (`(cid:NNN)`): valid ASCII, so the garbled-character
-    # checks above cannot see them. A page at or above the page threshold is not
-    # used for spec-fact extraction at all; a fact whose own source line is at or
-    # above the fact threshold is dropped even when its page is mostly fine.
+    # checks above cannot see them. At/above the page threshold the glyph tokens
+    # are stripped and the readable remainder is kept; only when fewer than
+    # `unmapped_glyph_min_remaining_chars` non-space characters survive is the
+    # page treated as unreadable. A fact whose own source line is at/above the
+    # fact threshold is dropped even when its page is mostly fine.
     "unmapped_glyph_page_threshold": 0.10,
+    "unmapped_glyph_min_remaining_chars": 50,
     "unmapped_glyph_fact_threshold": 0.30,
 }
 

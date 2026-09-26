@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mixed glyph/prose pages no longer lose their body text.** A page whose
+  text layer mixed real prose with dense unmapped font glyph codes
+  (`(cid:NNN)` — common in annual-report figure labels) crossed the page
+  glyph threshold and was dropped whole, deleting indexable body text from
+  FTS and the vector index at once. The page text is now cleaned first:
+  glyph tokens are stripped and the readable remainder is kept; a page is
+  treated as unreadable only when fewer than
+  `unmapped_glyph_min_remaining_chars` (default 50) non-space characters
+  survive. Per-page observability lands in
+  `content_json.unmapped_glyph_ratio` / `unmapped_glyphs_stripped`, and
+  pages that still end up unreadable are named in ingest warnings as
+  before.
+
 - **Declaration/config mismatches no longer mark a document degraded.**
   `build_index` merged `declared_pack_warnings` (e.g. a declared industry
   with no installed pack) into `ingest_warnings`, so any non-empty routing
