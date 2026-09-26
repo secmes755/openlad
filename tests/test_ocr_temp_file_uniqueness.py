@@ -11,11 +11,11 @@ Fix: give each pipeline instance's temp files a unique suffix.
 import threading
 
 import numpy as np
-import pytest
 from PIL import Image
 
 from core.ingestion.preprocessing import (
-    DocumentPreprocessor, PagePreprocessResult,
+    DocumentPreprocessor,
+    PagePreprocessResult,
 )
 
 
@@ -75,7 +75,10 @@ def test_concurrent_same_page_temp_paths_do_not_collide(tmp_path):
 
     t1 = threading.Thread(target=run, args=(pp1,))
     t2 = threading.Thread(target=run, args=(pp2,))
-    t1.start(); t2.start(); t1.join(timeout=30); t2.join(timeout=30)
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
 
     assert not errors
     temp_paths = [p for kind, p in recorded if kind == "temp"]
@@ -90,10 +93,10 @@ def test_ocr_temp_files_cleaned_up(tmp_path):
         def correct(self, path):
             recorded.append(str(path))
             return np.zeros((4, 4, 3), dtype=np.uint8), {}
-    class O:
+    class StubOCR:
         def recognize(self, path, page_num=None):
             return "text", [], {}
-    pp = _make_preprocessor(tmp_path, C(), O())
+    pp = _make_preprocessor(tmp_path, C(), StubOCR())
     result = pp._ocr_pipeline(Image.new("RGB", (8, 8)), 5, PagePreprocessResult())
     assert result.raw_text == "text"
     leftovers = [p for p in tmp_path.iterdir()

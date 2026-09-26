@@ -12,8 +12,6 @@ keeping cross-tenant parallelism.
 import threading
 import time
 
-import pytest
-
 from core.ingestion.builder import DocumentIndexBuilder
 
 
@@ -89,7 +87,10 @@ def test_same_tenant_ingests_serialize(tmp_path, monkeypatch):
                           args=(builder, tmp_path, "a.pdf", "tenantA", errors))
     t2 = threading.Thread(target=_run_ingest,
                           args=(builder, tmp_path, "b.pdf", "tenantA", errors))
-    t1.start(); t2.start(); t1.join(timeout=30); t2.join(timeout=30)
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
 
     assert not errors
     assert len(intervals) == 2
@@ -106,7 +107,10 @@ def test_different_tenants_still_parallel(tmp_path, monkeypatch):
                           args=(builder, tmp_path, "a.pdf", "tenantA", errors))
     t2 = threading.Thread(target=_run_ingest,
                           args=(builder, tmp_path, "b.pdf", "tenantB", errors))
-    t1.start(); t2.start(); t1.join(timeout=30); t2.join(timeout=30)
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
 
     assert not errors
     assert len(intervals) == 2
