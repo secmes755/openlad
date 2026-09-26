@@ -434,9 +434,15 @@ class DocumentParser:
         candidate_set = set(vlm_candidate_pages)
         visual_warnings: list[str] = []
 
-        # Pass 2: VLM classification only for candidate pages (with images + minimal text)
+        # Pass 2: VLM classification only for candidate pages (with images + minimal text).
+        # Classification calls the MAIN LLM with image input; on the reference
+        # deployment the main LLM is text-only, so those calls can only fail and
+        # every candidate silently becomes TEXT. Run it only when semantic vision
+        # is explicitly enabled (OPENLAD_CHART_ANALYSIS=1) or when the dedicated
+        # OCR endpoint mode will transcribe candidates directly.
+        vision_classification_enabled = bool(settings.CHART_CONFIG.get("enabled", False))
         page_images = {}
-        if vlm_candidate_pages:
+        if vlm_candidate_pages and (ocr_mode or vision_classification_enabled):
             page_images = self._render_pdf_pages(
                 str(path), dpi=150 if ocr_mode else 72,
                 pages=vlm_candidate_pages,
@@ -478,6 +484,14 @@ class DocumentParser:
                 # No renderable candidate pages -> all TEXT
                 for pn in vlm_candidate_pages:
                     page_classes[pn] = "TEXT"
+        elif vlm_candidate_pages:
+            logger.info(
+                "VLM classification skipped: main-LLM vision is disabled and no "
+                f"dedicated OCR endpoint is configured; treating {len(vlm_candidate_pages)} "
+                f"candidate pages (of {total_pages} total) as TEXT"
+            )
+            for pn in vlm_candidate_pages:
+                page_classes[pn] = "TEXT"
         else:
             logger.info(f"VLM classification: 0 candidate pages (of {total_pages} total) -> all TEXT")
 

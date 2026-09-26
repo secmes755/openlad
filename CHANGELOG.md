@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Vision-dependent ingestion steps are gated on actual capability.** PDF
+  page VLM classification ran whenever a page had images and little text,
+  even with `CHART_CONFIG.enabled=false` and a text-only main LLM —
+  rendering page bitmaps and issuing image-input calls that could only
+  fail. Candidate pages are now kept as TEXT unless chart/semantic-vision
+  is enabled or OCR needs the classification. OCR engine selection now
+  probes real capability: `auto` picks tesseract only when both
+  `pytesseract` and the `tesseract` binary exist, an explicit `tesseract`
+  without the binary falls back to VLM, and preprocessing fails fast
+  (keeping the direct text) when no OCR engine is available instead of
+  running image correction first.
+
 - **Mixed glyph/prose pages no longer lose their body text.** A page whose
   text layer mixed real prose with dense unmapped font glyph codes
   (`(cid:NNN)` — common in annual-report figure labels) crossed the page

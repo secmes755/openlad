@@ -11,7 +11,7 @@ from PIL import Image
 
 from ...config import settings
 from .image_corrector import ImageCorrector
-from .ocr_engine import OCREngine, TextQualityChecker
+from .ocr_engine import OCREngine, TextQualityChecker, tesseract_available
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +83,23 @@ class DocumentPreprocessor:
         result.page_image_path = str(image_path)
 
         try:
+            needs_ocr = force_ocr or not direct_text
+            if needs_ocr and not tesseract_available() and not settings.CHART_CONFIG.get("enabled", False):
+                # No local OCR binary and no vision-capable main LLM: fail fast
+                # instead of spending image-correction time on a page whose OCR
+                # call can only fail downstream.
+                logger.warning(
+                    "Page %s: OCR needed but no OCR engine is available "
+                    "(tesseract binary missing, main-LLM vision disabled); keeping direct text",
+                    page_num,
+                )
+                result.raw_text = direct_text or ""
+                result.text_source = "direct_extract"
+                result.quality_metrics["ocr_unavailable"] = True
+                return result
+
             # Determine processing path
-            if force_ocr or not direct_text:
+            if needs_ocr:
                 # Force OCR or no direct text
                 logger.info(f"Page {page_num}: Using OCR pipeline")
                 result = self._ocr_pipeline(page_image, page_num, result)

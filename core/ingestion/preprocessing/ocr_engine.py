@@ -6,6 +6,7 @@ Supports: Tesseract / Multimodal LLM (image description)
 import base64
 import gc
 import logging
+import shutil
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
@@ -30,6 +31,16 @@ try:
     HAS_TESSERACT = True
 except ImportError:
     HAS_TESSERACT = False
+
+# pytesseract being importable does not mean the native binary exists: the
+# import succeeds in environments where ``tesseract`` is absent, and the first
+# failure then surfaces only after pages have been rendered and preprocessed.
+TESSERACT_BINARY_AVAILABLE = shutil.which("tesseract") is not None
+
+
+def tesseract_available() -> bool:
+    """True only when both the Python wrapper and the native binary exist."""
+    return HAS_TESSERACT and TESSERACT_BINARY_AVAILABLE
 
 
 class OCRResult:
@@ -112,34 +123,28 @@ class OCREngine:
     def _select_engine(self) -> str:
         """Select OCR engine - V4: added VLM fallback"""
         if self.engine_name == "auto":
-            # Prefer Tesseract for Chinese-heavy content, fall back to VLM
+            # Prefer Tesseract for Chinese-heavy content when the native binary
+            # actually exists; otherwise go straight to the VLM fallback instead
+            # of discovering the missing binary after image preprocessing.
             if self.language in ("zh", "zh_en", "ja", "ko"):
-                if HAS_TESSERACT:
-                    return "tesseract"
-                else:
-                    return "vlm"
-            else:
-                if HAS_TESSERACT:
-                    return "tesseract"
-                else:
-                    return "vlm"
-        elif self.engine_name == "tesseract" and HAS_TESSERACT:
+                return "tesseract" if tesseract_available() else "vlm"
+            return "tesseract" if tesseract_available() else "vlm"
+        elif self.engine_name == "tesseract" and tesseract_available():
             return "tesseract"
         elif self.engine_name == "vlm":
             return "vlm"
 
         # Fallback: try all available engines
-        if HAS_TESSERACT:
+        if tesseract_available():
             return "tesseract"
-        else:
-            return "vlm"
+        return "vlm"
 
     def _recognize_tesseract(self, image_path: str, page_num: int) -> tuple[str, list[OCRResult], dict]:
         """
         Recognize using Tesseract - V4: added confidence filtering
         """
-        if not HAS_TESSERACT:
-            return "", [], {"error": "Tesseract not available"}
+        if not tesseract_available():
+            return "", [], {"error": "Tesseract binary not available"}
 
         try:
             img = Image.open(image_path)

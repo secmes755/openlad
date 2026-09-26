@@ -476,11 +476,11 @@ FORMULA_CONFIG = {
 # Chart / Semantic-Vision Analysis Configuration
 # =============================================================================
 # Semantic vision enrichment (chart-region description, PDF-page VLM
-# analysis, image description) runs on the MAIN LLM and therefore requires
-# a vision-capable main LLM (mmproj loaded). The reference deployment has a
-# text-only main LLM and a dedicated OCR endpoint for transcription, so
-# these semantic features are OFF by default. Deployments whose main LLM
-# carries vision enable them explicitly:
+# analysis, image description) and VLM page classification run on the MAIN LLM
+# and therefore require a vision-capable main LLM (mmproj loaded). The reference
+# deployment has a text-only main LLM and a dedicated OCR endpoint for
+# transcription, so these semantic features are OFF by default. Deployments whose
+# main LLM carries vision enable them explicitly:
 #   OPENLAD_CHART_ANALYSIS=1        chart-region semantic description
 #   OPENLAD_IMAGE_DESCRIPTION=1     PDF-page image description (non-OCR mode)
 # Accepts 1/on/true (enable) or 0/off/false/no/empty (disable).
