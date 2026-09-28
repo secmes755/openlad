@@ -552,6 +552,13 @@ PDF_WATERMARK_CONFIG = {
     # groups rendered at or below alpha_signal_threshold get the boost.
     "alpha_signal_threshold": 0.8,
     "alpha_score_boost": 0.2,
+    # An enclosing /Artifact <</Subtype /Watermark>> marked-content block is
+    # the producer declaring the watermark. It always boosts the score;
+    # artifact_exempts_rotation additionally lets such a declaration waive
+    # the rotation requirement (off by default: horizontal repeated text
+    # stays with the line-level sanitizer until evidence says otherwise).
+    "artifact_score_boost": 0.3,
+    "artifact_exempts_rotation": False,
     # A single group larger than this is never considered a watermark.
     "max_block_bytes": 4096,
     # Within one signature, text volume may vary (a watermark drawn twice inside

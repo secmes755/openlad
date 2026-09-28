@@ -25,7 +25,9 @@ Purely geometric, with no document-, vendor- or language-specific patterns:
   fill colour, and again if its own text repeats inside the block;
 * soft signals only ever raise that score -- they can never trigger removal on
   their own: low alpha from the page's ExtGState (``/ca``/``/CA``) marks the
-  semi-transparent rendering typical of watermarks;
+  semi-transparent rendering typical of watermarks, and an enclosing
+  ``/Artifact <</Subtype /Watermark>>`` marked-content block is the producer
+  declaring the watermark outright;
 * groups are grouped by a coarse signature (rounded angle, coarse position);
   a signature present on most pages of the
   document, at a consistent angle *and* position, is a watermark.
@@ -230,6 +232,7 @@ def _extract_text_groups(operations, gs_alpha: dict | None = None) -> list[dict]
     font = "none"
     brightness: float | None = None
     alpha = 1.0
+    marked_stack: list[bool] = []  # BDC/BMC nesting; True = declared watermark
 
     current: dict | None = None
 
@@ -254,6 +257,7 @@ def _extract_text_groups(operations, gs_alpha: dict | None = None) -> list[dict]
                 "start": index, "end": None, "angle": 0.0, "x": 0.0, "y": 0.0,
                 "text_bytes": 0, "show_ops": 0, "font": font,
                 "color": _color_key(brightness), "alpha": alpha,
+                "artifact_watermark": any(marked_stack),
                 "has_matrix": False,
             }
             continue
@@ -302,6 +306,28 @@ def _extract_text_groups(operations, gs_alpha: dict | None = None) -> list[dict]
             alpha = gs_alpha.get(str(operands[0]), 1.0)
             continue
 
+        if operator in (b"BDC", b"BMC"):
+            # Marked content: /Artifact <</Subtype /Watermark>> is the
+            # producer declaring "this is a watermark" -- the one signal that
+            # does not have to be inferred. Everything else (including /Span
+            # with /ActualText) is ordinary content.
+            declared = False
+            if operator == b"BDC" and len(operands) >= 2:
+                try:
+                    props = operands[1]
+                    if hasattr(props, "get_object"):
+                        props = props.get_object()
+                    declared = (str(operands[0]) == "/Artifact"
+                                and str(props.get("/Subtype", "")) == "/Watermark")
+                except Exception:  # noqa: BLE001 - unreadable props = no declaration
+                    declared = False
+            marked_stack.append(declared)
+            continue
+        if operator == b"EMC":
+            if marked_stack:
+                marked_stack.pop()
+            continue
+
         if operator in (b"Tj", b"TJ", b"'", b'"'):
             if current is None:
                 continue
@@ -348,7 +374,6 @@ def _parse_page_operations(page):
 def _detect_from_groups(pages_groups: list[list[dict]], config: dict) -> dict:
     """Group signatures across pages and decide which ones are watermarks."""
     total_pages = len(pages_groups)
-    threshold = float(config["angle_threshold_deg"])
     buckets: dict[str, dict] = {}
     for page_idx, groups in enumerate(pages_groups):
         for group in groups:
@@ -356,7 +381,7 @@ def _detect_from_groups(pages_groups: list[list[dict]], config: dict) -> dict:
                 continue
             if group["text_bytes"] > int(config["max_block_bytes"]):
                 continue
-            if not _is_rotated(group["angle"], threshold):
+            if not _is_watermark_geometry(group, config):
                 continue  # rotation required; horizontal repeats stay with builder.py
             signature = _signature(group)
             bucket = buckets.setdefault(signature, {
@@ -433,7 +458,25 @@ def _watermark_score(group: dict, config: dict) -> float:
         score += 0.15  # same text repeated inside the block
     if group.get("alpha", 1.0) <= float(config["alpha_signal_threshold"]):
         score += float(config["alpha_score_boost"])  # semi-transparent rendering
+    if group.get("artifact_watermark"):
+        score += float(config["artifact_score_boost"])  # producer-declared
     return min(score, 1.0)
+
+
+def _is_watermark_geometry(group: dict, config: dict) -> bool:
+    """Whether a group's geometry qualifies it as a watermark candidate.
+
+    Rotation is required in general: horizontal repeated text (headers and
+    footers) does not shred word tokens and stays with the line-level
+    sanitizer. The one exemption is a producer-declared ``/Artifact`` with
+    ``/Subtype /Watermark``, and only when ``artifact_exempts_rotation`` is
+    enabled -- off by default until real-world evidence justifies trusting
+    the declaration for horizontal text.
+    """
+    if _is_rotated(group["angle"], float(config["angle_threshold_deg"])):
+        return True
+    return (bool(config.get("artifact_exempts_rotation"))
+            and bool(group.get("artifact_watermark")))
 
 
 def _position_consistency(positions: list[tuple], tolerance: float) -> float:
@@ -529,8 +572,8 @@ def sanitize_pdf_watermark(file_path: str | Path,
         planned_removal = 0
         for page_index in affected:
             for group in page_groups[page_index]:
-                if _signature(group) in watermark_signatures and _is_rotated(
-                        group["angle"], float(effective["angle_threshold_deg"])):
+                if (_signature(group) in watermark_signatures
+                        and _is_watermark_geometry(group, effective)):
                     planned_removal += group["text_bytes"]
         max_document_loss = float(effective["max_document_text_loss"])
         if document_text_bytes and planned_removal > document_text_bytes * max_document_loss:
@@ -545,7 +588,6 @@ def sanitize_pdf_watermark(file_path: str | Path,
         output = _output_path(source, out_dir)
         writer = PdfWriter(clone_from=str(source))
         min_remaining = int(effective["min_remaining_page_bytes"])
-        threshold = float(effective["angle_threshold_deg"])
         modified = 0
         removed_bytes = 0
         for page_index in sorted(affected):
@@ -562,7 +604,7 @@ def sanitize_pdf_watermark(file_path: str | Path,
             for group in groups:
                 if _signature(group) not in watermark_signatures:
                     continue
-                if not _is_rotated(group["angle"], threshold):
+                if not _is_watermark_geometry(group, effective):
                     continue
                 drop.append((group["start"], group["end"]))
                 dropped_bytes += group["text_bytes"]
@@ -616,8 +658,7 @@ def sanitize_pdf_watermark(file_path: str | Path,
         # Post-write verification: the rails protect the input side, this
         # protects the write side -- a writer bug must surface as a warning,
         # not as a silently broken cache entry.
-        report["verification"] = _verify_output(
-            output, watermark_signatures, float(effective["angle_threshold_deg"]))
+        report["verification"] = _verify_output(output, watermark_signatures, effective)
         if report["verification"].get("ok") is False:
             logger.warning(
                 "PDF watermark removal verification failed for %s: %d group(s) remain",
@@ -657,7 +698,7 @@ def _output_path(source: Path, out_dir: str | Path | None) -> Path:
     return directory / f"{digest.hexdigest()[:32]}.pdf"
 
 
-def _verify_output(output: Path, watermark_signatures: dict, threshold: float) -> dict:
+def _verify_output(output: Path, watermark_signatures: dict, config: dict) -> dict:
     """Re-parse the cleaned copy and confirm the watermark signatures are gone.
 
     Verification failure never raises and never reverts the output: it is
@@ -677,7 +718,7 @@ def _verify_output(output: Path, watermark_signatures: dict, threshold: float) -
                 if group["text_bytes"] < 1:
                     continue
                 if (_signature(group) in watermark_signatures
-                        and _is_rotated(group["angle"], threshold)):
+                        and _is_watermark_geometry(group, config)):
                     verification["residual_groups"] += 1
         verification["checked"] = True
         verification["ok"] = verification["residual_groups"] == 0

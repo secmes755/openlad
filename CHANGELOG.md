@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an ingest warning via the report's `verification` section instead of
   silently shipping a broken cache entry.
 
+- **Producer-declared watermark artifacts feed detection.** An enclosing
+  `/Artifact <</Subtype /Watermark>>` marked-content block — the producer
+  declaring the watermark outright — now boosts the cross-page signature
+  score (`artifact_score_boost`). The new `artifact_exempts_rotation`
+  switch (default off) additionally lets such a declaration waive the
+  rotation requirement, so horizontal declared watermarks can be cleaned at
+  the PDF layer once enabled; while off, horizontal repeated text stays
+  with the line-level sanitizer exactly as before.
+
 ## [0.4.9] - 2026-09-26
 
 ### Fixed

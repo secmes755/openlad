@@ -48,21 +48,32 @@ def _text_block(x: float, y: float, text: str, angle_deg: float = 0.0,
 
 
 def _watermark_group(angle_deg: float = 45.0, repeats: int = 12,
-                     gs_name: str | None = None) -> bytes:
+                     gs_name: str | None = None, artifact: bool = False) -> bytes:
     """One BT..ET group holding a tiled, rotated watermark (as vendors emit it).
-    With ``gs_name``, an ExtGState reference sets the group's alpha first."""
+    With ``gs_name``, an ExtGState reference sets the group's alpha first;
+    with ``artifact``, the group is wrapped in a producer-declared
+    /Artifact <</Subtype /Watermark>> marked-content block."""
     rad = math.radians(angle_deg)
     a, b = math.cos(rad) * 12.0, math.sin(rad) * 12.0
-    group = f"/{gs_name} gs\n".encode("latin-1") if gs_name else b""
+    group = b""
+    if artifact:
+        group += (b"/Artifact <</BBox [0 0 595 842] /Subtype /Watermark "
+                  b"/Type /Pagination>> BDC\n")
+    if gs_name:
+        group += f"/{gs_name} gs\n".encode("latin-1")
     group += f"BT /F1 12 Tf {a:.4f} {b:.4f} {-b:.4f} {a:.4f} 40 40 Tm ".encode("latin-1")
     for _ in range(repeats):
         group += f"({WATERMARK}) Tj 200 0 Td ".encode("latin-1")
-    return group + b"ET\n"
+    group += b"ET\n"
+    if artifact:
+        group += b"EMC\n"
+    return group
 
 
 def _write_pdf(path: Path, pages: int, watermark_pages=(), repeat_horizontal=False,
                body_lines: int = 8, watermark_alpha: float | None = None,
-               tagged: bool = False) -> Path:
+               tagged: bool = False, watermark_angle: float = 45.0,
+               watermark_artifact: bool = False) -> Path:
     """Realistic page shape: a body with real volume plus (optionally) a tiled
     rotated watermark, as vendor documents actually look. A fixture that is
     mostly watermark trips the document-level loss rail -- correctly, since such
@@ -106,7 +117,10 @@ def _write_pdf(path: Path, pages: int, watermark_pages=(), repeat_horizontal=Fal
         if repeat_horizontal:
             content += _text_block(72, 810, "RUNNING HEADER")
         if page_index + 1 in watermark_pages:
-            content += _watermark_group(gs_name="GS1" if gs_ref is not None else None)
+            content += _watermark_group(
+                angle_deg=watermark_angle,
+                gs_name="GS1" if gs_ref is not None else None,
+                artifact=watermark_artifact)
         stream = DecodedStreamObject()
         stream.set_data(bytes(content))
         page.replace_contents(stream)
@@ -270,6 +284,53 @@ def test_untagged_pdf_reports_no_structure_change(tmp_path):
     assert report["struct_tree_dropped"] is False
 
 
+def test_artifact_declared_rotated_watermark_scores_higher(tmp_path):
+    declared = _write_pdf(tmp_path / "declared.pdf", pages=3,
+                          watermark_pages=(1, 2, 3), watermark_artifact=True)
+    plain = _write_pdf(tmp_path / "plain.pdf", pages=3, watermark_pages=(1, 2, 3))
+
+    _, declared_report = sanitize_pdf_watermark(str(declared), out_dir=tmp_path / "s1")
+    _, plain_report = sanitize_pdf_watermark(str(plain), out_dir=tmp_path / "s2")
+
+    assert declared_report["signatures"][0]["score"] > plain_report["signatures"][0]["score"]
+    assert declared_report["cleaned"] is True and plain_report["cleaned"] is True
+
+
+def test_horizontal_artifact_watermark_kept_while_exemption_is_off(tmp_path):
+    """Default: even a producer-declared watermark needs rotation -- horizontal
+    repeated text stays with the line-level sanitizer."""
+    source = _write_pdf(tmp_path / "horizontal.pdf", pages=3,
+                        watermark_pages=(1, 2, 3), watermark_angle=0.0,
+                        watermark_artifact=True)
+    digest_before = _sha256(source)
+
+    cleaned, report = sanitize_pdf_watermark(str(source), out_dir=tmp_path / "sanitized")
+
+    assert report["detected"] is False
+    assert report["cleaned"] is False
+    assert cleaned == str(source)
+    assert _sha256(source) == digest_before
+    assert WATERMARK in _extract(source)
+
+
+def test_horizontal_artifact_watermark_removed_when_exemption_enabled(tmp_path):
+    source = _write_pdf(tmp_path / "horizontal.pdf", pages=3,
+                        watermark_pages=(1, 2, 3), watermark_angle=0.0,
+                        watermark_artifact=True)
+
+    cleaned, report = sanitize_pdf_watermark(
+        str(source), out_dir=tmp_path / "sanitized",
+        config={"artifact_exempts_rotation": True})
+
+    assert report["detected"] is True
+    assert report["cleaned"] is True
+    assert report["verification"]["ok"] is True
+    text = _extract(cleaned)
+    assert WATERMARK not in text
+    assert BODY in text
+    assert text.count("Body line 7: register description text.") == 3
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers and reporting
 # ---------------------------------------------------------------------------
@@ -325,12 +386,22 @@ def test_extgstate_alpha_is_read_from_page_resources(tmp_path):
 
 
 def test_alpha_is_a_soft_score_signal():
-    config = {"alpha_signal_threshold": 0.8, "alpha_score_boost": 0.2}
+    config = {"alpha_signal_threshold": 0.8, "alpha_score_boost": 0.2,
+              "artifact_score_boost": 0.3}
     group = {"angle": 45.0, "color": "0", "show_ops": 1}
     opaque = _watermark_score(dict(group, alpha=1.0), config)
     faint = _watermark_score(dict(group, alpha=0.1), config)
     assert faint == opaque + 0.2
     assert _watermark_score(dict(group, alpha=0.95), config) == opaque
+
+
+def test_artifact_declaration_is_a_soft_score_signal():
+    config = {"alpha_signal_threshold": 0.8, "alpha_score_boost": 0.2,
+              "artifact_score_boost": 0.3}
+    group = {"angle": 45.0, "color": "0", "show_ops": 1, "alpha": 1.0}
+    plain = _watermark_score(dict(group, artifact_watermark=False), config)
+    declared = _watermark_score(dict(group, artifact_watermark=True), config)
+    assert declared == plain + 0.3
 
 
 def test_verification_failure_surfaces_as_integrity_warning():
