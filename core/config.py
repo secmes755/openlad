@@ -547,6 +547,11 @@ PDF_WATERMARK_CONFIG = {
     "min_angle_consistency": 0.7,
     # Text more than this far from horizontal/vertical counts as rotated.
     "angle_threshold_deg": 15.0,
+    # Soft signals only raise a candidate's score; they can never trigger
+    # removal on their own. Alpha comes from the page's ExtGState (/ca, /CA):
+    # groups rendered at or below alpha_signal_threshold get the boost.
+    "alpha_signal_threshold": 0.8,
+    "alpha_score_boost": 0.2,
     # A single group larger than this is never considered a watermark.
     "max_block_bytes": 4096,
     # Within one signature, text volume may vary (a watermark drawn twice inside

@@ -23,8 +23,11 @@ Purely geometric, with no document-, vendor- or language-specific patterns:
 * a group whose effective angle is neither horizontal nor vertical (rotation is
   required, see rails) scores higher for diagonal angles and for non-black
   fill colour, and again if its own text repeats inside the block;
-* groups are grouped by a coarse signature (rounded angle, coarse position,
-  colour, font, size bucket); a signature present on most pages of the
+* soft signals only ever raise that score -- they can never trigger removal on
+  their own: low alpha from the page's ExtGState (``/ca``/``/CA``) marks the
+  semi-transparent rendering typical of watermarks;
+* groups are grouped by a coarse signature (rounded angle, coarse position);
+  a signature present on most pages of the
   document, at a consistent angle *and* position, is a watermark.
 
 Safety rails -- a cleaning pass must never lose body text
@@ -178,14 +181,46 @@ def _signature(group: dict) -> str:
 # ---------------------------------------------------------------------------
 # Content-stream analysis
 # ---------------------------------------------------------------------------
-def _extract_text_groups(operations) -> list[dict]:
+def _page_gs_alpha(page) -> dict:
+    """Map the page's ExtGState resource names to their alpha in [0, 1].
+
+    Alpha is ``min(/ca, /CA)`` of each graphics-state dictionary. ``/Resources``
+    is an inheritable page attribute and pypdf resolves the parent chain on
+    ``PageObject`` lookups, so inherited ExtGState entries are covered. Any
+    resolution failure yields an empty map, which simply means "no alpha
+    information" -- groups then carry the opaque default and scores do not
+    move.
+    """
+    try:
+        resources = page.get("/Resources")
+        if resources is None:
+            return {}
+        ext = resources.get("/ExtGState")
+        if ext is None:
+            return {}
+        alpha: dict[str, float] = {}
+        for name, state in ext.items():
+            try:
+                state = state.get_object()
+                values = [float(state[key]) for key in ("/ca", "/CA") if key in state]
+                alpha[str(name)] = min(values) if values else 1.0
+            except Exception:  # noqa: BLE001 - one bad entry must not lose the rest
+                continue
+        return alpha
+    except Exception:  # noqa: BLE001 - resources unparseable -> no alpha info
+        return {}
+
+
+def _extract_text_groups(operations, gs_alpha: dict | None = None) -> list[dict]:
     """Describe every ``BT ... ET`` group of a parsed content stream.
 
     Returns dicts with the group's effective angle/position, its raw text
-    volume, its font and colour, plus the ``operations`` index range so a
-    matched group can later be removed surgically. Non-text operators are never
-    described here, so they can never be removed.
+    volume, its font and colour, its alpha at block start, plus the
+    ``operations`` index range so a matched group can later be removed
+    surgically. Non-text operators are never described here, so they can never
+    be removed.
     """
+    gs_alpha = gs_alpha or {}
     groups: list[dict] = []
     ctm = _IDENTITY
     ctm_stack: list[tuple] = []
@@ -194,6 +229,7 @@ def _extract_text_groups(operations) -> list[dict]:
     leading = 0.0
     font = "none"
     brightness: float | None = None
+    alpha = 1.0
 
     current: dict | None = None
 
@@ -217,7 +253,7 @@ def _extract_text_groups(operations) -> list[dict]:
             current = {
                 "start": index, "end": None, "angle": 0.0, "x": 0.0, "y": 0.0,
                 "text_bytes": 0, "show_ops": 0, "font": font,
-                "color": _color_key(brightness),
+                "color": _color_key(brightness), "alpha": alpha,
                 "has_matrix": False,
             }
             continue
@@ -259,6 +295,11 @@ def _extract_text_groups(operations) -> list[dict]:
             value = _brightness(operator, operands)
             if value is not None:
                 brightness = value
+            continue
+        if operator == b"gs" and operands:
+            # Unknown graphics-state name: fall back to opaque rather than
+            # guessing at transparency we cannot see.
+            alpha = gs_alpha.get(str(operands[0]), 1.0)
             continue
 
         if operator in (b"Tj", b"TJ", b"'", b'"'):
@@ -390,6 +431,8 @@ def _watermark_score(group: dict, config: dict) -> float:
         score += 0.15  # non-black fill
     if group["show_ops"] > 2:
         score += 0.15  # same text repeated inside the block
+    if group.get("alpha", 1.0) <= float(config["alpha_signal_threshold"]):
+        score += float(config["alpha_score_boost"])  # semi-transparent rendering
     return min(score, 1.0)
 
 
@@ -440,6 +483,7 @@ def sanitize_pdf_watermark(file_path: str | Path,
         "pages_scanned": 0, "pages_modified": 0, "pages_skipped": [],
         "affected_pages": [], "signatures": [], "removed_text_bytes": 0,
         "document_text_bytes": 0, "skipped_reason": None, "error": None,
+        "struct_tree_dropped": False, "verification": None,
     }
     if not report["enabled"] or source.suffix.lower() != ".pdf":
         report["skipped_reason"] = "disabled" if not report["enabled"] else "not_a_pdf"
@@ -461,7 +505,7 @@ def sanitize_pdf_watermark(file_path: str | Path,
                 page_groups.append([])
                 continue
             _contents, operations = parsed
-            groups = _extract_text_groups(operations)
+            groups = _extract_text_groups(operations, _page_gs_alpha(page))
             page_groups.append(groups)
         report["pages_scanned"] = len(reader.pages)
 
@@ -512,7 +556,7 @@ def sanitize_pdf_watermark(file_path: str | Path,
                                                 "reason": "stream_unavailable"})
                 continue
             contents, operations = parsed
-            groups = _extract_text_groups(operations)
+            groups = _extract_text_groups(operations, _page_gs_alpha(writer_page))
             drop: list[tuple[int, int]] = []
             dropped_bytes = 0
             for group in groups:
@@ -554,9 +598,31 @@ def sanitize_pdf_watermark(file_path: str | Path,
             report["skipped_reason"] = "no_page_modified"
             return str(source), report
 
+        # Removing text groups can leave the logical structure tree pointing at
+        # marked content (MCIDs) that no longer exists. The cleaned copy is a
+        # cache artifact, not the user's file, so drop the structure rather
+        # than ship dangling references; the original keeps it untouched.
+        root = getattr(writer, "root_object", None) or getattr(writer, "_root_object", None)
+        if root is not None:
+            for key in ("/StructTreeRoot", "/MarkInfo"):
+                if key in root:
+                    del root[key]
+                    report["struct_tree_dropped"] = True
+
         with open(output, "wb") as handle:
             writer.write(handle)
         writer.close()
+
+        # Post-write verification: the rails protect the input side, this
+        # protects the write side -- a writer bug must surface as a warning,
+        # not as a silently broken cache entry.
+        report["verification"] = _verify_output(
+            output, watermark_signatures, float(effective["angle_threshold_deg"]))
+        if report["verification"].get("ok") is False:
+            logger.warning(
+                "PDF watermark removal verification failed for %s: %d group(s) remain",
+                source.name, report["verification"].get("residual_groups", 0),
+            )
 
         report["cleaned"] = True
         report["output_path"] = str(output)
@@ -589,6 +655,35 @@ def _output_path(source: Path, out_dir: str | Path | None) -> Path:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return directory / f"{digest.hexdigest()[:32]}.pdf"
+
+
+def _verify_output(output: Path, watermark_signatures: dict, threshold: float) -> dict:
+    """Re-parse the cleaned copy and confirm the watermark signatures are gone.
+
+    Verification failure never raises and never reverts the output: it is
+    recorded in the report so the caller can mark the document degraded.
+    """
+    verification = {"checked": False, "ok": None, "residual_groups": 0, "error": None}
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(output), strict=False)
+        for page in reader.pages:
+            parsed = _parse_page_operations(page)
+            if parsed is None:
+                continue
+            _contents, operations = parsed
+            for group in _extract_text_groups(operations, _page_gs_alpha(page)):
+                if group["text_bytes"] < 1:
+                    continue
+                if (_signature(group) in watermark_signatures
+                        and _is_rotated(group["angle"], threshold)):
+                    verification["residual_groups"] += 1
+        verification["checked"] = True
+        verification["ok"] = verification["residual_groups"] == 0
+    except Exception as exc:  # noqa: BLE001 - verification must never break ingestion
+        verification["error"] = f"{type(exc).__name__}: {exc}"
+    return verification
 
 
 def drop_rotated_characters(plumber_page):
@@ -630,6 +725,13 @@ def text_integrity_warnings(report: dict | None, max_pages_listed: int = 8) -> l
             "rotated repeated text (watermark) detected on "
             f"{len(report.get('affected_pages') or [])} page(s) but page-level removal "
             f"was skipped ({report.get('skipped_reason') or report.get('error') or 'unknown'})"
+        )
+    verification = report.get("verification") or {}
+    if verification.get("ok") is False:
+        warnings.append(
+            "cleaned copy still contains "
+            f"{verification.get('residual_groups', 0)} watermark text group(s); "
+            "the rewrite did not take effect as expected"
         )
     by_reason: dict[str, list[int]] = {}
     for skipped in report.get("pages_skipped") or []:

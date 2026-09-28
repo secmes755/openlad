@@ -21,7 +21,9 @@ import pytest
 from core.ingestion.preprocessing.pdf_watermark import (
     _is_rotated,
     _matrix_angle_deg,
+    _page_gs_alpha,
     _signature,
+    _watermark_score,
     sanitize_pdf_watermark,
     text_integrity_warnings,
 )
@@ -45,24 +47,34 @@ def _text_block(x: float, y: float, text: str, angle_deg: float = 0.0,
             f"({text}) Tj ET\n").encode("latin-1")
 
 
-def _watermark_group(angle_deg: float = 45.0, repeats: int = 12) -> bytes:
-    """One BT..ET group holding a tiled, rotated watermark (as vendors emit it)."""
+def _watermark_group(angle_deg: float = 45.0, repeats: int = 12,
+                     gs_name: str | None = None) -> bytes:
+    """One BT..ET group holding a tiled, rotated watermark (as vendors emit it).
+    With ``gs_name``, an ExtGState reference sets the group's alpha first."""
     rad = math.radians(angle_deg)
     a, b = math.cos(rad) * 12.0, math.sin(rad) * 12.0
-    group = f"BT /F1 12 Tf {a:.4f} {b:.4f} {-b:.4f} {a:.4f} 40 40 Tm ".encode("latin-1")
+    group = f"/{gs_name} gs\n".encode("latin-1") if gs_name else b""
+    group += f"BT /F1 12 Tf {a:.4f} {b:.4f} {-b:.4f} {a:.4f} 40 40 Tm ".encode("latin-1")
     for _ in range(repeats):
         group += f"({WATERMARK}) Tj 200 0 Td ".encode("latin-1")
     return group + b"ET\n"
 
 
 def _write_pdf(path: Path, pages: int, watermark_pages=(), repeat_horizontal=False,
-               body_lines: int = 8) -> Path:
+               body_lines: int = 8, watermark_alpha: float | None = None,
+               tagged: bool = False) -> Path:
     """Realistic page shape: a body with real volume plus (optionally) a tiled
     rotated watermark, as vendor documents actually look. A fixture that is
     mostly watermark trips the document-level loss rail -- correctly, since such
     a file is not what the pass is for."""
     pypdf = _require_pdf_stack()
-    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+    from pypdf.generic import (
+        BooleanObject,
+        DecodedStreamObject,
+        DictionaryObject,
+        FloatObject,
+        NameObject,
+    )
 
     writer = pypdf.PdfWriter()
     font = DictionaryObject({
@@ -71,11 +83,22 @@ def _write_pdf(path: Path, pages: int, watermark_pages=(), repeat_horizontal=Fal
         NameObject("/BaseFont"): NameObject("/Helvetica"),
     })
     font_ref = writer._add_object(font)  # pypdf exposes no public add_object
+    gs_ref = None
+    if watermark_alpha is not None:
+        gs_ref = writer._add_object(DictionaryObject({
+            NameObject("/Type"): NameObject("/ExtGState"),
+            NameObject("/ca"): FloatObject(watermark_alpha),
+            NameObject("/CA"): FloatObject(watermark_alpha),
+        }))
     for page_index in range(pages):
         page = writer.add_blank_page(width=595, height=842)
-        page[NameObject("/Resources")] = DictionaryObject({
+        resources = DictionaryObject({
             NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_ref}),
         })
+        if gs_ref is not None:
+            resources[NameObject("/ExtGState")] = DictionaryObject(
+                {NameObject("/GS1"): gs_ref})
+        page[NameObject("/Resources")] = resources
         content = bytearray()
         for line in range(body_lines):
             text = BODY if line == 0 else f"Body line {line}: register description text."
@@ -83,10 +106,16 @@ def _write_pdf(path: Path, pages: int, watermark_pages=(), repeat_horizontal=Fal
         if repeat_horizontal:
             content += _text_block(72, 810, "RUNNING HEADER")
         if page_index + 1 in watermark_pages:
-            content += _watermark_group()
+            content += _watermark_group(gs_name="GS1" if gs_ref is not None else None)
         stream = DecodedStreamObject()
         stream.set_data(bytes(content))
         page.replace_contents(stream)
+    if tagged:
+        struct_ref = writer._add_object(DictionaryObject(
+            {NameObject("/Type"): NameObject("/StructTreeRoot")}))
+        writer._root_object[NameObject("/StructTreeRoot")] = struct_ref
+        writer._root_object[NameObject("/MarkInfo")] = DictionaryObject(
+            {NameObject("/Marked"): BooleanObject(True)})
     with open(path, "wb") as handle:
         writer.write(handle)
     writer.close()
@@ -193,6 +222,54 @@ def test_parser_returns_clean_text_for_a_watermarked_pdf(tmp_path):
         assert WATERMARK not in page.raw_text
 
 
+def test_low_alpha_watermark_scores_higher_and_is_still_removed(tmp_path):
+    """Alpha is a soft signal: it raises the score, and removal still works."""
+    faint = _write_pdf(tmp_path / "faint.pdf", pages=3, watermark_pages=(1, 2, 3),
+                       watermark_alpha=0.1)
+    opaque = _write_pdf(tmp_path / "opaque.pdf", pages=3, watermark_pages=(1, 2, 3))
+
+    faint_cleaned, faint_report = sanitize_pdf_watermark(str(faint), out_dir=tmp_path / "s1")
+    opaque_cleaned, opaque_report = sanitize_pdf_watermark(str(opaque), out_dir=tmp_path / "s2")
+
+    faint_score = faint_report["signatures"][0]["score"]
+    opaque_score = opaque_report["signatures"][0]["score"]
+    assert faint_score > opaque_score
+    assert faint_report["cleaned"] is True and opaque_report["cleaned"] is True
+    assert WATERMARK not in _extract(faint_cleaned)
+    assert WATERMARK not in _extract(opaque_cleaned)
+
+
+def test_cleaned_copy_passes_post_write_verification(tmp_path):
+    source = _write_pdf(tmp_path / "watermarked.pdf", pages=3,
+                        watermark_pages=(1, 2, 3))
+    _, report = sanitize_pdf_watermark(str(source), out_dir=tmp_path / "sanitized")
+    assert report["verification"] == {"checked": True, "ok": True,
+                                      "residual_groups": 0, "error": None}
+
+
+def test_tagged_pdf_drops_dangling_structure_tree_on_the_cleaned_copy(tmp_path):
+    """Removed groups leave dead MCIDs; the cached copy drops the structure."""
+    pypdf = _require_pdf_stack()
+    source = _write_pdf(tmp_path / "tagged.pdf", pages=3,
+                        watermark_pages=(1, 2, 3), tagged=True)
+    assert "/StructTreeRoot" in pypdf.PdfReader(str(source)).trailer["/Root"]
+
+    cleaned, report = sanitize_pdf_watermark(str(source), out_dir=tmp_path / "sanitized")
+
+    assert report["cleaned"] is True
+    assert report["struct_tree_dropped"] is True
+    root = pypdf.PdfReader(cleaned).trailer["/Root"]
+    assert "/StructTreeRoot" not in root
+    assert "/MarkInfo" not in root
+    assert BODY in _extract(cleaned)
+
+
+def test_untagged_pdf_reports_no_structure_change(tmp_path):
+    source = _write_pdf(tmp_path / "plain.pdf", pages=3, watermark_pages=(1, 2, 3))
+    _, report = sanitize_pdf_watermark(str(source), out_dir=tmp_path / "sanitized")
+    assert report["struct_tree_dropped"] is False
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers and reporting
 # ---------------------------------------------------------------------------
@@ -235,3 +312,33 @@ def test_integrity_warnings_summarise_pages_by_reason():
 
 def test_no_warnings_when_nothing_was_detected():
     assert text_integrity_warnings({"detected": False, "pages_skipped": []}) == []
+
+
+def test_extgstate_alpha_is_read_from_page_resources(tmp_path):
+    pypdf = _require_pdf_stack()
+    source = _write_pdf(tmp_path / "faint.pdf", pages=2, watermark_pages=(1, 2),
+                        watermark_alpha=0.1)
+    reader = pypdf.PdfReader(str(source))
+    assert _page_gs_alpha(reader.pages[0]) == {"/GS1": 0.1}
+    plain = _write_pdf(tmp_path / "plain.pdf", pages=1)
+    assert _page_gs_alpha(pypdf.PdfReader(str(plain)).pages[0]) == {}
+
+
+def test_alpha_is_a_soft_score_signal():
+    config = {"alpha_signal_threshold": 0.8, "alpha_score_boost": 0.2}
+    group = {"angle": 45.0, "color": "0", "show_ops": 1}
+    opaque = _watermark_score(dict(group, alpha=1.0), config)
+    faint = _watermark_score(dict(group, alpha=0.1), config)
+    assert faint == opaque + 0.2
+    assert _watermark_score(dict(group, alpha=0.95), config) == opaque
+
+
+def test_verification_failure_surfaces_as_integrity_warning():
+    report = {
+        "detected": True, "cleaned": True, "affected_pages": [1, 2],
+        "pages_skipped": [],
+        "verification": {"checked": True, "ok": False, "residual_groups": 2,
+                         "error": None},
+    }
+    warnings = text_integrity_warnings(report)
+    assert any("2 watermark text group(s)" in warning for warning in warnings)

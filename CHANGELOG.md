@@ -5,6 +5,21 @@ All notable changes to OpenLAD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Watermark detection gains a soft alpha signal, structure hygiene and
+  post-write verification.** The PDF watermark pass now reads each page's
+  ExtGState (`/ca`/`/CA`) and lets semi-transparent rendering raise a
+  candidate's score — a soft signal only, never a removal trigger, and the
+  cross-page signature stays purely geometric. Cleaned copies drop the
+  logical structure tree when removed text groups would leave dangling
+  MCID references (the original file is untouched), and every rewrite is
+  verified by re-parsing the output: residual watermark groups surface as
+  an ingest warning via the report's `verification` section instead of
+  silently shipping a broken cache entry.
+
 ## [0.4.9] - 2026-09-26
 
 ### Fixed
