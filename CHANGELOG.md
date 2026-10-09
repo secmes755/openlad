@@ -7,7 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deleting a document now removes its files from disk.** The delete
+  endpoint only dropped the metadata rows and vectors, leaving the original
+  file and every page render / chart crop on disk indefinitely — inflating
+  storage-quota usage with ghost files and leaving sensitive uploads
+  recoverable after the user believed them gone. Hard delete now resolves
+  the document's artifacts before the rows are dropped (`documents.original_path`,
+  `doc_pages.page_image_path`, and chart crops recorded in
+  `content_json.charts[].image_path`) and removes them after the DB commit.
+  DB first, files second: a missing file never fails the delete, so the
+  operation stays idempotent and cannot produce a "row gone, file present"
+  residue that a sweep cannot recover from.
+
 ### Added
+
+- **Batch document delete (1..N) with a single confirmation.** New
+  `POST /documents/batch-delete` accepts up to 500 ids and returns per-id
+  outcomes, so a partial failure is visible instead of silent. The admin
+  document list gains checkboxes, select-all, and a batch action bar; the
+  single-document delete confirmation now states that server files and page
+  images are removed permanently.
+- **Orphan-artifact audit and cleanup (`scripts/audit_orphan_files.py`).**
+  Read-only by default; `--delete` purges, and the shared legacy images dir
+  is only swept with an explicit `--include-global`. Ownership is decided by
+  what the DB records a live document owns — never by filename prefix, which
+  does not match row ids for uploaded files and would otherwise delete live
+  documents.
 
 - **Watermark detection gains a soft alpha signal, structure hygiene and
   post-write verification.** The PDF watermark pass now reads each page's

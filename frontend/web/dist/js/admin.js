@@ -219,6 +219,9 @@ async function refreshLibrary() {
             const desc = (d.title || d.summary || '').substring(0, 80);
             return `
                 <div class="doc-item">
+                    <label class="doc-select" title="${__('admin.docs.deleteSelected')}">
+                        <input type="checkbox" class="doc-check" data-doc-id="${escapeHtml(d.id)}">
+                    </label>
                     <div class="doc-icon ${getDocIconClass(d.doc_type)}">
                         <i class="fas ${getDocIcon(d.doc_type)}"></i>
                     </div>
@@ -238,6 +241,7 @@ async function refreshLibrary() {
                     </div>
                 </div>
             `;}).join('');
+        updateBatchBar();
     } catch (e) {
         if (e && e.handled) { list.innerHTML = ''; return; }  // 401: login modal shown
         list.innerHTML = '<div class="error"><i class="fas fa-exclamation-triangle"></i> ' + __('misc.error') + ': ' + e.message + '</div>';
@@ -297,6 +301,46 @@ function formatDate(ts) {
     } catch { return ts; }
 }
 
+// ===== Document Library: selection + delete =====
+
+// Checkbox toggles update the batch-action bar. Kept as a delegated listener
+// so re-rendered rows need no re-binding.
+document.addEventListener('change', (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains('doc-check')) {
+        updateBatchBar();
+    }
+});
+
+function selectedDocIds() {
+    return Array.from(document.querySelectorAll('.doc-check:checked'))
+        .map(cb => cb.dataset.docId);
+}
+
+function updateBatchBar() {
+    const ids = selectedDocIds();
+    const bar = document.getElementById('docBatchBar');
+    const count = document.getElementById('docBatchCount');
+    const all = document.querySelectorAll('.doc-check');
+    const selectAll = document.getElementById('docSelectAll');
+    if (selectAll) {
+        selectAll.checked = all.length > 0 && ids.length === all.length;
+        selectAll.indeterminate = ids.length > 0 && ids.length < all.length;
+    }
+    if (!bar) return;
+    if (count) count.textContent = String(ids.length);
+    bar.style.display = ids.length > 0 ? 'flex' : 'none';
+}
+
+function toggleSelectAll(checked) {
+    document.querySelectorAll('.doc-check').forEach(cb => { cb.checked = !!checked; });
+    updateBatchBar();
+}
+
+function clearDocSelection() {
+    document.querySelectorAll('.doc-check').forEach(cb => { cb.checked = false; });
+    updateBatchBar();
+}
+
 // Event delegation for doc-list delete buttons: parameters travel via
 // data-* attributes instead of inline onclick string interpolation (XSS-safe)
 document.addEventListener('click', (e) => {
@@ -306,11 +350,40 @@ document.addEventListener('click', (e) => {
 });
 
 async function deleteDoc(docId, docName) {
-    if (!await uiConfirm(__('admin.docs.delete') + ': ' + (docName || docId), { danger: true })) return;
+    if (!await uiConfirm(__('admin.docs.delete') + ': ' + (docName || docId) + ' — ' + __('admin.docs.deleteWarn'), { danger: true })) return;
+    await deleteDocuments([docId]);
+}
+
+// Batch delete of 1..N documents behind a single confirmation.
+async function deleteSelectedDocs() {
+    const ids = selectedDocIds();
+    if (ids.length === 0) return;
+    const msg = __('admin.docs.confirmDelete') + ids.length + __('admin.docs.confirmDeleteSuffix') + ' ' + __('admin.docs.deleteWarn');
+    if (!await uiConfirm(msg, { danger: true })) return;
+    await deleteDocuments(ids);
+}
+
+// Shared delete call for single + batch. Uses the batch endpoint when >1 id.
+async function deleteDocuments(ids) {
     try {
-        const res = await apiFetch(`/documents/${docId}`, { method: 'DELETE' });
+        let res;
+        if (ids.length === 1) {
+            res = await apiFetch(`/documents/${encodeURIComponent(ids[0])}`, { method: 'DELETE' });
+        } else {
+            res = await apiFetch('/documents/batch-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ doc_ids: ids }),
+            });
+        }
         if (res.ok) {
-            showToast(__('admin.docs.delete') + ': ' + (docName || docId), 'success');
+            const data = ids.length === 1 ? null : await res.json().catch(() => null);
+            if (data && data.failed_count) {
+                showToast(__('misc.error') + ': ' + data.failed_count + ' ' + __('admin.docs.deleteFailed'), 'error');
+            } else {
+                showToast(__('admin.docs.delete') + ' x' + ids.length, 'success');
+            }
+            clearDocSelection();
             refreshLibrary();
             updateStats();
         } else {
@@ -327,7 +400,6 @@ async function deleteDoc(docId, docName) {
 async function scanDirectory() {
     showToast(__('admin.scan.noFiles'), 'info');
 }
-function toggleSelectAll() {}
 async function importSelected() {
     showToast(__('admin.scan.noFiles'), 'info');
 }

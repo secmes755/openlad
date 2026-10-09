@@ -330,30 +330,70 @@ async def get_document(doc_id: str):
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: str):
-    """Delete document"""
+    """Delete a document permanently: DB rows, vectors, and on-disk files."""
     ctx = get_tenant_context()
     if not ctx:
         raise HTTPException(status_code=400, detail="Tenant context required")
 
+    result = _hard_delete_documents(ctx, [doc_id])
+    return result
+
+
+@router.post("/documents/batch-delete")
+async def batch_delete_documents(payload: dict):
+    """Delete 1..N documents permanently in one call.
+
+    Body: {"doc_ids": ["...", "..."]}
+    Returns per-id outcome so a partial failure is visible to the caller.
+    """
+    ctx = get_tenant_context()
+    if not ctx:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+
+    doc_ids = (payload or {}).get("doc_ids") or []
+    if not isinstance(doc_ids, list) or not doc_ids:
+        raise HTTPException(status_code=400, detail="doc_ids must be a non-empty list")
+    if len(doc_ids) > 500:
+        raise HTTPException(status_code=400, detail="Too many documents in one batch (max 500)")
+
+    return _hard_delete_documents(ctx, doc_ids)
+
+
+def _hard_delete_documents(ctx, doc_ids: list[str]) -> dict:
+    """Shared hard-delete path for single + batch requests.
+
+    DB first, files second (see tenant_db.delete_document). A failure on one
+    document does not abort the rest; per-id outcomes are returned.
+    """
+    from ...db.tenant_db import get_tenant_vector_db
     db = get_tenant_metadata_db(ctx.tenant_id)
-    success = db.delete_document(doc_id)
-    vector_cleaned = False
-    # Also delete vectors
-    if success:
-        from ...db.tenant_db import get_tenant_vector_db
-        vector_db = get_tenant_vector_db(ctx.tenant_id)
+    vector_db = get_tenant_vector_db(ctx.tenant_id)
+
+    deleted, failed = [], []
+    for doc_id in doc_ids:
+        success = db.delete_document(doc_id, delete_files=True)
+        if not success:
+            failed.append(doc_id)
+            continue
         vector_cleaned = vector_db.delete_doc_vectors(doc_id)
         if not vector_cleaned:
             logger.warning(f"[DELETE] Document metadata deleted, but vector cleanup failed: {doc_id}")
-        # Record audit log
         try:
             db.log_audit(
                 action="document_delete",
                 resource_type="document",
                 resource_id=doc_id,
                 user_id=ctx.user_id,
-                tenant_id=ctx.tenant_id
+                tenant_id=ctx.tenant_id,
             )
         except Exception as e:
             logger.warning(f"Failed to record audit log: {e}")
-    return {"success": success, "vector_cleaned": vector_cleaned}
+        deleted.append(doc_id)
+
+    return {
+        "success": not failed,
+        "deleted": deleted,
+        "failed": failed,
+        "deleted_count": len(deleted),
+        "failed_count": len(failed),
+    }

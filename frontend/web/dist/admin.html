@@ -416,6 +416,21 @@
                             <i class="fas fa-sync-alt"></i> Refresh
                         </button>
                     </div>
+                    <div class="doc-toolbar" style="display:flex;align-items:center;gap:12px;padding:0 20px 10px;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                            <input type="checkbox" id="docSelectAll" onchange="toggleSelectAll(this.checked)">
+                            <span data-i18n="admin.docs.selectAll">Select all</span>
+                        </label>
+                        <div id="docBatchBar" style="display:none;align-items:center;gap:12px;margin-left:auto;">
+                            <span style="font-size:13px;color:var(--text-secondary);">
+                                <b id="docBatchCount">0</b> <span data-i18n="admin.docs.selected">selected</span>
+                            </span>
+                            <button class="btn" style="background:var(--danger,#dc2626);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;"
+                                    onclick="deleteSelectedDocs()">
+                                <i class="fas fa-trash-alt"></i> <span data-i18n="admin.docs.deleteSelected">Delete Selected</span>
+                            </button>
+                        </div>
+                    </div>
                     <div class="doc-list" id="docList">
                         <div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
                     </div>

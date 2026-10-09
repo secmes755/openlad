@@ -395,7 +395,46 @@ class TenantMetadataDB:
         with self.get_connection() as conn:
             return [_doc_from_row(r) for r in conn.execute(query, params).fetchall()]
 
-    def delete_document(self, doc_id: str) -> bool:
+    def delete_document(self, doc_id: str, delete_files: bool = False) -> bool:
+        """Delete a document and (optionally) its on-disk artifacts.
+
+        Ordering contract: the DB rows are removed FIRST and committed; only
+        then are files removed. A missing file is tolerated (logged, skipped)
+        so a file already gone out-of-band never fails the delete. This keeps
+        the operation idempotent and avoids the unrecoverable state of
+        "DB row gone but file present" turning into "DB row present but file
+        gone" -- residue is recoverable by an orphan sweep, a lost file is not.
+
+        delete_files=False by default so callers that only want the metadata
+        row dropped stay unchanged; the delete endpoint passes True.
+        """
+        # Resolve on-disk artifacts BEFORE dropping the rows that record them.
+        doc_file: str | None = None
+        image_paths: list[str] = []
+        if delete_files:
+            try:
+                with self.get_connection() as conn:
+                    row = conn.execute(
+                        "SELECT original_path FROM documents WHERE id = ?", (doc_id,)
+                    ).fetchone()
+                    if row and row["original_path"]:
+                        doc_file = row["original_path"]
+                    # Page renders: explicit column.
+                    page_rows = conn.execute(
+                        "SELECT page_image_path, content_json FROM doc_pages WHERE doc_id = ?",
+                        (doc_id,),
+                    ).fetchall()
+                    for pr in page_rows:
+                        if pr["page_image_path"]:
+                            image_paths.append(pr["page_image_path"])
+                        # Chart crops are recorded only inside content_json
+                        # (.charts[].image_path); there is no dedicated column.
+                        cj = pr["content_json"]
+                        if cj and "_chart" in cj:
+                            image_paths.extend(self._chart_image_paths(cj))
+            except Exception as e:
+                logger.warning(f"[TenantDB] Failed to resolve files for {doc_id}: {e}")
+
         try:
             with self.get_connection() as conn:
                 conn.execute("DELETE FROM doc_pages_fts WHERE rowid IN (SELECT id FROM doc_pages WHERE doc_id = ?)", (doc_id,))
@@ -407,10 +446,54 @@ class TenantMetadataDB:
                 conn.execute("DELETE FROM spec_facts WHERE doc_id = ?", (doc_id,))
                 conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
                 conn.commit()
-                return True
         except Exception as e:
             logger.error(f"[TenantDB] Failed to delete document: {e}")
             return False
+
+        # DB is committed. Now remove files -- best-effort, never fatal.
+        if delete_files:
+            self._remove_files([doc_file] + image_paths, doc_id)
+        return True
+
+    @staticmethod
+    def _remove_files(paths: list[str | None], doc_id: str) -> None:
+        """Best-effort removal of on-disk artifacts for a deleted document.
+
+        Missing paths are skipped silently (idempotency); IoErrors are logged
+        and swallowed so cleanup never fails the delete itself.
+        """
+        import os
+        for p in paths:
+            if not p:
+                continue
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                logger.warning(f"[TenantDB] Could not remove {p} for doc {doc_id}: {e}")
+
+    @staticmethod
+    def _chart_image_paths(content_json: str) -> list[str]:
+        """Extract chart crop image paths from a page's content_json blob.
+
+        Charts are persisted only as ``.charts[].image_path`` inside the page
+        JSON -- there is no dedicated column -- so cleanup must parse it.
+        Malformed JSON yields no paths rather than raising.
+        """
+        import json
+        try:
+            data = json.loads(content_json)
+        except (ValueError, TypeError):
+            return []
+        charts = data.get("charts") if isinstance(data, dict) else None
+        if not isinstance(charts, list):
+            return []
+        out: list[str] = []
+        for ch in charts:
+            if isinstance(ch, dict) and ch.get("image_path"):
+                out.append(ch["image_path"])
+        return out
 
     # === Page Operations ===
     def save_page(self, doc_id: str, page_num: int, raw_text: str = None, **kwargs) -> int:
