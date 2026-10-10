@@ -191,6 +191,36 @@ class TestParserOcrTranscription:
         parser = DocumentParser.__new__(DocumentParser)
         assert parser._transcribe_pdf_page_with_ocr(img, 3) == ""
 
+    def test_transcribe_reports_cleanup_trim(self, monkeypatch):
+        """A page shortened by the degeneration cleaner publishes the trim so
+        the caller can flag it; a clean page reports zero."""
+        from core.ingestion.parser import DocumentParser
+
+        class FakeClient:
+            ocr_endpoint_available = True
+            last_finish_reason = "stop"
+
+            def generate_with_image(self, *a, **kw):
+                # Long, highly repetitive tail -> the numbered-pseudo pass fires.
+                return ("# Dims\n\n"
+                        + "".join(f"{i}. DIMENSION_SYM_{i} NOMINAL 322.6 MAX 322.7\n"
+                                  for i in range(10, 200)))
+
+        monkeypatch.setattr("core.ingestion.parser.get_model_client",
+                            lambda: FakeClient())
+        Image = _real_pil_image()
+        img = Image.new("RGB", (8, 8), "white")
+        parser = DocumentParser.__new__(DocumentParser)
+        parser.last_ocr_trim = {"trimmed_chars": 0, "passes": []}
+        parser.last_ocr_finish_reason = None
+        out = parser._transcribe_pdf_page_with_ocr(img, 7)
+        assert parser.last_ocr_trim["trimmed_chars"] > 0
+        assert "numbered_pseudo" in parser.last_ocr_trim["passes"]
+        assert parser.last_ocr_finish_reason == "stop", (
+            "a natural finish is what distinguishes a mis-fired cleanup from "
+            "a token-limit truncation")
+        assert len(out) < 400, "the page was in fact shortened"
+
 
 class TestParseImageAutoCleanup:
     """Uploaded image files use endpoint="auto". When that route resolves to

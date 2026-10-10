@@ -10,6 +10,7 @@ from core.ingestion.parser import (
     _clean_ocr_transcription,
     _trim_exact_period_repeats,
     _trim_numbered_pseudo_repeats,
+    clean_ocr_transcription_detailed,
 )
 
 
@@ -123,3 +124,54 @@ class TestCleanOCRTranscription:
             "878"  # stray short stub after a legitimate list
         )
         assert _clean_ocr_transcription(legit) == legit
+
+
+class TestDetailedReport:
+    """The cleanup runs unconditionally on every OCR page, so a page that
+    merely *looks* degenerative can be shortened with no log and no degraded
+    flag. ``clean_ocr_transcription_detailed`` reports what was removed —
+    including the case where a legitimate repetitive page (dimension drawing,
+    pin table) is mis-fired on — so the caller can surface it.
+    """
+
+    def test_no_trim_reports_zero(self):
+        text = "## 标题\n\n普通段落内容若干，不含重复退化。"
+        out, info = clean_ocr_transcription_detailed(text)
+        assert out == text
+        assert info == {"trimmed_chars": 0, "passes": []}
+
+    def test_empty_input(self):
+        out, info = clean_ocr_transcription_detailed("")
+        assert out == ""
+        assert info["trimmed_chars"] == 0
+
+    def test_exact_period_pass_named(self):
+        text = "标题\n\n正文内容若干。\n\n" + "878" * 700
+        out, info = clean_ocr_transcription_detailed(text)
+        assert info["trimmed_chars"] == len(text) - len(out) > 0
+        assert info["passes"] == ["exact_period"]
+
+    def test_numbered_pass_named(self):
+        # Long, template-shared bodies — the shape observed on real dimension
+        # pages (see test_misfire_on_legitimate_repetitive_content_is_reported).
+        text = ("正文部分。\n\n"
+                + "\n".join(f"{i}. DIMENSION_SYM_{i} NOMINAL 322.6 MAX 322.7"
+                           for i in range(10, 120)))
+        out, info = clean_ocr_transcription_detailed(text)
+        assert info["trimmed_chars"] > 0
+        assert info["passes"] == ["numbered_pseudo"]
+
+    def test_misfire_on_legitimate_repetitive_content_is_reported(self):
+        # The regression that motivated this report: a dimension-symbol table
+        # whose bodies are all distinct but share a template is judged
+        # pseudo-repetition and cut. The report is what makes that visible.
+        head = ("# Mechanical Dimensions\n\n"
+                "This section describes the package outline and reference "
+                "dimensions. All dimensions are in millimetres. The following "
+                "list gives each symbol with its nominal and maximum value.\n\n")
+        table = "\n".join(f"{i}. DIMENSION_SYM_{i} NOMINAL 322.6 MAX 322.7"
+                          for i in range(10, 120))
+        out, info = clean_ocr_transcription_detailed(head + table)
+        assert info["trimmed_chars"] > 0, "the mis-fire must be reported"
+        assert "numbered_pseudo" in info["passes"]
+        assert "DIMENSION_SYM_119" not in out, "content was in fact lost"

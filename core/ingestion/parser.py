@@ -208,11 +208,34 @@ def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
 
 def _clean_ocr_transcription(text: str) -> str:
     """Apply degeneration cleanup to an OCR page transcription."""
-    if not text:
-        return text
-    cleaned = _trim_exact_period_repeats(text)
-    cleaned = _trim_numbered_pseudo_repeats(cleaned)
+    cleaned, _ = clean_ocr_transcription_detailed(text)
     return cleaned
+
+
+def clean_ocr_transcription_detailed(text: str) -> tuple[str, dict]:
+    """Run the degeneration cleanup and report what it removed.
+
+    Returns ``(cleaned_text, info)``. ``info['trimmed_chars']`` is the number of
+    characters the cleaner dropped (0 when nothing matched) and
+    ``info['passes']`` names the passes that fired. Callers use this to make a
+    trim visible: the cleanup runs unconditionally on every OCR page, so a
+    legitimate page whose tail merely *looks* like degeneration (a dimension
+    drawing, a pin table — content that is repetitive by nature) would
+    otherwise be silently shortened with no log line and no degraded flag.
+    """
+    if not text:
+        return text, {"trimmed_chars": 0, "passes": []}
+    passes = []
+    after_exact = _trim_exact_period_repeats(text)
+    if len(after_exact) < len(text):
+        passes.append("exact_period")
+    after_numbered = _trim_numbered_pseudo_repeats(after_exact)
+    if len(after_numbered) < len(after_exact):
+        passes.append("numbered_pseudo")
+    return after_numbered, {
+        "trimmed_chars": len(text) - len(after_numbered),
+        "passes": passes,
+    }
 
 
 # The upload route stores files on disk as "{doc_id}_{original_name}" to keep
@@ -288,6 +311,12 @@ class DocumentParser:
 
     def __init__(self):
         self._page_classifier = None  # Lazy-load PageClassifier
+        # Per-page OCR cleanup bookkeeping, refreshed by
+        # _transcribe_pdf_page_with_ocr. Read immediately after the call so a
+        # page whose transcription was shortened (and had / had not hit the
+        # token cap) can be reported instead of silently shortened.
+        self.last_ocr_trim: dict = {"trimmed_chars": 0, "passes": []}
+        self.last_ocr_finish_reason: str | None = None
 
     @property
     def page_classifier(self):
@@ -620,15 +649,28 @@ class DocumentParser:
                         transcription = self._transcribe_pdf_page_with_ocr(
                             page_image, pdf_page_num
                         )
+                        trim_info = self.last_ocr_trim
+                        hit_token_cap = self.last_ocr_finish_reason == "length"
                         if transcription:
                             full_text += (
                                 f"\n\n---\n\n### Page Transcription (OCR)\n\n{transcription}\n"
                             )
                             vlm_needed = True
-                            client = get_model_client()
-                            if getattr(client, "last_finish_reason", None) == "length":
+                            if hit_token_cap:
                                 visual_warnings.append(
                                     f"page {pdf_page_num}: OCR transcription truncated (max_tokens)"
+                                )
+                            # The post-cleanup output ended naturally but the
+                            # degeneration cleaner still cut it: the page was
+                            # shortened by cleanup, not by the token limit.
+                            # Surface it — this is exactly how a legitimate
+                            # repetitive page (dimension drawing, pin table)
+                            # loses content without a trace.
+                            if trim_info["trimmed_chars"] > 0 and not hit_token_cap:
+                                visual_warnings.append(
+                                    f"page {pdf_page_num}: OCR transcription shortened by "
+                                    f"degeneration cleanup (-{trim_info['trimmed_chars']} chars, "
+                                    f"{', '.join(trim_info['passes']) or 'unknown'})"
                                 )
                         else:
                             visual_warnings.append(
@@ -1062,7 +1104,22 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     parts.append(more)
                 text = "".join(parts)
                 if text:
-                    text = _clean_ocr_transcription(text)
+                    text, trim_info = clean_ocr_transcription_detailed(text)
+                    # Publish what the cleanup removed so the page can be
+                    # flagged degraded. The cleanup runs on every page, so a
+                    # legitimate repetitive page (dimension drawing, pin table)
+                    # whose tail looks like degeneration would otherwise be
+                    # shortened silently. The per-page finish reason tells the
+                    # caller whether the pre-trim output had already hit the
+                    # token cap, which is what separates a real truncation from
+                    # a mis-fired cleanup.
+                    self.last_ocr_trim = trim_info
+                    self.last_ocr_finish_reason = getattr(client, "last_finish_reason", None)
+                    if trim_info["trimmed_chars"] > 0:
+                        logger.info(
+                            "PDF page %s: OCR cleanup trimmed %d chars (%s)",
+                            page_num, trim_info["trimmed_chars"],
+                            ", ".join(trim_info["passes"]))
                 return text.strip() if text else ""
             finally:
                 os.unlink(tmp_path)

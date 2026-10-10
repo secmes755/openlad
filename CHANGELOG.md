@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OCR cleanups that shorten a page are no longer silent.** The degeneration
+  cleaner runs unconditionally on every OCR transcription, and the number of
+  characters it removes was never reported. A legitimate repetitive page — a
+  dimension drawing, a pin table, a symbol list, all repetitive by nature —
+  whose tail merely looks like a degeneration loop was therefore shortened
+  with no log line and no `degraded` flag: the page lost content invisibly.
+  Trims are now recorded per page and raised as a content ingest warning
+  (`shortened by degeneration cleanup (-N chars, <pass>)`), which marks the
+  document degraded so retrieval can flag the gap. A page that hit the OCR
+  output-token limit is still reported as a truncation, not a cleanup trim —
+  the finish reason distinguishes the two.
+
 - **Documents are now recorded under their original filename.** Uploads are
   stored on disk as `{doc_id}_{name}` to keep disk names unique, but that
   storage prefix leaked into `documents.filename`: the document list showed
