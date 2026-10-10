@@ -300,7 +300,20 @@ class DocumentIndexBuilder:
 
         # L2: Page-level processing
         _report(30, "Building L2 page index")
-        l2_results, page_loss_warnings = self._build_l2(doc_id, parsed_doc, preprocessed_pages, tid, plugin)
+
+        # L2 owns the 30 -> 50 band of the progress scale. It runs one LLM call
+        # per page, so on a document of a few thousand pages the bar would
+        # otherwise sit at 30 for tens of minutes with no signal that work is
+        # happening. Map pages-completed onto the band instead.
+        def _l2_progress(done, total):
+            if total <= 0:
+                return
+            pct = 30 + int(20 * done / total)
+            _report(min(pct, 50), f"Analyzing pages {done}/{total}")
+
+        l2_results, page_loss_warnings = self._build_l2(
+            doc_id, parsed_doc, preprocessed_pages, tid, plugin,
+            on_page_done=_l2_progress)
 
         # Document classification
         # V5.0: Generate document-level summary before classification
@@ -585,13 +598,20 @@ class DocumentIndexBuilder:
 
 
     def _build_l2(self, doc_id: str, parsed_doc: ParsedDocument,
-                  preprocessed_pages: list, tid: str, plugin=None) -> tuple[list[dict], list[str]]:
+                  preprocessed_pages: list, tid: str, plugin=None,
+                  on_page_done=None) -> tuple[list[dict], list[str]]:
         """Build L2 layer: page-level processing.
         Returns (l2_results, warnings). A page whose analysis raised is left out
         of the index, so it is named in the warnings: without that the document
         would be recorded as complete while silently missing content.
+
+        ``on_page_done`` (optional) is called once per analysed page as
+        ``on_page_done(done, total)`` so the caller can surface progress. L2 is
+        the longest ingest stage (one LLM call per page), so without it the
+        progress bar sits at a single value for the whole run. The callback
+        fires from the collecting thread only, so implementations need no lock.
         """
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         metadata_db, vector_db = self._get_dbs(tid)
 
         # Clean up old data
@@ -755,16 +775,32 @@ class DocumentIndexBuilder:
             max_workers = 1
         page_results = {}
         failed_pages: list[int] = []
+        total_pages = len(parsed_doc.pages)
+        done_pages = 0
+
+        def _on_done():
+            nonlocal done_pages
+            done_pages += 1
+            if on_page_done:
+                try:
+                    on_page_done(done_pages, total_pages)
+                except Exception:
+                    pass
+
         if max_workers > 1:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {executor.submit(_analyze_single_page, i): i for i in range(len(parsed_doc.pages))}
-                for future in futures:
+                # as_completed so progress reflects pages finished, not the
+                # order they were submitted (which is what the plain-iteration
+                # form yielded, holding the bar until the first slow page).
+                for future in as_completed(futures):
                     try:
                         result = future.result()
                         page_results[result["page_num"]] = result
                     except Exception as e:
                         failed_pages.append(parsed_doc.pages[futures[future]].page_num)
                         logger.error(f"Page analysis failed (page {failed_pages[-1]}): {e}", exc_info=True)
+                    _on_done()
         else:
             for i in range(len(parsed_doc.pages)):
                 try:
@@ -773,6 +809,7 @@ class DocumentIndexBuilder:
                 except Exception as e:
                     failed_pages.append(parsed_doc.pages[i].page_num)
                     logger.error(f"Page analysis failed (page {failed_pages[-1]}): {e}", exc_info=True)
+                _on_done()
 
         # Phase 2: serial writes
         structure_index, explicit_sections = self._build_structure_index(doc_id, page_results, parsed_doc)

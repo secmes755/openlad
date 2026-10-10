@@ -80,3 +80,35 @@ def test_a_complete_run_produces_no_warnings(monkeypatch):
     assert len(meta.saved) == 3
     assert warnings == []
     assert ("degraded" if builder._collect_ingest_warnings([], {}, warnings) else "verified") == "verified"
+
+
+def test_page_progress_callback_reports_monotonic_page_counts(monkeypatch):
+    """L2 is the longest ingest stage; the callback keeps the bar moving."""
+    builder, meta = _builder(monkeypatch, failing_page=None)
+    parsed_doc = SimpleNamespace(filename="d.pdf", pages=PAGES)
+
+    calls = []
+    builder._build_l2("doc-1", parsed_doc, PREPROCESSED, "admin",
+                      on_page_done=lambda done, total: calls.append((done, total)))
+
+    assert calls == [(1, 3), (2, 3), (3, 3)], calls
+
+
+def test_page_progress_callback_fires_for_failed_pages_and_survives_raising(monkeypatch):
+    """A failed page still counts (the run moved on), and a broken callback
+    must never take down ingestion."""
+    builder, meta = _builder(monkeypatch, failing_page=2)
+    parsed_doc = SimpleNamespace(filename="d.pdf", pages=PAGES)
+
+    calls = []
+    l2_results, _ = builder._build_l2("doc-1", parsed_doc, PREPROCESSED, "admin",
+                                      on_page_done=lambda done, total: calls.append(done))
+    assert calls == [1, 2, 3], calls
+    assert len(l2_results) == 2
+
+    def _boom(done, total):
+        raise RuntimeError("callback blew up")
+
+    l2_results, _ = builder._build_l2("doc-1", parsed_doc, PREPROCESSED, "admin",
+                                      on_page_done=_boom)
+    assert len(l2_results) == 2, "a raising callback must not abort the build"

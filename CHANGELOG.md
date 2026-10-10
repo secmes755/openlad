@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Ingestion progress now advances during page analysis.** L2 (page-level
+  processing) runs one LLM call per page and owned the whole 30 → 50 band of
+  the progress scale without reporting anything inside it, so indexing a
+  document of a few thousand pages showed a bar frozen at 30% for tens of
+  minutes. Page completion is now mapped onto the band with an
+  `Analyzing pages N/M` message. Results are unchanged: page analysis output
+  is collected with `as_completed` into the same page-number keyed map.
+
 ### Fixed
 
 - **Documents are now recorded under their original filename.** Uploads are
