@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Removed leftover `[HASH_DEBUG]` instrumentation from ingestion.** Six
+  debug log statements had shipped in main since the first open-source
+  release: five `info` lines per ingested document plus one `warning` on a
+  normal code path, flooding batch-ingestion logs (6 lines × N documents)
+  and manufacturing alert noise. No behavior change.
+
 - **Deleting a document now removes its files from disk.** The delete
   endpoint only dropped the metadata rows and vectors, leaving the original
   file and every page render / chart crop on disk indefinitely — inflating

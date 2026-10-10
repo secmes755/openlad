@@ -156,10 +156,8 @@ class DocumentIndexBuilder:
 
         # 1. Compute file MD5
         file_hash = self._compute_file_hash(file_path)
-        logger.info(f"[HASH_DEBUG] ingest: tenant_id={self.tenant_id}, db_path={metadata_db.db_path}")
 
         # 2. Check if already imported
-        logger.info(f"[HASH_DEBUG] ingest: computed hash={file_hash}, checking dup...")
         existing_doc = metadata_db.get_document_by_hash(file_hash)
         if existing_doc:
             logger.info(f"File already imported (duplicate skipped): {path.name} -> doc_id={existing_doc['id']}")
@@ -195,9 +193,6 @@ class DocumentIndexBuilder:
             text_source=text_source,
             industry_package_id=industry_hint
         )
-        # DEBUG: verify save
-        verify_doc = metadata_db.get_document(doc_id)
-        logger.info(f"[HASH_DEBUG] ingest: after save, get_document(doc_id) returns: found={verify_doc is not None}, file_hash={verify_doc.get('file_hash') if verify_doc else 'None'}")
 
         result = {
             "doc_id": doc_id,
@@ -263,7 +258,6 @@ class DocumentIndexBuilder:
 
         logger.info(f"Building index for doc: {doc_id}")
         metadata_db, vector_db = self._get_dbs(tid)
-        logger.info(f"[HASH_DEBUG] build_index: tenant_id={tid}, db_path={metadata_db.db_path}")
 
         _report(10, "Parsing document")
         if parsed_doc is None:
@@ -364,11 +358,8 @@ class DocumentIndexBuilder:
         # literal "Other", so nothing downstream can mistake it for a category.
         doc_type = classification.get("category_level2")
         existing_doc = metadata_db.get_document(doc_id)
-        logger.info(f"[HASH_DEBUG] build_index save: existing_doc keys={list(existing_doc.keys()) if existing_doc else 'None'}, file_hash={existing_doc.get('file_hash') if existing_doc else 'N/A'}, passed_hash={file_hash}")
         # Prefer passed-in file_hash (from ingest_document, guaranteed non-None)
         final_hash = file_hash or (existing_doc.get("file_hash") if existing_doc else None)
-        if not final_hash:
-            logger.warning(f"[HASH_DEBUG] build_index: file_hash is None! existing_doc={existing_doc is not None}, passed_hash={file_hash}")
         # Title derivation chain (priority):
         #   1. explicit title param (upload API)
         #   2. structured LLM extraction from L1 summary + filename
