@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Documents are now recorded under their original filename.** Uploads are
+  stored on disk as `{doc_id}_{name}` to keep disk names unique, but that
+  storage prefix leaked into `documents.filename`: the document list showed
+  prefixed names, the filename-derived title fallback could inherit the UUID,
+  and automation could not map an uploaded file back to the stored document.
+  The parser now strips the prefix at the single dispatch point (all file
+  types), and `GET /documents` accepts an exact-match `filename` filter.
+  Existing rows are unaffected (cosmetic only); dedup continues to key on
+  the file hash.
+
 - **Removed leftover `[HASH_DEBUG]` instrumentation from ingestion.** Six
   debug log statements had shipped in main since the first open-source
   release: five `info` lines per ingested document plus one `warning` on a

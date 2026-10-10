@@ -341,7 +341,8 @@ class TenantMetadataDB:
             row = conn.execute("SELECT * FROM documents WHERE file_hash = ?", (file_hash,)).fetchone()
             return _doc_from_row(row) if row else None
 
-    def count_documents(self, status: str = None, industry_package_id: str = None) -> int:
+    def count_documents(self, status: str = None, industry_package_id: str = None,
+                        filename: str = None) -> int:
         query = "SELECT COUNT(*) FROM documents WHERE 1=1"
         params = []
         if status:
@@ -350,6 +351,9 @@ class TenantMetadataDB:
         if industry_package_id:
             query += " AND industry_package_id = ?"
             params.append(industry_package_id)
+        if filename:
+            query += " AND filename = ?"
+            params.append(filename)
         with self.get_connection() as conn:
             row = conn.execute(query, params).fetchone()
             return row[0] if row else 0
@@ -361,6 +365,7 @@ class TenantMetadataDB:
             return row[0] if row else 0
 
     def list_documents(self, status: str = None, industry_package_id: str = None,
+                       filename: str = None,
                        skip: int = 0, limit: int = 100) -> list[dict]:
         query = "SELECT * FROM documents WHERE 1=1"
         params = []
@@ -370,6 +375,9 @@ class TenantMetadataDB:
         if industry_package_id:
             query += " AND industry_package_id = ?"
             params.append(industry_package_id)
+        if filename:
+            query += " AND filename = ?"
+            params.append(filename)
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, skip])
         with self.get_connection() as conn:

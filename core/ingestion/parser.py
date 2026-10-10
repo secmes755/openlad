@@ -215,6 +215,23 @@ def _clean_ocr_transcription(text: str) -> str:
     return cleaned
 
 
+# The upload route stores files on disk as "{doc_id}_{original_name}" to keep
+# disk names unique. That prefix is a storage detail — strip it so the DB
+# record, list/filter APIs and title derivation all see the user's original
+# filename.
+_DOC_ID_PREFIX_RE = re.compile(
+    r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_')
+
+
+def strip_doc_id_prefix(filename: str | None) -> str:
+    """Remove the "{doc_id}_" upload prefix from a stored filename.
+
+    Names that do not carry a full UUID prefix are returned unchanged, so a
+    user's file genuinely named like a partial UUID is never mangled.
+    """
+    return _DOC_ID_PREFIX_RE.sub('', filename or '')
+
+
 class ParsedPage:
     """Parsed page"""
     def __init__(self, page_num: int, raw_text: str = "",
@@ -291,23 +308,26 @@ class DocumentParser:
             raise ValueError(f"Unsupported file format: {suffix}")
 
         if suffix == ".pdf":
-            return self._parse_pdf(path)
+            doc = self._parse_pdf(path)
         elif suffix in [".xlsx", ".xls"]:
-            return self._parse_excel(path)
+            doc = self._parse_excel(path)
         elif suffix in [".pptx", ".ppt"]:
-            return self._parse_ppt(path)
+            doc = self._parse_ppt(path)
         elif suffix in [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif"]:
-            return self._parse_image(path)
+            doc = self._parse_image(path)
         elif suffix == ".md":
-            return self._parse_markdown(path)
+            doc = self._parse_markdown(path)
         elif suffix == ".txt":
-            return self._parse_text(path)
+            doc = self._parse_text(path)
         elif suffix in [".html", ".htm"]:
-            return self._parse_html(path)
+            doc = self._parse_html(path)
         elif suffix == ".docx":
-            return self._parse_docx(path)
+            doc = self._parse_docx(path)
         else:
             raise ValueError(f"Unsupported file format: {suffix}")
+
+        doc.filename = strip_doc_id_prefix(doc.filename)
+        return doc
 
     # ========================================================================
     # PDF Parsing

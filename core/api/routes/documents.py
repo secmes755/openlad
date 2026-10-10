@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 logger = logging.getLogger(__name__)
 
 from ...db.tenant_db import get_tenant_metadata_db
-from ...ingestion.parser import DocumentParser
+from ...ingestion.parser import DocumentParser, strip_doc_id_prefix
 from ...tenant.context import get_tenant_context
 
 router = APIRouter()
@@ -198,13 +198,8 @@ async def upload_document(
 
     # Save uploaded file (rename temp file to final path)
     doc_id = str(uuid.uuid4())
-    # FIX: Clean up existing doc_id/UUID prefix in filename to avoid double stacking
-    import re
-    clean_filename = re.sub(
-        r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_',
-        '',
-        file.filename or ""
-    )
+    # Strip any doc_id prefix left by a previous upload to avoid double stacking
+    clean_filename = strip_doc_id_prefix(file.filename or "")
     clean_filename = clean_filename or (file.filename or "upload.pdf")
     clean_filename = os.path.basename(clean_filename)
     upload_path = ctx.get_documents_dir() / f"{doc_id}_{clean_filename}"
@@ -299,15 +294,18 @@ async def get_upload_progress(task_id: str):
 @router.get("/documents")
 async def list_documents(status: str | None = None,
                          industry: str | None = None,
+                         filename: str | None = None,
                          skip: int = 0, limit: int = 100):
-    """List documents"""
+    """List documents. filename filters by the exact original (uploaded) name,
+    so automation can map a file it sent to the stored document."""
     ctx = get_tenant_context()
     if not ctx:
         raise HTTPException(status_code=400, detail="Tenant context required")
 
     db = get_tenant_metadata_db(ctx.tenant_id)
-    total = db.count_documents(status=status, industry_package_id=industry)
-    docs = db.list_documents(status=status, industry_package_id=industry, skip=skip, limit=limit)
+    total = db.count_documents(status=status, industry_package_id=industry, filename=filename)
+    docs = db.list_documents(status=status, industry_package_id=industry, filename=filename,
+                             skip=skip, limit=limit)
     return {
         "total": total,
         "documents": docs
