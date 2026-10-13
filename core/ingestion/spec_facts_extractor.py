@@ -41,6 +41,63 @@ def strip_vlm_blocks(text: str) -> str:
     return _VLM_BLOCK_RE.sub("", text)
 
 
+# --- HTML scaffolding stripping ---------------------------------------------
+# Rich-text / HTML->PDF conversions leave markup in the text layer
+# ("<td style=\"width: 40%\">", "<div class=\"x\">"). The KV pattern then reads
+# CSS declarations as spec facts ("width: 40%", "font-size: 1.5em"), and the
+# raw markup floods source_text. This strips the markup while keeping the text
+# inside it: "<td style=\"width: 5%\">24</td>" -> "24".
+#
+# Boundary (deliberate): a bare "<" that is not the start of a known HTML
+# element is never touched, because datasheets legitimately contain it —
+# comparison operators ("< 3.3 V") and subscript markup ("T<sub>j</sub>",
+# which must become "Tj", not vanish). Only KNOWN element names are treated as
+# tags. Real HTML->PDF text layers truncate tags mid-way (a page-break can cut
+# "<div style=\"left: 1240%" with no closing '>' or quote), so a tag is
+# recognised by its NAME alone, with or without a closing '>'.
+_HTML_TAG_NAMES = (
+    "html|head|body|div|span|p|br|hr|td|th|tr|table|thead|tbody|tfoot|"
+    "ul|ol|li|dl|dt|dd|a|img|font|b|i|u|s|em|strong|sub|sup|small|big|"
+    "h1|h2|h3|h4|h5|h6|pre|code|blockquote|caption|col|colgroup|"
+    "section|article|header|footer|nav|aside|figure|figcaption|main"
+)
+# A tag, terminated or truncated: "<name ...>" / "</name>" / "<name ..." (EOF).
+_HTML_TAG_RE = re.compile(
+    rf'</?(?:{_HTML_TAG_NAMES})(?=[\s/>]|$)[^<>]*?(?:>|$)', re.I)
+# A style/class/id/... attribute, terminated or truncated (unclosed quote runs
+# to end of line — HTML->PDF text layers rarely close them).
+_HTML_ATTR_RE = re.compile(
+    r'\s(?:style|class|id|width|height|align|valign|colspan|rowspan|bgcolor)'
+    r'\s*=\s*(?:"[^"]*"?|\'[^\']*\'?|[^\s<>]+)', re.I)
+# A trailing run of CSS declarations left orphaned by a truncated tag
+# (e.g. "absolute; top: 20px; width: 80%" after the tag head is removed).
+# Only removed when it is unambiguously CSS: several "prop: value;" pairs.
+_CSS_RUN_RE = re.compile(
+    r'(?:\b(?:position|top|left|right|bottom|width|height|margin|padding|'
+    r'font|color|background|border|display|float|text-align|line-height|'
+    r'z-index|opacity|vertical-align|white-space|overflow|visibility)\s*'
+    r':\s*[^;<>{}]{0,40};?\s*){2,}', re.I)
+
+
+def strip_html_scaffolding(text: str) -> str:
+    """Remove HTML markup from a page's text layer, keeping the inner text.
+
+    ``<td style="width: 5%">24</td>`` -> ``24``; ``T<sub>j</sub>`` -> ``Tj``.
+    Truncated tags (a page break cutting ``<div style="left: 1240%`` with no
+    closing ``>``) are handled too. A bare ``<`` that is not the start of a
+    known HTML element is left in place so comparison operators and other
+    legitimate uses survive.
+    """
+    if not text:
+        return ""
+    out = _CSS_RUN_RE.sub(" ", text)
+    out = _HTML_TAG_RE.sub("", out)
+    # Attribute fragments from tags whose name was not enumerated — drop the
+    # attribute only, so CSS declarations can never be read as spec facts.
+    out = _HTML_ATTR_RE.sub("", out)
+    return out
+
+
 # --- Number words ------------------------------------------------------------
 _NUMBER_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -228,6 +285,62 @@ def _extend_source(lines: list[str], i: int, cap: int = 300) -> str:
     return " ".join(parts)[:cap]
 
 
+# --- Page-level relevance gate ----------------------------------------------
+# Some pages are structurally dense in facts that carry no spec meaning: TRM
+# register-description tables are almost entirely bit-field rows ("b0: 0x0 R/W",
+# "Value After Reset: 0x0"), which inflate the index and crowd out the injected
+# fact quota without helping "what does this chip support" queries.
+#
+# The judgement of WHICH pages to skip is domain vocabulary, so it lives in the
+# pack (spec_extraction.page_skip_patterns: page-level regexes). Core keeps the
+# mechanism only — a page whose text matches any pattern is skipped whole.
+# Pack-less / pattern-less configurations skip nothing (opt-in, no behaviour
+# change for existing corpora). Each entry is a regex matched against the page's
+# cleaned text; an optional "min_hits" dict form allows requiring several
+# distinct matches before skipping.
+def _build_page_skip_re(patterns: list) -> list[re.Pattern]:
+    """Compile pack-supplied page-skip patterns (skip on ANY match).
+
+    Accepts plain regex strings, or {"pattern": str, "min_hits": n} dicts
+    (skip that page only when >= n matches occur). Invalid regexes are ignored
+    so a malformed pack cannot break extraction.
+    """
+    out: list[re.Pattern] = []
+    for p in (patterns or []):
+        if isinstance(p, str):
+            pat = p
+        elif isinstance(p, dict):
+            pat = p.get("pattern") or ""
+        else:
+            continue
+        if not pat:
+            continue
+        try:
+            out.append(re.compile(pat, re.I))
+        except re.error:
+            continue
+    return out
+
+
+def _page_is_skipped(text: str, patterns: list, skip_re: list[re.Pattern]) -> bool:
+    """True if the page's text should be skipped by the pack's page gate."""
+    if not skip_re or not text:
+        return False
+    # Pair each compiled regex with its threshold (dict form: min_hits>1).
+    thresh = []
+    for p in (patterns or []):
+        if isinstance(p, dict):
+            try:
+                thresh.append(max(1, int(p.get("min_hits", 1))))
+            except (TypeError, ValueError):
+                thresh.append(1)
+        elif isinstance(p, str):
+            thresh.append(1)
+    for rx, want in zip(skip_re, thresh):
+        if sum(1 for _ in rx.finditer(text)) >= want:
+            return True
+    return False
+
 
 def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
                                   doc_id: str,
@@ -254,6 +367,8 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         [o for o in (extraction.get("support_objects") or []) if o])
     resolution_re = _build_resolution_re(
         [c for c in (extraction.get("resolution_codecs") or []) if c])
+    page_skip_patterns = extraction.get("page_skip_patterns") or []
+    page_skip_re = _build_page_skip_re(page_skip_patterns)
 
     # The assertion layer is industry-vocabulary driven. Without a pack
     # providing spec vocabulary there are no meaningful assertions to
@@ -274,7 +389,16 @@ def extract_spec_facts_from_text(raw_text: str, page_num: int, entity: str,
         return []
 
     text = strip_vlm_blocks(raw_text)
+    # Rich-text / HTML->PDF text layers carry markup that the KV pattern would
+    # otherwise read as facts ("width: 40%", "font-size: 1.5em"). Strip the
+    # scaffolding before matching; the raw text is kept elsewhere for evidence.
+    text = strip_html_scaffolding(text)
     if not text.strip():
+        return []
+    # Page-level relevance gate (pack-driven): skip pages the industry declares
+    # as structurally off-target (e.g. TRM register-description tables whose
+    # bit-field rows carry no spec meaning). No-op without pack patterns.
+    if _page_is_skipped(text, page_skip_patterns, page_skip_re):
         return []
     facts: list[dict] = []
     seen = set()

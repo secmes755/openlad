@@ -19,6 +19,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Spec-fact `unit` is now persisted by the online ingest path.** The rule
+  extractor has always emitted a `unit` (and an `extractor` tag), but the
+  builder's `insert_spec_fact` call omitted both, so every row silently took
+  the column default `''` — an entire datasheet corpus (35,881 facts) stored
+  no units while the offline re-extraction script passed them correctly. The
+  builder now forwards every field the extractor returns, so the online and
+  offline paths agree. Data-integrity fix; the `unit` column is not read back
+  by retrieval, so no query behaviour changes.
+
+- **HTML/CSS markup in a PDF text layer no longer becomes spec facts.**
+  Documents converted from HTML (or authored in rich text) keep markup like
+  `<td style="width: 40%">` in their text layer, and the key-value pattern read
+  the CSS declarations as assertions (`attribute='width'`, `value='40%'`,
+  source_text = raw markup) — 2,032 such rows in one reporting tenant. The
+  extractor now strips HTML scaffolding before matching, preserving inner text
+  (`<td style="width: 5%">24</td>` → `24`) and collapsing subscript markup
+  (`T<sub>j</sub>` → `Tj`). A bare `<` that is not the start of a known element
+  is left untouched, so comparison operators (`< 3.3 V`) survive; truncated
+  tags cut at a page break are handled too.
+
+- **Register-description pages can now be excluded from fact extraction.**
+  TRM register tables are almost entirely bit-field rows (`b0: 0x0 R/W`,
+  `Value After Reset: 0x0`) — about 19,414 of one tenant's 35.9k facts — which
+  crowd out the injected fact quota without answering "what does this chip
+  support" queries. Industry packs may now declare
+  `spec_extraction.page_skip_patterns` (page-level regexes, optional
+  `min_hits`); a matching page is skipped whole. The judgement of which pages
+  are off-target stays in the pack — core keeps only the mechanism, and there
+  is deliberately no attribute-name blacklist (bit-field names are unbounded
+  and an enumeration would miss the next vendor's scheme). Opt-in: a pack
+  without the key skips nothing, so existing corpora are unaffected.
+
 - **OCR cleanups that shorten a page are no longer silent.** The degeneration
   cleaner runs unconditionally on every OCR transcription, and the number of
   characters it removes was never reported. A legitimate repetitive page — a

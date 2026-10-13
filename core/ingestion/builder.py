@@ -943,6 +943,8 @@ class DocumentIndexBuilder:
                             doc_id=fact["doc_id"], entity=fact["entity"],
                             attribute=fact["attribute"], value=fact["value"],
                             page_num=fact["page_num"], source_text=fact["source_text"],
+                            unit=fact.get("unit", ""),
+                            extractor=fact.get("extractor", "rule"),
                             verified=fact["verified"])
                         count += 1
                 except Exception as e:

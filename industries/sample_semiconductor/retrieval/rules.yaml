@@ -425,6 +425,19 @@ spec_extraction:
   frequency_terms:
     - frequency
     - clock
+  # 页级 relevance 门（page_skip_patterns）：命中任一模式的整页跳过抽取。
+  # 用于寄存器描述章（TRM register tables）——这些页几乎全是位域行
+  # （"b0: 0x0 R/W"、"Value After Reset: 0x0"），对"芯片支持什么/规格参数"
+  # 类检索无价值，却膨胀索引、挤占注入配额。
+  # 判定标准是"页文本里位域表行足够密集"，而非枚举位名（位名枚举不尽，
+  # 换厂商即失效）。min_hits 表示需要多少处命中才判该页为寄存器页。
+  page_skip_patterns:
+    - pattern: '(?m)^\s*b\d{1,2}\s*:\s*(?:0x[0-9a-fA-F]+|\d)'
+      min_hits: 6
+    - pattern: '(?m)^\s*(?:Register\s*Name|Default\s*Value|Value\s*After\s*Reset|Bit\s*Field|Field\s*Name)\s*[:|]'
+      min_hits: 3
+    - pattern: '(?m)^\s*(?:R/W|RO|WO|RW|Read\s*/\s*Write)\s*[:|]?\s*0x[0-9a-fA-F]+'
+      min_hits: 6
 
 # =============================================================================
 # 置信度打分词表（specificity_vocabulary）
