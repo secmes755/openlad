@@ -8,7 +8,7 @@ When admin creates ordinary users, each user is automatically assigned an indepe
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ...config import settings
+from ...config import settings, validate_username
 from ...services import model_config
 from ...services.resource_capacity import get_capacity_manager
 from ...tenant.auth import get_auth_manager
@@ -147,6 +147,22 @@ async def create_user(req: CreateUserRequest):
         raise HTTPException(status_code=503, detail=reason)
 
     count = max(1, min(req.count or 1, 100))
+
+    # Validate the name before any side effect. An ordinary user's tenant id is
+    # ``u{username}``, so an illegal name has to be refused here — checking it
+    # inside the loop would create a tenant first and fail after. A name that
+    # cannot form a legal tenant id gets 400, distinct from the 409 used for a
+    # duplicate.
+    if req.username:
+        try:
+            validate_username(req.username)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    if req.custom_tenant_id:
+        try:
+            settings.get_tenant_data_dir(req.custom_tenant_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     # Determine starting number (e.g. if users user_01, user_02 exist, start from 03)
     existing = auth.list_users("admin")

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 import bcrypt
 
+from ..config import validate_username
 from .models import UserInfo
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,13 @@ class AuthManager:
         unique, so the same name cannot be used in another tenant either;
         application-level guard; DB unique index is the last line of defense).
         api_key_ttl_days: API key lifetime in days (None=config default, <=0=never expires).
+
+        The name is also validated for shape here, before anything is written:
+        an ordinary user's tenant id is ``u{username}``, so a name that cannot
+        form a legal tenant id must be refused at the entry point rather than
+        later, inside tenant creation.
         """
+        validate_username(username)
         existing = self.system_db.find_users_by_username(username)
         if existing:
             raise ValueError(

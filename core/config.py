@@ -16,6 +16,28 @@ DATA_DIR = Path(_env_data_dir) if _env_data_dir else BASE_DIR / "data"
 # UUIDs) all match it.
 _TENANT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
+# Usernames become part of a tenant id (``u{username}``), so they are held to the
+# same shape — a username that passes here always yields a valid tenant id. The
+# rule is ASCII on purpose: usernames are used in URLs, database keys and
+# filesystem paths, and non-ASCII input has no defined normalisation there. The
+# first character must be alphanumeric so a name like ".." or ".hidden" cannot
+# appear as a path component on its own.
+_USERNAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+USERNAME_RULE = ("1-64 characters, must start with a letter or digit, then "
+                 "letters/digits/underscore/dot/hyphen only")
+
+
+def validate_username(username: str) -> str:
+    """Return ``username`` if it is a legal account name, else raise ValueError.
+
+    Enforced at the account-creation entry point so an illegal name is refused
+    with a clear message, rather than surfacing later as a filesystem error when
+    ``u{username}`` is turned into a tenant directory.
+    """
+    if not isinstance(username, str) or not _USERNAME_RE.fullmatch(username):
+        raise ValueError(f"invalid username {username!r}: must be {USERNAME_RULE}")
+    return username
+
 # Global system data
 SYSTEM_DB_PATH = DATA_DIR / "system.db"
 TENANTS_DIR = DATA_DIR / "tenants"
