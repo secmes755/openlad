@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Account names are validated before becoming tenant ids.** An ordinary user's
+  tenant id is `u{username}`, and a tenant id is joined into a filesystem path.
+  With tenant ids now shape-checked, a name outside the accepted set (a CJK name,
+  a space, a separator) could no longer form a tenant, and the failure surfaced
+  inside tenant creation rather than at the account-creation entry point. Names
+  are now validated up front in `create_user` and in the admin route before any
+  side effect, refused with 400 and a message stating the rule — distinct from
+  the 409 used for a duplicate name. The rule is ASCII and must start with a
+  letter or digit.
+
 - **A tenant id can no longer point outside the tenants directory.** The id
   arrives as a URL path parameter (`DELETE /admin/tenants/{tenant_id}`) and a
   hard delete hands the joined path to `shutil.rmtree`. A plain `Path` join
