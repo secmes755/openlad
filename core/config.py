@@ -3,11 +3,18 @@ OpenLAD System Configuration
 Core configuration management, fully standalone, uses OPENLAD_ prefix for environment variables
 """
 import os
+import re
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
 _env_data_dir = os.environ.get("OPENLAD_DATA_DIR")
 DATA_DIR = Path(_env_data_dir) if _env_data_dir else BASE_DIR / "data"
+
+# Tenant ids come from URL path parameters and are used to build filesystem paths
+# (and to rmtree on hard delete). Only this shape is accepted: no separators, no
+# "..", no absolute paths, no whitespace. Existing ids (admin, benchmark, u_t3a,
+# UUIDs) all match it.
+_TENANT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 # Global system data
 SYSTEM_DB_PATH = DATA_DIR / "system.db"
@@ -694,23 +701,45 @@ class Settings:
 
     @staticmethod
     def get_tenant_data_dir(tenant_id: str) -> Path:
-        return DATA_DIR / "tenants" / tenant_id
+        """Resolve a tenant's data directory, rejecting any id that escapes TENANTS_DIR.
+
+        The id reaches here straight from URL path parameters (``DELETE
+        /admin/tenants/{tenant_id}``) and is later handed to ``shutil.rmtree``.
+        A bare ``Path`` join accepts three shapes that escape the tenants root:
+
+        - ``"../../foo"``  — relative traversal
+        - ``"/tmp/evil"``  — an absolute path replaces the whole prefix, because
+          ``Path("/a") / "/tmp/x" == Path("/tmp/x")``
+        - ``".."``         — resolves to ``data/`` itself, so a hard delete would
+          remove every tenant at once
+
+        Validating the shape (not just the resolved path) is what makes the
+        rejection unconditional: it fails even when the target does not exist yet,
+        which a post-``resolve()`` prefix check alone would let through.
+        """
+        if not isinstance(tenant_id, str) or not _TENANT_ID_RE.fullmatch(tenant_id):
+            raise ValueError(f"invalid tenant_id: {tenant_id!r}")
+        root = TENANTS_DIR.resolve()
+        candidate = (root / tenant_id).resolve()
+        if candidate.parent != root:
+            raise ValueError(f"invalid tenant_id (escapes tenants root): {tenant_id!r}")
+        return candidate
 
     @staticmethod
     def get_tenant_db_path(tenant_id: str) -> Path:
-        return DATA_DIR / "tenants" / tenant_id / "metadata.db"
+        return Settings.get_tenant_data_dir(tenant_id) / "metadata.db"
 
     @staticmethod
     def get_tenant_vec_db_path(tenant_id: str) -> Path:
-        return DATA_DIR / "tenants" / tenant_id / "vectors.vec.db"
+        return Settings.get_tenant_data_dir(tenant_id) / "vectors.vec.db"
 
     @staticmethod
     def get_tenant_documents_dir(tenant_id: str) -> Path:
-        return DATA_DIR / "tenants" / tenant_id / "documents"
+        return Settings.get_tenant_data_dir(tenant_id) / "documents"
 
     @staticmethod
     def get_tenant_images_dir(tenant_id: str) -> Path:
-        return DATA_DIR / "tenants" / tenant_id / "images"
+        return Settings.get_tenant_data_dir(tenant_id) / "images"
 
 
 settings = Settings()

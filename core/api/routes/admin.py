@@ -8,6 +8,7 @@ When admin creates ordinary users, each user is automatically assigned an indepe
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ...config import settings
 from ...services import model_config
 from ...services.resource_capacity import get_capacity_manager
 from ...tenant.auth import get_auth_manager
@@ -112,8 +113,18 @@ async def get_tenant(tenant_id: str):
 async def delete_tenant(tenant_id: str, hard: bool = False):
     """Delete tenant (admin only)"""
     _require_admin()
+    # Reject a malformed id before it reaches the filesystem: a hard delete
+    # rmtree's the tenant directory, and the raw path parameter would otherwise
+    # accept traversal ("../../x"), absolute paths ("/tmp/x") and "..".
+    try:
+        settings.get_tenant_data_dir(tenant_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     mgr = get_tenant_manager()
-    success = mgr.delete_tenant(tenant_id, hard_delete=hard)
+    try:
+        success = mgr.delete_tenant(tenant_id, hard_delete=hard)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"success": success}
 
 
