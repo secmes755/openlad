@@ -1115,8 +1115,18 @@ class SegmentMerger:
         self.metadata_db = get_tenant_metadata_db(tenant_id) if tenant_id else None
 
 
-    def _load_industry_boost_rules(self, industry_hint: str) -> dict[str, Any]:
-        """Load industry package chapter boost rules (for merge phase)"""
+    def _load_industry_boost_rules(self, industry_hint: str | None) -> dict[str, Any]:
+        """Load industry package rules for the merge phase.
+
+        Returns the same shape the merge phase reads (``low_value_sections`` at
+        the top level). The earlier version returned
+        ``plugin.retrieval.get_section_boost_rules()``, whose keys come from the
+        ``section_boost_rules`` block of ``rules.yaml`` — a *sibling* of
+        ``low_value_sections``, not a container of it. The merge phase then looked
+        for ``low_value_sections`` inside that dict, never found it, and silently
+        applied no penalty at all. ``get_low_value_sections()`` is the accessor
+        that actually returns that block, and it already existed.
+        """
         if not industry_hint or industry_hint == "auto":
             return {}
         try:
@@ -1125,8 +1135,8 @@ class SegmentMerger:
             plugin = registry.get_plugin(industry_hint)
             if not plugin:
                 plugin = registry.get_plugin_by_category(industry_hint)
-            if plugin and hasattr(plugin.retrieval, 'get_section_boost_rules'):
-                return plugin.retrieval.get_section_boost_rules()
+            if plugin and hasattr(plugin.retrieval, 'get_low_value_sections'):
+                return {"low_value_sections": plugin.retrieval.get_low_value_sections()}
         except Exception as e:
             logger.debug(f"[MERGER] failed to load industry boost rules: {e}")
         return {}

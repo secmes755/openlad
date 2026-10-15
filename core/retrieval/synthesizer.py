@@ -156,8 +156,12 @@ class AnswerSynthesizer:
             self_check_passed = False
             if self._should_self_check(industry_pack):
                 answer_before_check = answer
-                answer = self._self_check(query, answer, context, industry_pack=industry_pack)
-                self_check_passed = (answer == answer_before_check)  # unchanged = passed
+                answer, checked = self._self_check(query, answer, context, industry_pack=industry_pack)
+                # `checked` is False when the verdict could not be read: the
+                # answer is returned untouched, and that must not be reported as
+                # a pass. `None` keeps "not verified" distinct from "verified
+                # wrong" in the confidence signal below.
+                self_check_passed = (answer == answer_before_check) if checked else None
 
             confidence = self._assess_confidence(answer, context, self_check_passed, industry_pack=industry_pack)
             return {"answer": answer, "sources": sources, "structured": False, "confidence": confidence}
@@ -301,9 +305,16 @@ For example: if the user asks whether a capability exists, the answer should inc
         pack_id = getattr(manifest, "id", None)
         return bool(pack_id) and pack_id != "generic"
 
-    def _self_check(self, query: str, raw_answer: str, context: str, industry_pack=None) -> str:
+    def _self_check(self, query: str, raw_answer: str, context: str, industry_pack=None) -> tuple[str, bool]:
+        """Review ``raw_answer`` against the source context.
+
+        Returns ``(answer, checked)``. ``checked`` is False when the reviewer's
+        verdict could not be obtained — an unreadable JSON reply, or an
+        exception — in which case the answer is passed through unchanged and the
+        caller must not record it as a pass.
+        """
         if "not found" in raw_answer.lower() or "not mentioned" in raw_answer.lower():
-            return raw_answer
+            return raw_answer, True
 
         # V5 FIX: Smart sampling for long document contexts
         # Extract key information from the answer (e.g., article numbers, crime names, etc.), locate relevant evidence in context
@@ -324,15 +335,25 @@ Determine whether the specific conclusions in the answer are supported by origin
 Output only JSON."""
         try:
             result = self.model_client.generate_json(check_prompt, temperature=0.1, max_tokens=2048)
+            # An unparsable reply returns {} just like a genuine "{}" answer, and
+            # only `last_json_error` tells them apart. Without this guard the
+            # default below turned "we could not read the verdict" into
+            # "the verdict was passed", which both skipped the correction and
+            # pushed confidence to high. `None` — not `False` — is the right
+            # outcome: we do not know that the answer is wrong, and rewriting it
+            # on no evidence is worse than leaving it and not claiming certainty.
+            if getattr(self.model_client, "last_json_error", None):
+                logger.warning("[SYNTHESIZER] Self-Check reply unreadable, treating as not-checked")
+                return raw_answer, False
             if result.get("passed", True) is False:
                 corrected = result.get("corrected_answer", "")
                 if corrected:
                     logger.info("[SYNTHESIZER] Self-Check found issues, using corrected answer")
-                    return corrected
-            return raw_answer
+                    return corrected, True
+            return raw_answer, True
         except Exception as e:
             logger.warning(f"[SYNTHESIZER] Self-Check failed: {e}")
-            return raw_answer
+            return raw_answer, False
 
     def _extract_relevant_context(self, raw_answer: str, context: str, max_chars: int = None, industry_pack=None) -> str:
         """
@@ -610,8 +631,13 @@ Output JSON:
             return True
         return False
 
-    def _assess_confidence(self, answer: str, context: str, self_check_passed: bool = False, industry_pack=None) -> str:
+    def _assess_confidence(self, answer: str, context: str, self_check_passed: bool | None = False, industry_pack=None) -> str:
         """Assess answer confidence: high / medium / low / none.
+
+        ``self_check_passed`` is three-valued: True (reviewed, answer stands),
+        False (not reviewed because the gate is off), or None (the gate ran but
+        the verdict was unreadable). Only True may justify ``high`` — an
+        unreadable verdict is not evidence of correctness.
 
         Uses content-based heuristics (zero extra LLM latency) to provide a
         quality signal to the API consumer.  The score reflects how well the
