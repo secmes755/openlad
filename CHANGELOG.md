@@ -19,6 +19,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A tenant id can no longer point outside the tenants directory.** The id
+  arrives as a URL path parameter (`DELETE /admin/tenants/{tenant_id}`) and a
+  hard delete hands the joined path to `shutil.rmtree`. A plain `Path` join
+  accepted three shapes that escaped the tenants root: relative traversal
+  (`../../x`), an absolute path (which replaces the whole prefix, since
+  `Path("/a") / "/tmp/x" == Path("/tmp/x")`), and `..` (which resolves to
+  `data/` — a recursive delete would have taken every tenant). The path builder
+  now validates the id's shape and confirms the resolved parent, and the delete
+  route rejects a malformed id with 400 instead of failing at the filesystem.
+  Every existing id (`admin`, `benchmark`, `u_*`, UUIDs) still resolves.
+
+- **An unreadable answer self-check is no longer recorded as a pass.** The
+  reviewer's verdict comes back through `generate_json`, which returns `{}` both
+  for a genuine empty answer and for a reply that could not be parsed — only
+  `last_json_error` distinguishes them, and the self-check read neither it nor
+  anything but `result.get("passed", True)`. An unparsable reply therefore took
+  the default, the answer was passed through unchanged, and the
+  unchanged-comparison marked the check as *passed*, lifting confidence to
+  `high` on a verdict that was never obtained. An unreadable verdict is now
+  reported as "not checked" rather than "passed", and the confidence signal
+  distinguishes the three cases (passed / not run / could not be read) so only a
+  real pass can justify `high`.
+
+- **Industry low-value-section penalties now reach the merge phase.** The merge
+  phase read `low_value_sections` from the rules dict, but the loader returned
+  `get_section_boost_rules()`, whose keys come from the `section_boost_rules`
+  block — a *sibling* of `low_value_sections` in `rules.yaml`, not a container
+  of it. The key was never present, so the penalty silently never applied. The
+  loader now uses `get_low_value_sections()`, the accessor that returns that
+  block, which already existed on the plugin.
+
 - **Spec-fact `unit` is now persisted by the online ingest path.** The rule
   extractor has always emitted a `unit` (and an `extractor` tag), but the
   builder's `insert_spec_fact` call omitted both, so every row silently took
