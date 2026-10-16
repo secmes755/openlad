@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The index builder no longer remembers a tenant.** ``DocumentIndexBuilder``
+  is an app-state singleton, but it stored the tenant of the most recent
+  ingest on ``self.tenant_id`` and fell back to it — and then to
+  ``"default"`` — whenever a method was called without an explicit tenant. The
+  tenant a write landed in could therefore depend on which ingest ran last.
+  The field is removed and every method now requires an explicit tenant,
+  refusing with a clear error instead of guessing; no caller relied on the
+  fallback.
+
 - **A model call's own outcome travels with its result.** ``ModelClient`` is a
   process-wide singleton serving every tenant, page thread and background
   task, yet it published per-call facts on itself for the caller to read back

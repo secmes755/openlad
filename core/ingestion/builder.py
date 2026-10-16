@@ -80,7 +80,11 @@ class DocumentIndexBuilder:
     """Document index builder (two layers: L2 content index + vector embeddings)"""
 
     def __init__(self, tenant_id: str = None):
-        self.tenant_id = tenant_id
+        # No ``self.tenant_id``: the builder is an app-state singleton, so a
+        # "current tenant" field would be whichever ingest touched it last,
+        # and any code reading it back could act on another tenant's id.
+        # Every method takes the tenant explicitly; ``_require_tenant``
+        # refuses to guess when one is not supplied.
         self.model_client = get_model_client()
         self.parser = DocumentParser()
         self.classifier = DocumentClassifier()
@@ -111,9 +115,25 @@ class DocumentIndexBuilder:
                 self._ingest_locks[tid] = lock
             return lock
 
+    @staticmethod
+    def _require_tenant(tenant_id: str | None) -> str:
+        """Return the tenant id or refuse to proceed without one.
+
+        Ingestion writes documents into a tenant's databases. Guessing the
+        tenant (previously: fall back to a field the last ingest set, then
+        to "default") risks writing into the wrong tenant, which is worse
+        than failing the request. Callers pass the id explicitly.
+        """
+        if not tenant_id:
+            raise ValueError(
+                "a tenant id is required for ingestion; the builder no longer "
+                "keeps a current-tenant field, and guessing would risk writing "
+                "into another tenant")
+        return tenant_id
+
     def _get_dbs(self, tenant_id: str = None):
         """Get tenant databases"""
-        tid = tenant_id or self.tenant_id or "default"
+        tid = self._require_tenant(tenant_id)
         return get_tenant_metadata_db(tid), get_tenant_vector_db(tid)
 
     def ingest_document(self, file_path: str, tenant_id: str = None,
@@ -133,7 +153,7 @@ class DocumentIndexBuilder:
         highest priority; otherwise the title is derived from filename +
         L1 summary via structured LLM extraction (see build_index).
         """
-        tid = tenant_id or self.tenant_id or "default"
+        tid = self._require_tenant(tenant_id)
         with self._ingest_lock(tid):
             return self._ingest_document_impl(
                 file_path, tenant_id, industry_hint, auto_confirm,
@@ -144,9 +164,7 @@ class DocumentIndexBuilder:
                               auto_confirm: bool,
                               progress_callback,
                               title: str | None) -> dict[str, Any]:
-        tid = tenant_id or self.tenant_id or "default"
-        # Store for backward compat (some downstream code may read self.tenant_id)
-        self.tenant_id = tid
+        tid = self._require_tenant(tenant_id)
 
         path = Path(file_path)
         if not path.exists():
@@ -233,7 +251,7 @@ class DocumentIndexBuilder:
         reached from ingest_document on the same thread) so a direct caller
         cannot interleave with an in-flight ingest for the same tenant.
         """
-        tid = tenant_id or self.tenant_id or "default"
+        tid = self._require_tenant(tenant_id)
         with self._ingest_lock(tid):
             return self._build_index_impl(
                 doc_id, parsed_doc, preprocessed_pages, industry_hint,
@@ -247,7 +265,7 @@ class DocumentIndexBuilder:
                     file_hash: str = None,
                     tenant_id: str = None,
                     title: str | None = None) -> dict[str, Any]:
-        tid = tenant_id or self.tenant_id or "default"
+        tid = self._require_tenant(tenant_id)
 
         def _report(p, msg):
             if progress_callback:
@@ -1540,7 +1558,7 @@ class DocumentIndexBuilder:
         the page-keyed grouping below cannot represent multiple sections that
         start on the same page (e.g. 1.2.4 / 1.2.5 both on p12).
         """
-        tid = tenant_id or self.tenant_id or "default"
+        tid = self._require_tenant(tenant_id)
         from core.db.tenant_db import get_tenant_metadata_db
         metadata_db = get_tenant_metadata_db(tid)
 
