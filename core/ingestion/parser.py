@@ -4,6 +4,7 @@ Fully generalized, no industry-specific content
 """
 import logging
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -518,12 +519,17 @@ class DocumentParser:
                         except Exception as e:
                             logger.warning(f"Page {pn} classification failed: {e}")
                             page_classes[pn] = "TEXT"
-                stats = self.page_classifier.stats
+                # Aggregate the labels this document's own threads returned.
+                # The classifier keeps no tally (it is shared across tenants
+                # and page threads), so the summary is computed from the map
+                # this call filled — the only place that knows which document
+                # each label belongs to.
+                stats = Counter(page_classes.values())
                 logger.info(
-                    f"VLM classification complete: {stats['total']} pages "
-                    f"(chart={stats['chart']}, image={stats['image']}, text={stats['text']}, blank={stats['blank']})"
+                    f"VLM classification complete: {len(page_classes)} pages "
+                    f"(chart={stats['CHART']}, image={stats['IMAGE']}, "
+                    f"text={stats['TEXT']}, blank={stats['BLANK']})"
                 )
-                self.page_classifier.reset_stats()
             elif ocr_mode:
                 logger.info(
                     f"OCR endpoint mode: {len(candidate_images)} candidate pages "

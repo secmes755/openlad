@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The page classifier keeps no per-document tally.** ``PageClassifier`` was a
+  process-wide singleton holding ``_stats``, incremented by every page thread
+  and read-then-reset by whichever document finished first. Under the parser's
+  page-level thread pool the tally mixed documents together, and the first
+  document to finish wiped the others' counts before they were read — so the
+  logged "VLM classification complete" summary was wrong for both the document
+  that finished first (inflated by others' pages) and the ones still running
+  (their counts discarded). The classifier is now stateless and not a
+  singleton; the summary is aggregated from the page map the caller already
+  fills, which is the only place that knows which document a label belongs to.
+
 - **Diagnostic routes build tenant paths the way the rest of the code does.**
   Three sites joined ``TENANTS_DIR / tenant_id / "metadata.db"`` by hand,
   bypassing the validated builder. A bare ``Path`` join accepts an absolute

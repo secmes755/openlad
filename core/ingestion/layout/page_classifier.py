@@ -6,12 +6,15 @@ Design principles:
 - Use 72 DPI low-resolution images (~0.4s/page) for classification
 - Fast blank-page detection is done via image histograms before any VLM call
 - No hardcoded thresholds for content classes — relies entirely on VLM understanding
-- Singleton pattern, reuses ModelClient connection
+- Stateless: ``classify()`` returns the label and keeps no tally. The caller
+  already collects the labels it asked for (see ``parser.page_classes``), so a
+  classifier-held counter is both redundant and unsafe — a shared instance's
+  counter is cross-contaminated by every concurrent page thread, and reading it
+  as a per-document summary is wrong. Callers aggregate what they receive.
 """
 import base64
 import logging
 from io import BytesIO
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -66,21 +69,13 @@ def is_blank_image(page_image, blank_threshold: float = 0.005,
 
 
 class PageClassifier:
-    """VLM page classifier — determines if a page is a chart, image, text, or blank"""
+    """VLM page classifier — determines if a page is a chart, image, text, or blank.
 
-    _instance: Optional["PageClassifier"] = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
-    def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-        self._stats = {"total": 0, "chart": 0, "image": 0, "text": 0, "blank": 0}
+    Stateless on purpose. There is no tally to keep: the caller supplies the
+    page set and collects the returned labels, so it is the only place that
+    knows which document a label belongs to. A counter here would be shared by
+    every concurrent caller and could not tell documents apart.
+    """
 
     def classify(self, page_image, page_num: int = 0) -> str:
         """
@@ -98,8 +93,6 @@ class PageClassifier:
             One of "CHART", "IMAGE", "TEXT", "BLANK"
         """
         if is_blank_image(page_image):
-            self._stats["total"] += 1
-            self._stats["blank"] += 1
             return "BLANK"
 
         try:
@@ -147,20 +140,8 @@ class PageClassifier:
                 )
                 label = "TEXT"
 
-            self._stats["total"] += 1
-            self._stats[label.lower()] += 1
-
             return label
 
         except Exception as e:
             logger.warning(f"PageClassifier p{page_num}: classification failed {e}")
-            self._stats["total"] += 1
-            self._stats["text"] += 1
             return "TEXT"
-
-    @property
-    def stats(self) -> dict:
-        return dict(self._stats)
-
-    def reset_stats(self):
-        self._stats = {"total": 0, "chart": 0, "image": 0, "text": 0, "blank": 0}
