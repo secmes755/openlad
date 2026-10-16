@@ -8,7 +8,7 @@ When admin creates ordinary users, each user is automatically assigned an indepe
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ...config import settings, validate_username
+from ...config import settings, user_tenant_id, validate_username
 from ...services import model_config
 from ...services.resource_capacity import get_capacity_manager
 from ...tenant.auth import get_auth_manager
@@ -185,7 +185,14 @@ async def create_user(req: CreateUserRequest):
         else:
             username = req.username
             if count > 1:
+                # The derived name is a second, longer name — validate what is
+                # actually used, not just the base. Otherwise a 62-char base
+                # passes the pre-check and its suffixed siblings overflow.
                 username = f"{req.username}{i + 1:02d}"
+                try:
+                    validate_username(username)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
 
         # Auto-generate random password (if not provided)
         password = req.password
@@ -203,7 +210,14 @@ async def create_user(req: CreateUserRequest):
             if req.custom_tenant_id:
                 target_tenant_id = req.custom_tenant_id
             else:
-                target_tenant_id = f"u{username}"
+                try:
+                    target_tenant_id = user_tenant_id(username)
+                except ValueError as e:
+                    # 400, not 409: a derived name that cannot form a legal
+                    # tenant id is a bad request. A batch whose earlier members
+                    # already landed is still a partial success, but the caller
+                    # must not read this as "duplicate name".
+                    raise HTTPException(status_code=400, detail=str(e))
 
             # Ensure tenant exists
             existing_tenant = tenant_mgr.get_tenant(target_tenant_id)
@@ -215,9 +229,13 @@ async def create_user(req: CreateUserRequest):
                         tenant_id=target_tenant_id,
                         storage_quota_mb=5120
                     )
-                except ValueError:
-                    # Tenant ID already exists (rare), skip creation
-                    pass
+                except ValueError as e:
+                    # Only "already exists" may be swallowed here. Any other
+                    # ValueError means the tenant could not be created, and
+                    # continuing would write a user row whose tenant does not
+                    # exist — an account that exists but can never authenticate.
+                    if "already exists" not in str(e):
+                        raise HTTPException(status_code=400, detail=str(e))
             elif existing_tenant.status != "active":
                 # Tenant record exists but is unusable (soft-deleted): reactivate
                 # it so the recreated user's API key works immediately instead of

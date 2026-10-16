@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The account-name limit now leaves room for the tenant-id prefix.** An
+  ordinary user's tenant id is `u{username}` and its ceiling is 64 characters,
+  so a name's real budget is 63 — but the name rule allowed 64. A 64-character
+  name therefore passed validation, `u{name}` came out 65, and
+  `get_tenant_data_dir` refused it while the account row was already written:
+  the account was created, reported as success with a working API key, and
+  could then never authenticate, with no API path to repair it. The name
+  budget is now derived from the tenant-id ceiling minus the prefix, the
+  `u{username}` convention lives in one place (`user_tenant_id`, which asserts
+  the result is a legal id), and a tenant creation failure is no longer
+  swallowed and mistaken for "already exists".
+
 - **Account names are validated before becoming tenant ids.** An ordinary user's
   tenant id is `u{username}`, and a tenant id is joined into a filesystem path.
   With tenant ids now shape-checked, a name outside the accepted set (a CJK name,

@@ -16,15 +16,42 @@ DATA_DIR = Path(_env_data_dir) if _env_data_dir else BASE_DIR / "data"
 # UUIDs) all match it.
 _TENANT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
+# An ordinary user's tenant id is built by prefixing the account name, so the
+# name's length budget is the tenant id's minus the prefix. Deriving it keeps
+# the two in step: a name that passes here always yields a legal tenant id.
+# (The earlier hand-written 64 was one too many — ``u{64 chars}`` is 65, so the
+# account was created while its tenant could never be.)
+USER_TENANT_PREFIX = "u"
+_USERNAME_MAX_LEN = 64 - len(USER_TENANT_PREFIX)
+
 # Usernames become part of a tenant id (``u{username}``), so they are held to the
 # same shape — a username that passes here always yields a valid tenant id. The
 # rule is ASCII on purpose: usernames are used in URLs, database keys and
 # filesystem paths, and non-ASCII input has no defined normalisation there. The
 # first character must be alphanumeric so a name like ".." or ".hidden" cannot
 # appear as a path component on its own.
-_USERNAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
-USERNAME_RULE = ("1-64 characters, must start with a letter or digit, then "
-                 "letters/digits/underscore/dot/hyphen only")
+_USERNAME_RE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9_.-]{{0,{_USERNAME_MAX_LEN - 1}}}")
+USERNAME_RULE = (f"1-{_USERNAME_MAX_LEN} characters, must start with a letter or "
+                 "digit, then letters/digits/underscore/dot/hyphen only")
+
+
+def user_tenant_id(username: str) -> str:
+    """Return the tenant id an ordinary (non-admin) account is provisioned under.
+
+    Single definition of the ``u{username}`` convention: the name is validated
+    first and the result is asserted to be a legal tenant id, so no caller can
+    build an id that ``get_tenant_data_dir`` would later refuse.
+    """
+    validate_username(username)
+    tid = f"{USER_TENANT_PREFIX}{username}"
+    if not _TENANT_ID_RE.fullmatch(tid):
+        # Only reachable if the two rules above drift apart; fail loudly here
+        # rather than half-creating an account whose tenant can never exist.
+        raise ValueError(
+            f"internal error: username {username!r} yields illegal tenant id "
+            f"{tid!r}; the name and tenant-id length budgets are out of sync"
+        )
+    return tid
 
 
 def validate_username(username: str) -> str:

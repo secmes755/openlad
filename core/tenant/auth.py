@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import bcrypt
 
-from ..config import validate_username
+from ..config import _TENANT_ID_RE, validate_username
 from .models import UserInfo
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,14 @@ class AuthManager:
         later, inside tenant creation.
         """
         validate_username(username)
+        # A user row whose tenant cannot exist is an account that is created
+        # successfully and can then never authenticate. Refuse it here, before
+        # any write, rather than leaving the caller to discover it via 403s.
+        if not _TENANT_ID_RE.fullmatch(tenant_id):
+            raise ValueError(
+                f"invalid tenant_id {tenant_id!r}: must match "
+                f"{_TENANT_ID_RE.pattern}"
+            )
         existing = self.system_db.find_users_by_username(username)
         if existing:
             raise ValueError(
