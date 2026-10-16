@@ -19,6 +19,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Diagnostic routes build tenant paths the way the rest of the code does.**
+  Three sites joined ``TENANTS_DIR / tenant_id / "metadata.db"`` by hand,
+  bypassing the validated builder. A bare ``Path`` join accepts an absolute
+  path (which replaces the whole prefix — ``Path("/a") / "/tmp/x"`` is
+  ``Path("/tmp/x")``) and a traversal, so an admin-supplied ``tenant_id``
+  query parameter could read an arbitrary ``metadata.db``. All three now go
+  through ``get_tenant_db_path``; a malformed id is refused with 400 instead
+  of being joined. A source guard fails if a hand-built join is reintroduced.
+
+- **Tenant ids may not start with a dot.** The id becomes a directory name; a
+  leading dot makes it a hidden directory, and ``.``/``..`` were already
+  refused for the same reason — the component must not be able to stand on its
+  own. None of the 661 ids in the live system is affected.
+
+- **Retrieval result counts are bounded.** ``max_results`` was an unbounded
+  ``int`` on both skill request models and flowed straight into ``LIMIT ?``.
+  SQLite reads a negative limit as "no limit at all", so ``-1`` returned an
+  entire tenant and a huge value pulled it into memory. Bounded at the request
+  model and clamped again at the retriever entry, which is reachable without
+  going through the API.
+
+- **The tenant root the path builder resolves is the one the caller set.**
+  ``config.TENANTS_DIR`` and ``Settings.TENANTS_DIR`` named the same path, but
+  the builder read a third reference, so redirecting either — the natural way
+  to point a test or a deployment at a different root — was silently ignored
+  and paths still resolved against the original directory.
+
 - **The account-name limit now leaves room for the tenant-id prefix.** An
   ordinary user's tenant id is `u{username}` and its ceiling is 64 characters,
   so a name's real budget is 63 — but the name rule allowed 64. A 64-character
