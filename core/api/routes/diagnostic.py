@@ -105,7 +105,7 @@ async def list_all_tenants():
                 # Count documents for this tenant
                 doc_count = 0
                 try:
-                    metadata_db_path = str(settings.TENANTS_DIR / tenant_id / "metadata.db")
+                    metadata_db_path = str(settings.get_tenant_db_path(tenant_id))
                     if os.path.exists(metadata_db_path):
                         with closing(sqlite3.connect(metadata_db_path)) as meta_conn:
                             meta_cursor = meta_conn.cursor()
@@ -167,7 +167,13 @@ async def list_all_documents(
         tenant_stats = {}
 
         for tid in target_tenants:
-            metadata_db_path = str(settings.TENANTS_DIR / tid / "metadata.db")
+            try:
+                metadata_db_path = str(settings.get_tenant_db_path(tid))
+            except ValueError:
+                # A tenant row whose id cannot form a legal path (a legacy or
+                # hand-edited row) is skipped rather than joined unchecked.
+                logger.warning(f"[DIAGNOSTIC] Skipping tenant with illegal id: {tid!r}")
+                continue
 
             if not os.path.exists(metadata_db_path):
                 continue
@@ -354,7 +360,11 @@ async def system_health():
         tenants_dir = str(settings.TENANTS_DIR)
         if os.path.exists(tenants_dir):
             for tenant_dir in os.listdir(tenants_dir):
-                metadata_db = os.path.join(tenants_dir, tenant_dir, "metadata.db")
+                try:
+                    metadata_db = str(settings.get_tenant_db_path(tenant_dir))
+                except ValueError:
+                    # Not a tenant id (stray file, dotfile) — nothing to check.
+                    continue
                 if os.path.exists(metadata_db):
                     try:
                         with closing(sqlite3.connect(metadata_db)) as conn:
@@ -388,7 +398,13 @@ async def get_document_detail(doc_id: str, tenant_id: str):
         raise HTTPException(status_code=403, detail="Admin privileges required")
 
     try:
-        metadata_db_path = str(settings.TENANTS_DIR / tenant_id / "metadata.db")
+        # The id arrives as a query parameter, so it goes through the same
+        # builder every other path uses. A bare Path join would accept an
+        # absolute path or a traversal and read an arbitrary metadata.db.
+        try:
+            metadata_db_path = str(settings.get_tenant_db_path(tenant_id))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         if not os.path.exists(metadata_db_path):
             raise HTTPException(status_code=404, detail="Tenant database does not exist")

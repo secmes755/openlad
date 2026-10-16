@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 import core.api.routes.diagnostic as diag
+import core.config as config
 
 
 class _ConnSpy:
@@ -78,7 +79,7 @@ def _make_tenant_db(tenants_dir, tenant_id, with_doc):
 
 def test_404_path_closes_connection(tracked_conns, admin_ctx, monkeypatch, tmp_path):
     _make_tenant_db(tmp_path, "t1", with_doc=False)
-    monkeypatch.setattr(diag.settings, "TENANTS_DIR", tmp_path)
+    monkeypatch.setattr(config, "TENANTS_DIR", tmp_path)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(diag.get_document_detail("no-such-doc", "t1"))
@@ -90,7 +91,7 @@ def test_404_path_closes_connection(tracked_conns, admin_ctx, monkeypatch, tmp_p
 
 def test_success_path_closes_connection(tracked_conns, admin_ctx, monkeypatch, tmp_path):
     _make_tenant_db(tmp_path, "t1", with_doc=True)
-    monkeypatch.setattr(diag.settings, "TENANTS_DIR", tmp_path)
+    monkeypatch.setattr(config, "TENANTS_DIR", tmp_path)
 
     result = asyncio.run(diag.get_document_detail("d1", "t1"))
 
@@ -103,7 +104,7 @@ def test_error_path_closes_connection(tracked_conns, admin_ctx, monkeypatch, tmp
     tdir = tmp_path / "t1"
     tdir.mkdir()
     sqlite3.connect(tdir / "metadata.db").close()
-    monkeypatch.setattr(diag.settings, "TENANTS_DIR", tmp_path)
+    monkeypatch.setattr(config, "TENANTS_DIR", tmp_path)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(diag.get_document_detail("d1", "t1"))

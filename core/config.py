@@ -12,9 +12,11 @@ DATA_DIR = Path(_env_data_dir) if _env_data_dir else BASE_DIR / "data"
 
 # Tenant ids come from URL path parameters and are used to build filesystem paths
 # (and to rmtree on hard delete). Only this shape is accepted: no separators, no
-# "..", no absolute paths, no whitespace. Existing ids (admin, benchmark, u_t3a,
+# "..", no absolute paths, no whitespace. The first character must be
+# alphanumeric so an id cannot be a hidden directory (".hidden") or stand alone
+# as a path component ("..", "."). Existing ids (admin, benchmark, u_t3a,
 # UUIDs) all match it.
-_TENANT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_TENANT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 # An ordinary user's tenant id is built by prefixing the account name, so the
 # name's length budget is the tenant id's minus the prefix. Deriving it keeps
@@ -84,6 +86,17 @@ IMAGES_DIR = DATA_DIR / "images"
 def ensure_dirs():
     for d in [LOG_DIR, DATA_DIR, TENANTS_DIR, UPLOAD_DIR, STATIC_DIR, IMAGES_DIR]:
         d.mkdir(exist_ok=True, parents=True)
+
+
+# =============================================================================
+# Retrieval Limits
+# =============================================================================
+# Retrieval result counts reach a `LIMIT ?` binding. SQLite reads a negative
+# limit as "no limit at all" and a huge one as "read the whole table", so the
+# value is bounded at the request model *and* clamped again at the retriever
+# entry — the retriever is a public entry point and not every caller goes
+# through the API model.
+MAX_RESULTS_CAP = 100
 
 
 # =============================================================================
@@ -739,6 +752,8 @@ class Settings:
     ROUTER_CONFIG = ROUTER_CONFIG
     AGENTIC_CONFIG = AGENTIC_CONFIG
 
+    MAX_RESULTS_CAP = MAX_RESULTS_CAP
+
     # Query concurrency policy config
     LLM_MAX_CONCURRENT = LLM_MAX_CONCURRENT
     QUERY_CONCURRENCY_MODE = QUERY_CONCURRENCY_MODE
@@ -768,6 +783,12 @@ class Settings:
         """
         if not isinstance(tenant_id, str) or not _TENANT_ID_RE.fullmatch(tenant_id):
             raise ValueError(f"invalid tenant_id: {tenant_id!r}")
+        # Read the module-level root. It is the same value as
+        # ``Settings.TENANTS_DIR`` (assigned at class-body time), and unlike the
+        # class attribute it survives ``importlib.reload`` in a way every
+        # reader agrees on: a reload rebinds this module's globals and both the
+        # class and the ``settings`` instance are rebuilt from them, so
+        # resolving here keeps a reloaded module and its callers in step.
         root = TENANTS_DIR.resolve()
         candidate = (root / tenant_id).resolve()
         if candidate.parent != root:
