@@ -334,15 +334,18 @@ Determine whether the specific conclusions in the answer are supported by origin
 {{"passed": true/false, "issues": [...], "corrected_answer": "Corrected answer"}}
 Output only JSON."""
         try:
-            result = self.model_client.generate_json(check_prompt, temperature=0.1, max_tokens=2048)
-            # An unparsable reply returns {} just like a genuine "{}" answer, and
-            # only `last_json_error` tells them apart. Without this guard the
-            # default below turned "we could not read the verdict" into
-            # "the verdict was passed", which both skipped the correction and
-            # pushed confidence to high. `None` — not `False` — is the right
-            # outcome: we do not know that the answer is wrong, and rewriting it
-            # on no evidence is worse than leaving it and not claiming certainty.
-            if getattr(self.model_client, "last_json_error", None):
+            result, json_error = self.model_client.generate_json_strict(
+                check_prompt, temperature=0.1, max_tokens=2048)
+            # An unparsable reply returns {} just like a genuine "{}" answer.
+            # The error is returned alongside the data so the two are
+            # distinguishable by the call's own result — reading a shared
+            # "last error" attribute on the model client raced with any
+            # concurrent call and silently turned "we could not read the
+            # verdict" into "the verdict was passed". `None` — not `False` —
+            # is the right outcome: we do not know that the answer is wrong,
+            # and rewriting it on no evidence is worse than leaving it and
+            # not claiming certainty.
+            if json_error:
                 logger.warning("[SYNTHESIZER] Self-Check reply unreadable, treating as not-checked")
                 return raw_answer, False
             if result.get("passed", True) is False:

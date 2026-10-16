@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -55,6 +56,33 @@ def _classify_embedding_error(e: Exception) -> tuple[int | None, str]:
 _RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
 
+@dataclass(frozen=True)
+class ChatResult:
+    """A model reply together with the facts a caller must judge it by.
+
+    ``finish_reason`` used to be published on the client itself
+    (``self.last_finish_reason``) for the caller to read back after the call.
+    The client is a process-wide singleton, so under concurrency the value
+    read back belongs to whichever call finished last, not necessarily the
+    caller's own — a truncated reply could then be seen as finished (and
+    vice versa). Returning it here binds the reason to the call that
+    produced it.
+
+    Attributes:
+        text: the reply content ("" when the endpoint produced nothing).
+        finish_reason: the endpoint's finish reason; "length" means the
+            reply hit the token cap.
+    """
+
+    text: str
+    finish_reason: str | None = None
+
+    @property
+    def hit_token_cap(self) -> bool:
+        """The reply ran out of tokens rather than reaching a natural stop."""
+        return self.finish_reason == "length"
+
+
 class ModelClient:
     """Model Client - Thread-safe"""
 
@@ -77,11 +105,15 @@ class ModelClient:
         self.ocr_model = cfg.get("ocr_model", "")
         self._session = None
         self._lock = threading.Lock()
+        # Deprecated per-call mirrors. Both live on this process-wide
+        # singleton, so under concurrency they reflect whichever call
+        # finished last, not the caller's own — reading them back after a
+        # call is unsafe. Kept because the unchanged legacy methods
+        # (generate, generate_json) still set them; new callers take the
+        # facts from ChatResult / generate_json_strict instead.
         self.last_finish_reason = None
-        # Mirror of last_finish_reason for the JSON paths: set when the model's
-        # reply could not be read as a JSON object, cleared on success. Callers
-        # that must tell "the model answered {}" from "we could not parse the
-        # reply" read this, because both currently return {}.
+        # Mirror of last_finish_reason for the JSON paths: set when the
+        # reply could not be read as a JSON object, cleared on success.
         self.last_json_error: str | None = None
 
     @property
@@ -200,11 +232,103 @@ class ModelClient:
                 api_key=self.ocr_api_key)
         return self._chat_completion(messages, max_tokens, temperature)
 
+    def generate_with_image_result(self, prompt: str, image_path: str,
+                                   endpoint: str,
+                                   system_prompt: str = None,
+                                   max_tokens: int = 2048, temperature: float = 0.3,
+                                   max_image_size: int = 1024) -> ChatResult:
+        """Vision call returning text *and* the reply's finish reason.
+
+        Same contract as :meth:`generate_with_image` (including the failure
+        semantics documented there) except the finish reason comes back on
+        the returned :class:`ChatResult` instead of being read off ``self``
+        afterwards. Use this when the caller must know whether the reply
+        was truncated: on the shared singleton a later call can overwrite
+        ``last_finish_reason`` before the caller looks at it.
+        """
+        import base64 as b64
+        from io import BytesIO as Bio
+
+        lower_path = image_path.lower()
+        if lower_path.endswith('.png'):
+            mime_type = "image/png"
+            output_format = "PNG"
+        elif lower_path.endswith('.jpg') or lower_path.endswith('.jpeg'):
+            mime_type = "image/jpeg"
+            output_format = "JPEG"
+        elif lower_path.endswith('.gif'):
+            mime_type = "image/gif"
+            output_format = "JPEG"
+        elif lower_path.endswith('.bmp'):
+            mime_type = "image/bmp"
+            output_format = "JPEG"
+        else:
+            mime_type = "image/jpeg"
+            output_format = "JPEG"
+
+        try:
+            from PIL import Image
+        except ImportError as e:
+            raise RuntimeError("PIL/Pillow not installed") from e
+
+        try:
+            with Image.open(image_path) as img:
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                width, height = img.size
+                max_side = max(width, height)
+                if max_side > max_image_size:
+                    ratio = max_image_size / max_side
+                    img = img.resize((int(width * ratio), int(height * ratio)))
+                buffer = Bio()
+                img.save(buffer, format=output_format)
+                b64_data = b64.b64encode(buffer.getvalue()).decode('utf-8')
+        except Exception as e:
+            raise RuntimeError(f"image load/encode failed for {image_path}: {e}") from e
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime_type};base64,{b64_data}"}},
+            ],
+        })
+
+        use_ocr = endpoint == "ocr" or (endpoint == "auto" and self.ocr_endpoint_available)
+        if use_ocr and self.ocr_endpoint_available:
+            return self._chat_completion_result(
+                messages, max_tokens, temperature,
+                base_url=self.ocr_base_url, model=self.ocr_model or None,
+                api_key=self.ocr_api_key)
+        return self._chat_completion_result(messages, max_tokens, temperature)
+
     def _chat_completion(self, messages: list, max_tokens: int = 2048,
                          temperature: float = 0.7, json_mode: bool = False,
                          json_array_mode: bool = False,
                          base_url: str | None = None, model: str | None = None,
                          api_key: str | None = None) -> str:
+        """Text-only wrapper over :meth:`_chat_completion_result`."""
+        return self._chat_completion_result(
+            messages, max_tokens, temperature, json_mode, json_array_mode,
+            base_url, model, api_key).text
+
+    def _chat_completion_result(self, messages: list, max_tokens: int = 2048,
+                                temperature: float = 0.7, json_mode: bool = False,
+                                json_array_mode: bool = False,
+                                base_url: str | None = None, model: str | None = None,
+                                api_key: str | None = None) -> ChatResult:
+        """Perform a chat completion and return text plus its finish reason.
+
+        The finish reason is carried on the returned :class:`ChatResult`
+        rather than on ``self`` because the client is a process-wide
+        singleton shared by every tenant, page thread and background task;
+        a caller reading it back off ``self`` would get whichever call
+        finished last.
+        """
         # === Prompt length guard: prevent oversized prompts from crashing llama-server ===
         llm_max_tokens = settings.CONTEXT_CONFIG.get("llm_max_tokens", 131072)
         ratio = settings.CONTEXT_CONFIG.get("token_to_char_ratio", 0.7)
@@ -282,7 +406,7 @@ class ModelClient:
                             logger.warning(f"[MODEL] Context exceeded. Truncating last message {len(last_content)} → {new_len} chars, retrying...")
                             continue  # retry with truncated content
                         logger.error(f"[MODEL] Context size error but last msg too short to truncate ({len(last_content)} chars)")
-                        return ""
+                        return ChatResult(text="")
                 # Detect permanent server-side errors that won't benefit from retry
                 if response.status_code == 500:
                     error_text = response.text[:500].lower()
@@ -293,7 +417,7 @@ class ModelClient:
                     ]
                     if any(pe in error_text for pe in permanent_errors):
                         logger.error(f"[MODEL] Permanent server error (not retrying): {error_text[:200]}")
-                        return ""
+                        return ChatResult(text="")
                 # Deterministic 4xx rejections are not worth a second identical
                 # request; transient statuses fall through to the retry handler.
                 if response.status_code >= 400 and response.status_code not in _RETRYABLE_STATUS:
@@ -301,20 +425,23 @@ class ModelClient:
                         f"[MODEL] HTTP {response.status_code} rejected by {target_url} "
                         f"(not retrying): {response.text[:200]}"
                     )
-                    return ""
+                    return ChatResult(text="")
                 response.raise_for_status()
                 data = response.json()
                 msg = data["choices"][0]["message"]
                 content = msg.get("content", "") or ""
-                # Expose the finish_reason of the most recent call so callers
-                # (e.g. OCR transcription) can detect truncation.
-                self.last_finish_reason = data["choices"][0].get("finish_reason")
+                finish_reason = data["choices"][0].get("finish_reason")
+                # Kept for backward compatibility with callers that still read
+                # the attribute; new callers must take the reason from the
+                # returned ChatResult instead. On the shared singleton this
+                # attribute only ever reflects the most recent call.
+                self.last_finish_reason = finish_reason
                 # Qwen3.5 thinking mode — if content is empty, model likely exhausted
                 # tokens during thinking. Do NOT fall back to reasoning_content.
                 if not content.strip() and msg.get("reasoning_content"):
                     logger.warning(f"[MODEL] content empty (reasoning_content={len(msg['reasoning_content'])} chars), "
                                    f"model may have exhausted tokens during thinking. Returning empty.")
-                return content
+                return ChatResult(text=content, finish_reason=finish_reason)
             except Exception as e:
                 if attempt < max_retries - 1:
                     wait = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
@@ -322,8 +449,8 @@ class ModelClient:
                     time.sleep(wait)
                 else:
                     logger.error(f"LLM call failed ({target_url}): {e}")
-                    return ""
-        return ""
+                    return ChatResult(text="")
+        return ChatResult(text="")
 
     def generate_json(self, prompt: str, system_prompt: str = None,
                       max_tokens: int = 4096, temperature: float = 0.3) -> dict[str, Any]:
@@ -335,6 +462,13 @@ class ModelClient:
         exists so a caller can react instead of silently proceeding with an empty
         result — a planner that found no candidate and a planner whose reply was
         unreadable are not the same situation.
+
+        Deprecated for that purpose: the attribute is set on the process-wide
+        client, so a concurrent call can clear or overwrite it between this
+        method returning and the caller checking it — an unreadable reply then
+        looks like a successful empty answer. Use :meth:`generate_json_strict`,
+        which returns the reason alongside the data. Kept unchanged for
+        existing callers that have been checked not to rely on that read.
         """
         self.last_json_error = None
         result = self._generate_json_inner(prompt, system_prompt, max_tokens, temperature)
@@ -349,6 +483,39 @@ class ModelClient:
         logger.warning(f"[MODEL] generate_json unusable: {self.last_json_error} "
                        f"(prompt {len(prompt)} chars, max_tokens={max_tokens})")
         return {}
+
+    def generate_json_strict(self, prompt: str, system_prompt: str = None,
+                             max_tokens: int = 4096,
+                             temperature: float = 0.3) -> tuple[dict[str, Any], str | None]:
+        """Return ``(data, error)`` for a JSON reply — the error as a value.
+
+        ``generate_json`` cannot tell "the model answered {}" from "the reply
+        was unreadable" by its return value alone, so it publishes the reason
+        on ``self.last_json_error`` for the caller to read back. On the shared
+        singleton that read is unsafe: a concurrent call clears or overwrites
+        the attribute between the return and the caller's check, and an
+        unreadable reply is then mistaken for a successful one.
+
+        This method returns the reason alongside the data, so the association
+        cannot be broken by another caller. ``error`` is ``None`` on success
+        and a human-readable reason otherwise; ``data`` is ``{}`` whenever
+        ``error`` is set (and may legitimately be ``{}`` with no error).
+
+        New code should prefer this; ``generate_json`` is kept unchanged for
+        existing callers.
+        """
+        result = self._generate_json_inner(prompt, system_prompt, max_tokens, temperature)
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            return result[0], None
+        if isinstance(result, dict):
+            return result, None
+        error = (
+            "no parsable JSON in the model reply" if result is None
+            else f"expected a JSON object, got {type(result).__name__}"
+        )
+        logger.warning(f"[MODEL] generate_json unusable: {error} "
+                       f"(prompt {len(prompt)} chars, max_tokens={max_tokens})")
+        return {}, error
 
 
     def _generate_json_inner(self, prompt: str, system_prompt: str = None,

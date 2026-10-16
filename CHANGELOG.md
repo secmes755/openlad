@@ -19,6 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A model call's own outcome travels with its result.** ``ModelClient`` is a
+  process-wide singleton serving every tenant, page thread and background
+  task, yet it published per-call facts on itself for the caller to read back
+  afterwards: ``last_finish_reason`` (vision) and ``last_json_error`` (JSON).
+  Between the return and the read, any concurrent call could overwrite or
+  clear them, so a caller could act on another call's outcome — a truncated
+  reply seen as finished (its truncation warning lost, or a false one raised),
+  and an unreadable self-check verdict seen as a successful ``{}`` answer,
+  which the synthesiser then treated as *passed* and pushed confidence to
+  high. Vision calls now return a ``ChatResult`` and JSON calls may use
+  ``generate_json_strict``, which returns ``(data, error)``; the reason binds
+  to the call that produced it. The old ``generate``/``generate_json``
+  signatures are unchanged for existing callers, which have been checked not
+  to depend on the read.
+
 - **A page's OCR degeneracy report travels with its own result.** The PDF
   path transcribes pages on a thread pool and used to publish each page's
   trim report and finish reason onto the shared ``DocumentParser``

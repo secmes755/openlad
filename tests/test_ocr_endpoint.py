@@ -15,6 +15,7 @@ Contract under test:
 import pytest
 
 from core.db.system_db import get_system_db
+from core.models.client import ChatResult
 from core.services import model_config
 
 
@@ -165,6 +166,15 @@ class TestParserOcrTranscription:
                 calls["max_tokens"] = max_tokens
                 return "transcribed text"
 
+            def generate_with_image_result(self, prompt, image_path,
+                                           system_prompt=None, max_tokens=2048,
+                                           temperature=0.3, max_image_size=1024,
+                                           endpoint="auto"):
+                text = self.generate_with_image(
+                    prompt, image_path, system_prompt, max_tokens, temperature,
+                    max_image_size, endpoint)
+                return ChatResult(text=text, finish_reason="stop")
+
         monkeypatch.setattr("core.ingestion.parser.get_model_client",
                             lambda: FakeClient())
         Image = _real_pil_image()
@@ -198,13 +208,16 @@ class TestParserOcrTranscription:
 
         class FakeClient:
             ocr_endpoint_available = True
-            last_finish_reason = "stop"
 
             def generate_with_image(self, *a, **kw):
+                return self.generate_with_image_result(*a, **kw).text
+
+            def generate_with_image_result(self, *a, **kw):
                 # Long, highly repetitive tail -> the numbered-pseudo pass fires.
-                return ("# Dims\n\n"
+                text = ("# Dims\n\n"
                         + "".join(f"{i}. DIMENSION_SYM_{i} NOMINAL 322.6 MAX 322.7\n"
                                   for i in range(10, 200)))
+                return ChatResult(text=text, finish_reason="stop")
 
         monkeypatch.setattr("core.ingestion.parser.get_model_client",
                             lambda: FakeClient())

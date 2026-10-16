@@ -1116,17 +1116,21 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 temperature = img_cfg.get("ocr_transcription_temperature", 0.0)
                 max_continuations = img_cfg.get("ocr_transcription_max_continuations", 2)
                 parts = []
-                text = client.generate_with_image(
+                # The finish reason of the most recent round, kept in this
+                # call's own local. Reading it back off the shared client
+                # would race with any concurrent model call.
+                first = client.generate_with_image_result(
                     prompt=prompt,
                     image_path=tmp_path,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     endpoint="ocr",
                 )
-                if text:
-                    parts.append(text)
+                finish_reason: str | None = first.finish_reason
+                if first.text:
+                    parts.append(first.text)
                 for _ in range(max_continuations):
-                    if not parts or getattr(client, "last_finish_reason", None) != "length":
+                    if not parts or finish_reason != "length":
                         break
                     # Degeneration gate: if cleanup trims anything from what we
                     # have so far, the model has drifted into fabrication — a
@@ -1147,21 +1151,22 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                         "Output only the continuation — no commentary, and do "
                         "not repeat earlier content."
                     )
-                    more = client.generate_with_image(
+                    more = client.generate_with_image_result(
                         prompt=continuation_prompt,
                         image_path=tmp_path,
                         max_tokens=max_tokens,
                         temperature=temperature,
                         endpoint="ocr",
                     )
-                    if not more or not more.strip():
+                    finish_reason = more.finish_reason
+                    if not more.text or not more.text.strip():
                         break
-                    if more.strip() in "".join(parts)[-OCR_CONTINUATION_TAIL_CHARS * 10:]:
+                    if more.text.strip() in "".join(parts)[-OCR_CONTINUATION_TAIL_CHARS * 10:]:
                         logger.warning(
                             f"PDF page {page_num} OCR continuation repeated "
                             "earlier content; stopping")
                         break
-                    parts.append(more)
+                    parts.append(more.text)
                 text = "".join(parts)
                 trimmed_chars = 0
                 trim_passes: tuple[str, ...] = ()
@@ -1186,7 +1191,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     text=text.strip() if text else "",
                     trimmed_chars=trimmed_chars,
                     trim_passes=trim_passes,
-                    finish_reason=getattr(client, "last_finish_reason", None),
+                    finish_reason=finish_reason,
                 )
             finally:
                 os.unlink(tmp_path)

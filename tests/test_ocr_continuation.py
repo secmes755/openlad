@@ -7,6 +7,7 @@ from PIL import Image
 
 from core.ingestion import parser as parser_module
 from core.ingestion.parser import DocumentParser
+from core.models.client import ChatResult
 
 
 class FakeOCRClient:
@@ -20,10 +21,15 @@ class FakeOCRClient:
 
     def generate_with_image(self, prompt, image_path, max_tokens, temperature,
                             endpoint):
+        return self.generate_with_image_result(
+            prompt, image_path, max_tokens, temperature, endpoint).text
+
+    def generate_with_image_result(self, prompt, image_path, max_tokens,
+                                   temperature, endpoint):
         self.calls.append(prompt)
         text, finish = self._script.pop(0)
         self.last_finish_reason = finish
-        return text
+        return ChatResult(text=text, finish_reason=finish)
 
 
 def _tiny_image():
