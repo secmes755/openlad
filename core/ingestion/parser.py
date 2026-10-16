@@ -5,6 +5,7 @@ Fully generalized, no industry-specific content
 import logging
 import re
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -239,6 +240,40 @@ def clean_ocr_transcription_detailed(text: str) -> tuple[str, dict]:
     }
 
 
+@dataclass(frozen=True)
+class OcrTranscription:
+    """One OCR page transcription and the facts the caller must judge it by.
+
+    These travel as a value rather than through attributes on the parser
+    because the parser is shared across tenants and page threads: a page's
+    ``finish_reason`` and trim report belong to the call that produced them,
+    and a second thread would overwrite an instance attribute before the
+    first thread read it. As a return value the association cannot be lost.
+
+    Attributes:
+        text: the cleaned transcription ("" when the page produced nothing).
+        trimmed_chars: characters the degeneration cleanup removed.
+        trim_passes: names of the cleanup passes that fired.
+        finish_reason: the model's finish reason for the final round
+            ("length" means the reply hit the token cap).
+    """
+
+    text: str
+    trimmed_chars: int = 0
+    trim_passes: tuple[str, ...] = ()
+    finish_reason: str | None = None
+
+    @property
+    def hit_token_cap(self) -> bool:
+        """The model ran out of tokens rather than reaching a natural stop."""
+        return self.finish_reason == "length"
+
+    @property
+    def was_trimmed(self) -> bool:
+        """The cleanup shortened the page — content may be missing."""
+        return self.trimmed_chars > 0
+
+
 # The upload route stores files on disk as "{doc_id}_{original_name}" to keep
 # disk names unique. That prefix is a storage detail — strip it so the DB
 # record, list/filter APIs and title derivation all see the user's original
@@ -312,12 +347,11 @@ class DocumentParser:
 
     def __init__(self):
         self._page_classifier = None  # Lazy-load PageClassifier
-        # Per-page OCR cleanup bookkeeping, refreshed by
-        # _transcribe_pdf_page_with_ocr. Read immediately after the call so a
-        # page whose transcription was shortened (and had / had not hit the
-        # token cap) can be reported instead of silently shortened.
-        self.last_ocr_trim: dict = {"trimmed_chars": 0, "passes": []}
-        self.last_ocr_finish_reason: str | None = None
+        # No per-page OCR bookkeeping lives here on purpose. The parser is
+        # shared across tenants and page threads, so a "last page's" trim
+        # report or finish reason would be overwritten by whichever page
+        # finished most recently. Both travel with the return value of
+        # _transcribe_pdf_page_with_ocr_detailed instead.
 
     @property
     def page_classifier(self):
@@ -652,11 +686,15 @@ class DocumentParser:
                     else:
                         logger.info(f"PDF p{pdf_page_num}: OCR endpoint transcription")
                         page_class = "IMAGE"
-                        transcription = self._transcribe_pdf_page_with_ocr(
+                        # The transcription carries its own trim report and
+                        # finish reason: the parser is shared across tenants
+                        # and page threads, so reading them back off ``self``
+                        # could pick up a different page's values.
+                        ocr = self._transcribe_pdf_page_with_ocr_detailed(
                             page_image, pdf_page_num
                         )
-                        trim_info = self.last_ocr_trim
-                        hit_token_cap = self.last_ocr_finish_reason == "length"
+                        transcription = ocr.text
+                        hit_token_cap = ocr.hit_token_cap
                         if transcription:
                             full_text += (
                                 f"\n\n---\n\n### Page Transcription (OCR)\n\n{transcription}\n"
@@ -672,11 +710,11 @@ class DocumentParser:
                             # Surface it — this is exactly how a legitimate
                             # repetitive page (dimension drawing, pin table)
                             # loses content without a trace.
-                            if trim_info["trimmed_chars"] > 0 and not hit_token_cap:
+                            if ocr.was_trimmed and not hit_token_cap:
                                 visual_warnings.append(
                                     f"page {pdf_page_num}: OCR transcription shortened by "
-                                    f"degeneration cleanup (-{trim_info['trimmed_chars']} chars, "
-                                    f"{', '.join(trim_info['passes']) or 'unknown'})"
+                                    f"degeneration cleanup (-{ocr.trimmed_chars} chars, "
+                                    f"{', '.join(ocr.trim_passes) or 'unknown'})"
                                 )
                         else:
                             visual_warnings.append(
@@ -1024,11 +1062,22 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
     def _transcribe_pdf_page_with_ocr(self, page_image, page_num: int) -> str:
         """Transcribe a visual page via the dedicated OCR endpoint.
 
+        Thin wrapper over :meth:`_transcribe_pdf_page_with_ocr_detailed`
+        that returns only the text. Kept for callers (and tests) that do
+        not need the degeneracy report.
+        """
+        return self._transcribe_pdf_page_with_ocr_detailed(page_image, page_num).text
+
+    def _transcribe_pdf_page_with_ocr_detailed(
+            self, page_image, page_num: int) -> OcrTranscription:
+        """Transcribe a visual page via the dedicated OCR endpoint.
+
         Used when an OCR endpoint is configured (see model_config ocr_*).
         The OCR model (e.g. OvisOCR2) returns the full page text with
         structure intact (tables as markup, figure labels, captions), so no
-        chart/image classification split is needed. Returns "" on failure —
-        the caller records an ingest warning so hollow pages never ship
+        chart/image classification split is needed. Returns an
+        :class:`OcrTranscription` whose ``text`` is "" on failure — the
+        caller records an ingest warning so hollow pages never ship
         silently.
 
         If a response hits the token budget (finish_reason == "length"),
@@ -1036,6 +1085,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         stateless) and the continuation appended, up to
         `ocr_transcription_max_continuations` rounds. A page still truncated
         after the cap keeps the caller's truncation warning.
+
+        The trim report and the finish reason are returned to the caller
+        rather than published on ``self``: the parser is shared across
+        tenants and page threads, so a second page would overwrite them
+        before the caller of the first could read them.
         """
         try:
             import os
@@ -1109,9 +1163,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                         break
                     parts.append(more)
                 text = "".join(parts)
+                trimmed_chars = 0
+                trim_passes: tuple[str, ...] = ()
                 if text:
                     text, trim_info = clean_ocr_transcription_detailed(text)
-                    # Publish what the cleanup removed so the page can be
+                    # Report what the cleanup removed so the page can be
                     # flagged degraded. The cleanup runs on every page, so a
                     # legitimate repetitive page (dimension drawing, pin table)
                     # whose tail looks like degeneration would otherwise be
@@ -1119,19 +1175,24 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     # caller whether the pre-trim output had already hit the
                     # token cap, which is what separates a real truncation from
                     # a mis-fired cleanup.
-                    self.last_ocr_trim = trim_info
-                    self.last_ocr_finish_reason = getattr(client, "last_finish_reason", None)
-                    if trim_info["trimmed_chars"] > 0:
+                    trimmed_chars = trim_info["trimmed_chars"]
+                    trim_passes = tuple(trim_info["passes"])
+                    if trimmed_chars > 0:
                         logger.info(
                             "PDF page %s: OCR cleanup trimmed %d chars (%s)",
-                            page_num, trim_info["trimmed_chars"],
-                            ", ".join(trim_info["passes"]))
-                return text.strip() if text else ""
+                            page_num, trimmed_chars,
+                            ", ".join(trim_passes))
+                return OcrTranscription(
+                    text=text.strip() if text else "",
+                    trimmed_chars=trimmed_chars,
+                    trim_passes=trim_passes,
+                    finish_reason=getattr(client, "last_finish_reason", None),
+                )
             finally:
                 os.unlink(tmp_path)
         except Exception as e:
             logger.warning(f"PDF page {page_num} OCR transcription failed: {e}")
-            return ""
+            return OcrTranscription(text="")
 
     # ========================================================================
     # Excel Parsing

@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A page's OCR degeneracy report travels with its own result.** The PDF
+  path transcribes pages on a thread pool and used to publish each page's
+  trim report and finish reason onto the shared ``DocumentParser``
+  (``last_ocr_trim`` / ``last_ocr_finish_reason``) for the caller to read
+  back after the call returned. Two pages transcribing at once overwrote
+  each other in that window, so a page whose content the cleanup had
+  shortened could lose its "content may be missing" warning — precisely
+  the silent-shortening case the warning exists to catch. The report is now
+  an ``OcrTranscription`` returned by
+  ``_transcribe_pdf_page_with_ocr_detailed``; the text-only
+  ``_transcribe_pdf_page_with_ocr`` remains as a wrapper.
+
 - **The page classifier keeps no per-document tally.** ``PageClassifier`` was a
   process-wide singleton holding ``_stats``, incremented by every page thread
   and read-then-reset by whichever document finished first. Under the parser's

@@ -211,15 +211,15 @@ class TestParserOcrTranscription:
         Image = _real_pil_image()
         img = Image.new("RGB", (8, 8), "white")
         parser = DocumentParser.__new__(DocumentParser)
-        parser.last_ocr_trim = {"trimmed_chars": 0, "passes": []}
-        parser.last_ocr_finish_reason = None
-        out = parser._transcribe_pdf_page_with_ocr(img, 7)
-        assert parser.last_ocr_trim["trimmed_chars"] > 0
-        assert "numbered_pseudo" in parser.last_ocr_trim["passes"]
-        assert parser.last_ocr_finish_reason == "stop", (
+        ocr = parser._transcribe_pdf_page_with_ocr_detailed(img, 7)
+        assert ocr.trimmed_chars > 0
+        assert "numbered_pseudo" in ocr.trim_passes
+        assert ocr.finish_reason == "stop", (
             "a natural finish is what distinguishes a mis-fired cleanup from "
             "a token-limit truncation")
-        assert len(out) < 400, "the page was in fact shortened"
+        assert not ocr.hit_token_cap
+        assert ocr.was_trimmed
+        assert len(ocr.text) < 400, "the page was in fact shortened"
 
 
 class TestParseImageAutoCleanup:
