@@ -89,6 +89,11 @@ class HierarchicalRetriever:
     def retrieve(self, query: str, plan: QueryPlan, max_results: int = 20,
                  explicit_doc_filter: set[str] = None,
                  max_context_quota: int = None) -> list[SearchResult]:
+        # `max_results` ends at a `LIMIT ?` binding, where SQLite treats a
+        # negative value as "no limit" and a huge one as "read everything".
+        # Clamp here as well as in the request model: this is a public entry
+        # point and callers need not go through the API model.
+        max_results = max(1, min(int(max_results), settings.MAX_RESULTS_CAP))
         doc_id_filter = explicit_doc_filter if explicit_doc_filter else {"__ALL__"}
 
         intent_map = {

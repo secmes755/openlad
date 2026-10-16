@@ -9,8 +9,9 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from ...config import settings
 from ...tenant.context import get_tenant_context
 from .query import _query_lock  # shares global query lock
 
@@ -23,13 +24,16 @@ class SkillQueryRequest(BaseModel):
     query: str
     industry: str | None = None
     return_format: str = "structured"  # structured | text
-    max_results: int = 10
+    # `max_results` reaches a `LIMIT ?` binding, where SQLite reads a negative
+    # value as "no limit at all". Bounded here and clamped again in the
+    # retriever, which is reachable without going through this model.
+    max_results: int = Field(default=10, ge=1, le=settings.MAX_RESULTS_CAP)
 
 
 class SkillSearchRequest(BaseModel):
     query: str
     industry: str | None = None
-    max_results: int = 10
+    max_results: int = Field(default=10, ge=1, le=settings.MAX_RESULTS_CAP)
 
 
 @router.post("/query")
