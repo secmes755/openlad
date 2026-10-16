@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A source guard now rejects per-call state on shared objects.** The four
+  fixes above all had the same cause — a value belonging to one call parked on
+  an object shared across tenants and threads — and the pattern had already
+  recurred once after being fixed. ``tests/test_no_per_call_state_on_shared_objects.py``
+  scans the shared classes (``ModelClient``, ``DocumentParser``,
+  ``DocumentIndexBuilder``, ``PageClassifier``) for ``self.last_*`` /
+  ``self._stats`` / ``self.current_*`` assignments and fails on any not on its
+  short, documented exception list. A meta-test proves the check actually
+  matches, and a second fails if an exception entry goes stale.
+
 - **Ingestion progress now advances during page analysis.** L2 (page-level
   processing) runs one LLM call per page and owned the whole 30 → 50 band of
   the progress scale without reporting anything inside it, so indexing a
