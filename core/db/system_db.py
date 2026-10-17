@@ -324,8 +324,14 @@ class SystemDB:
             return False
 
     def update_user(self, user_id: str, **kwargs) -> bool:
-        """Update user info (role, email, password_hash)"""
-        allowed = {"role", "email", "password_hash"}
+        """Update user info (role, email, password_hash, tenant_id)
+
+        ``tenant_id`` is accepted because a role change must keep the account's
+        tenant consistent (promotion to admin moves the account into the admin
+        tenant — see ``api/routes/admin.update_user``). It stays behind this
+        whitelist so arbitrary columns can never reach the SQL string.
+        """
+        allowed = {"role", "email", "password_hash", "tenant_id"}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return False

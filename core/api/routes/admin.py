@@ -319,7 +319,16 @@ class UpdateUserRequest(BaseModel):
 
 @router.patch("/users/{user_id}")
 async def update_user(user_id: str, req: UpdateUserRequest):
-    """Update user info (admin only)"""
+    """Update user info (admin only)
+
+    A role change to ``admin`` carries the same tenant constraint as creation
+    (see ``create_user``): an admin account belongs to the ``admin`` tenant.
+    Without this, an admin of tenant A could promote a user of tenant B and
+    leave the promoted account *in tenant B* — a role that the tenant
+    middleware lets cross every tenant boundary while its home tenant stays a
+    normal one. Promotion therefore moves the account to the admin tenant, and
+    demotion moves it back to the user's own tenant.
+    """
     _require_admin()
     auth = get_auth_manager()
     user = auth.get_user(user_id)
@@ -328,7 +337,18 @@ async def update_user(user_id: str, req: UpdateUserRequest):
 
     updates = {}
     if req.role is not None:
+        if req.role not in ("admin", "user"):
+            raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
         updates["role"] = req.role
+        # Keep role and tenant consistent, exactly as create_user does.
+        if req.role == "admin":
+            updates["tenant_id"] = "admin"
+        elif user.tenant_id == "admin":
+            # Demoting an admin: it cannot stay in the admin tenant.
+            try:
+                updates["tenant_id"] = user_tenant_id(user.username)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
     if req.email is not None:
         updates["email"] = req.email
     if req.password is not None:
