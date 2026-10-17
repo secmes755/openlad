@@ -59,7 +59,27 @@ class HierarchicalRetriever:
         self.model_client = get_model_client()
 
     def _load_industry_boost_rules_for_retrieval(self) -> dict[str, Any]:
-        """Load retrieval-phase rules from all registered industry packages (low-value section penalty, spec section boost, etc.)"""
+        """Load retrieval-phase rules from all registered industry packages (low-value section penalty, spec section boost, etc.)
+
+        Called on every scoring loop iteration, so the result is memoised for
+        the duration of one retrieval: the plugin registry and pack rules are
+        fixed for the life of the request, and rebuilding the merged dict per
+        page showed up as pure overhead in the FTS scoring loop.
+
+        The cache lives on the *request* (``_retrieval_rule_cache``, cleared at
+        the start of ``retrieve()``) rather than on the instance: this object is
+        shared across tenants and threads, and a cross-request cache would let
+        one tenant's pack rules leak into another's scoring.
+        """
+        cached = getattr(self, "_retrieval_rule_cache", None)
+        if cached is not None:
+            return cached
+        rules = self._build_industry_boost_rules()
+        self._retrieval_rule_cache = rules
+        return rules
+
+    def _build_industry_boost_rules(self) -> dict[str, Any]:
+        """Build the merged retrieval-rule dict from every registered pack."""
         try:
             from ..plugins import get_plugin_registry
             registry = get_plugin_registry()
@@ -96,6 +116,21 @@ class HierarchicalRetriever:
         max_results = max(1, min(int(max_results), settings.MAX_RESULTS_CAP))
         doc_id_filter = explicit_doc_filter if explicit_doc_filter else {"__ALL__"}
 
+        # Per-request pack-rule cache: this retriever instance is shared across
+        # tenants and threads, so the cache must not outlive the call (see
+        # _load_industry_boost_rules_for_retrieval). Cleared in `finally` so an
+        # exception mid-retrieval cannot leave one tenant's rules behind for the
+        # next caller.
+        self._retrieval_rule_cache = None
+        try:
+            return self._dispatch_retrieve(query, plan, max_results, doc_id_filter,
+                                           max_context_quota)
+        finally:
+            self._retrieval_rule_cache = None
+
+    def _dispatch_retrieve(self, query: str, plan: QueryPlan, max_results: int,
+                           doc_id_filter: set[str] | None,
+                           max_context_quota: int | None) -> list[SearchResult]:
         intent_map = {
             IntentType.EXACT_LOOKUP: self._retrieve_exact,
             IntentType.RELATION_QUERY: self._retrieve_relation,
@@ -957,7 +992,8 @@ class HierarchicalRetriever:
         return all_results[:max(max_total_results, max_results)]
 
     def _retrieve_relation(self, query: str, plan: QueryPlan,
-                            max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
+                            max_results: int, doc_id_filter: set[str] | None = None,
+                            max_context_quota: int | None = None) -> list[SearchResult]:
         all_results = []
         entities = plan.entities or []
         if not entities:
@@ -976,7 +1012,8 @@ class HierarchicalRetriever:
         return unique[:max_results]
 
     def _retrieve_feature(self, query: str, plan: QueryPlan,
-                           max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
+                           max_results: int, doc_id_filter: set[str] | None = None,
+                           max_context_quota: int | None = None) -> list[SearchResult]:
         try:
             query_emb = self.model_client.embed(query)
             if query_emb:
@@ -1000,8 +1037,16 @@ class HierarchicalRetriever:
             pass
         return self._retrieve_macro(query, plan, max_results, doc_id_filter)
 
-    def _retrieve_macro(self, query: str, plan: QueryPlan,
-                         max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
+    def _retrieve_macro(self, query: str, plan: QueryPlan, max_results: int,
+                        doc_id_filter: set[str] | None = None,
+                        max_context_quota: int | None = None) -> list[SearchResult]:
+        """Macro / time-series retrieval.
+
+        ``max_context_quota`` is accepted for signature parity with the other
+        ``intent_map`` handlers: ``retrieve()`` calls every handler through one
+        five-argument dispatch, so a handler missing a parameter raises
+        TypeError the moment its intent is routed there.
+        """
         all_results = []
         fts_results = self._search_fts(query, limit=max_results * 2, doc_id_filter=doc_id_filter)
         for result in fts_results:
@@ -1053,7 +1098,8 @@ class HierarchicalRetriever:
         return all_results[:max_results]
 
     def _retrieve_version_compare(self, query: str, plan: QueryPlan,
-                                   max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
+                                   max_results: int, doc_id_filter: set[str] | None = None,
+                                   max_context_quota: int | None = None) -> list[SearchResult]:
         all_results = []
         targets = plan.compare_targets or plan.entities[:2]
         for target in targets:
@@ -1064,7 +1110,8 @@ class HierarchicalRetriever:
         return unique[:max_results]
 
     def _retrieve_cross_reference(self, query: str, plan: QueryPlan,
-                                   max_results: int, doc_id_filter: set[str] = None) -> list[SearchResult]:
+                                   max_results: int, doc_id_filter: set[str] | None = None,
+                                   max_context_quota: int | None = None) -> list[SearchResult]:
         all_results = list(self._retrieve_macro(query, plan, max_results, doc_id_filter))
         for ref in (plan.reference_marks or []):
             all_results.extend(self._retrieve_exact(ref, plan, 5, doc_id_filter))
