@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A role change now carries its tenant with it.** ``PATCH /admin/users/{id}``
+  checked only ``user_role == "admin"``, so an admin of any tenant could set
+  ``role="admin"`` on a user of *another* tenant and leave that account inside
+  its original, ordinary tenant. The tenant middleware grants cross-tenant
+  access on ``role == "admin"`` alone, so the promoted account could then read
+  and write every tenant while its home tenant stayed a normal one. Creation
+  already pinned admins to the ``admin`` tenant; the update path now applies the
+  same rule (promotion moves the account, demotion moves it back), and an
+  unknown role string is rejected instead of stored.
+
+- **Every intent handler accepts the dispatcher's argument list.** ``retrieve()``
+  calls whichever handler the plan routed to through one five-argument call, but
+  five of the six handlers in ``intent_map`` declared only four parameters.
+  ``MACRO_QA`` and ``TIME_SERIES_COMPARE`` are only the most visible case —
+  ``RELATION_QUERY``, ``FEATURE_SEARCH``, ``VERSION_COMPARE`` and
+  ``CROSS_REFERENCE`` raised ``TypeError`` the moment they were routed to.
+  All handlers now share the same signature, and a contract test pins it so the
+  next handler added cannot reintroduce the crash.
+
 ### Changed
+
+- **Retrieval-phase pack rules are loaded once per retrieval, not once per
+  page.** ``_load_industry_boost_rules_for_retrieval`` rebuilds the merged rule
+  dict by walking every registered pack, and it was called inside the per-page
+  scoring loops (twice). The result is now memoised for the duration of one
+  ``retrieve()`` call — cleared at entry *and* in a ``finally``, because the
+  retriever instance is shared across tenants and threads and a cross-request
+  cache would leak one tenant's rules into another's scoring.
+
+### Added
+
+- **Tests for the FTS-dominance red line.** Two source comments promise that the
+  hybrid vector channel "must NOT replace or delete any FTS result", and until
+  now that promise had no test behind it. ``tests/test_hybrid_vector_fts_dominance.py``
+  makes it executable: no FTS page may be dropped, gap-fill may only append, a
+  gap-filled page must not outrank an FTS leader, the per-document cap holds, and
+  the off switch is a true no-op. A red/green check confirms the suite actually
+  fails when the boost scale is inflated.
 
 - **A source guard now rejects per-call state on shared objects.** The four
   fixes above all had the same cause — a value belonging to one call parked on
