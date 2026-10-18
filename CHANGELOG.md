@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An unreadable page image no longer aborts the whole document.** Image
+  correction wrapped its work in ``try/except`` and fell back to
+  ``Image.open``, but a file that could not be read at all failed the fallback
+  too — and that second failure was uncaught. One bad page therefore took down
+  ingestion for every other page in the document. The fallback now reports an
+  ``unreadable`` marker with both causes instead of raising, so the caller can
+  skip the page and keep the rest.
+
+- **Display math is unwrapped completely.** ``_extract_latex`` checked the
+  single-dollar form before the double-dollar form, and ``$$x$$`` satisfies
+  both, so it stripped one layer and returned ``$x$`` — delimiters then reached
+  the index as part of the formula.
+
 - **A role change now carries its tenant with it.** ``PATCH /admin/users/{id}``
   checked only ``user_role == "admin"``, so an admin of any tenant could set
   ``role="admin"`` on a user of *another* tenant and leave that account inside
@@ -30,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The synthesis context budget has one source of truth.** Four call sites read
+  it as ``cfg.get("synthesis_context_budget", 35500)``, so deleting or renaming
+  the config key would have silently fallen back to a stale number — the config
+  would appear to work while changing nothing. They now index the key directly
+  and a test pins that no call site carries its own copy.
+
+- **Dead configuration keys are gone.** Thirty-one keys across
+  ``CONTEXT_CONFIG``, ``AGENTIC_CONFIG``, ``RATE_LIMIT_CONFIG`` and five other
+  blocks had no reader anywhere in the repository — including a dozen
+  ``*_chars`` budgets whose names suggested they controlled context size. They
+  were indistinguishable from live knobs in review and invited edits that did
+  nothing; the remaining keys now all have a consumer.
+
 - **Retrieval-phase pack rules are loaded once per retrieval, not once per
   page.** ``_load_industry_boost_rules_for_retrieval`` rebuilds the merged rule
   dict by walking every registered pack, and it was called inside the per-page
@@ -39,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cache would leak one tenant's rules into another's scoring.
 
 ### Added
+
+- **Test coverage for four ingestion modules that had none.**
+  ``grid_reconstructor``, ``layout_analyzer``, ``image_corrector`` and
+  ``formula_recognizer`` sat on the ingestion path with zero test references.
+  Their pure helpers are now covered: grid geometry merging and band labelling,
+  paragraph/bbox splitting and OCR-vs-extraction merging, DPI and skew
+  detection against synthetic images, and LaTeX extraction/validation. Two
+  known weaknesses are pinned by tests rather than left in comments — bracket
+  pairing ignores bracket *type*, and a bracket-free sentence scores the same
+  0.7 as a bare symbol.
 
 - **Tests for the FTS-dominance red line.** Two source comments promise that the
   hybrid vector channel "must NOT replace or delete any FTS result", and until
