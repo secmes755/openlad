@@ -81,8 +81,19 @@ class ImageCorrector:
 
         except Exception as e:
             logger.error(f"Image correction failed {image_path}: {e}")
-            img = Image.open(image_path).convert('RGB')
-            return np.array(img), {"error": str(e)}
+            # The fallback must not raise: one unreadable page image would
+            # otherwise abort the whole document's ingestion. If even Pillow
+            # cannot open it, return an empty array and let the caller skip the
+            # page (OCR on nothing yields nothing, which is a visible, bounded
+            # failure rather than a crash that loses the other pages).
+            try:
+                img = Image.open(image_path).convert('RGB')
+                return np.array(img), {"error": str(e), "correction_skipped": True}
+            except Exception as e2:
+                logger.error(f"Image unreadable, returning empty page {image_path}: {e2}")
+                return np.zeros((1, 1, 3), dtype=np.uint8), {
+                    "error": str(e), "unreadable": True, "unreadable_reason": str(e2),
+                }
 
     def _analyze_quality(self, img: np.ndarray) -> dict[str, Any]:
         """Analyze image quality"""

@@ -123,10 +123,13 @@ Output only the LaTeX code, no other explanations."""
 
         # Check if it's pure LaTeX
         text = text.strip()
-        if text.startswith('$') and text.endswith('$'):
-            return text[1:-1].strip()
-        if text.startswith('$$') and text.endswith('$$'):
+        # Display math ($$...$$) must be unwrapped BEFORE inline ($...$):
+        # "$$x$$" also satisfies startswith("$") and endswith("$"), so checking
+        # the single-dollar form first strips only one layer and leaves "$x$".
+        if text.startswith('$$') and text.endswith('$$') and len(text) > 4:
             return text[2:-2].strip()
+        if text.startswith('$') and text.endswith('$') and len(text) > 2:
+            return text[1:-1].strip()
 
         return text
 
