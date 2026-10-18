@@ -14,11 +14,16 @@ detectors' behaviour checkable without shipping binary fixtures:
   * the quality report must always carry the keys downstream code reads.
 """
 
-import cv2
 import numpy as np
 import pytest
 
-from core.ingestion.preprocessing.image_corrector import ImageCorrector
+# opencv is an optional dependency (core imports it inside try/except) and the CI
+# dependency set deliberately excludes it. Module-level import would break
+# collection on the minimal runner, so it is resolved here and the whole module
+# is skipped when absent.
+cv2 = pytest.importorskip("cv2", reason="opencv-python is optional; not in requirements-ci.txt")
+
+from core.ingestion.preprocessing.image_corrector import ImageCorrector  # noqa: E402
 
 
 @pytest.fixture
