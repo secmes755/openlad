@@ -170,7 +170,7 @@ class RetrievalExecutor:
         # discarding the tail (which was the old behavior and could silently
         # drop an entire document in multi-document comparisons).
         cfg = settings.CONTEXT_CONFIG
-        context_budget = cfg.get("synthesis_context_budget", 35500)
+        context_budget = cfg["synthesis_context_budget"]
         if len(final_context) > context_budget:
             if len(step_contexts) > 1:
                 # Multi-step: proportional allocation per step, min 500 chars each
@@ -282,7 +282,7 @@ class RetrievalExecutor:
         # Proportional truncation: decomposed path content has been LLM-extracted,
         # so it's higher-density than raw context. Use same budget as standard path.
         cfg = settings.CONTEXT_CONFIG
-        context_budget = cfg.get("synthesis_context_budget", 35500)
+        context_budget = cfg["synthesis_context_budget"]
         if len(final_context) > context_budget:
             # Proportional allocation across steps, min 300 chars each
             # (decomposed steps are already summarized, can be more compact)

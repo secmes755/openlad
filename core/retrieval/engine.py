@@ -192,7 +192,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
             total_results = 0
             # Per-subquery context quota: use config budget split across sub-queries
             cfg = settings.CONTEXT_CONFIG
-            per_subquery_max = cfg.get("synthesis_context_budget", 35500) // max(len(sub_queries), 1)
+            per_subquery_max = cfg["synthesis_context_budget"] // max(len(sub_queries), 1)
             for i, sq in enumerate(sub_queries, 1):
                 sub_plan = planner.plan(sq, chat_history)
                 if i == 1:
@@ -208,7 +208,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
             final_context = "\n".join(all_contexts)
             # Proportional truncation: use config budget, proportional across sub-queries
-            context_budget = cfg.get("synthesis_context_budget", 35500)
+            context_budget = cfg["synthesis_context_budget"]
             if len(final_context) > context_budget:
                 if len(all_contexts) > 1:
                     ratio = context_budget / len(final_context)

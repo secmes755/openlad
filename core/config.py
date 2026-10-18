@@ -176,20 +176,12 @@ CLASSIFICATION_CONFIDENCE_FLOOR = float(
 # =============================================================================
 CONTEXT_CONFIG = {
     "llm_max_tokens": 65536,  # Match actual llama-server --ctx-size deployment
-    "deep_explore_chars": 60000,
     "standard_chars": 60000,
-    "search_only_chars": 70000,
-    "decomposed_sub_chars": 30000,
-    "compare_docs_chars": 50000,
     "token_to_char_ratio": 0.7,
-    "phase1_max_chars": 60000,
     "phase1_coarse_topk": 100,
-    "phase1_coarse_max_chars": 40000,
-    "phase1_fine_max_chars": 35000,
     "phase2_max_chars": 60000,
     # Maximum context chars for exhaustive scan queries (e.g. "which crimes carry the death penalty?")
     # Must be large enough to hold the full document to avoid truncating the latter half and missing content
-    "exhaustive_max_chars": 80000,
     "avg_page_chars": 1200,
     "min_pages_per_doc": 5,
     "max_pages_per_doc": 80,
@@ -197,12 +189,14 @@ CONTEXT_CONFIG = {
     # ── Synthesis context budget (derived from llm_max_tokens) ──
     # Total safe prompt space (llm_max_tokens × token_to_char_ratio)
     "synthesis_safe_chars": 45875,  # 65536 × 0.7
-    # Context available after reserving ~15% for system prompt + query + output.
-    # FIX: 39000 + real prompt overhead (~7.2K) totalled ~46.2K and exceeded
-    # synthesis_safe_chars, so every query hit the model-client tail truncation,
-    # silently dropping the LAST part of the context (often the totals pages).
-    # 35500 keeps total prompt under the safe limit without truncation.
-    "synthesis_context_budget": 35500,  # 65536 × 0.7 × 0.85 - overhead margin
+    # Context available after reserving room for system prompt + query + output.
+    # The safe ceiling is llm_max_tokens × token_to_char_ratio; this holds the
+    # prompt side comfortably below it so the model client's safety guard never
+    # has to truncate. Note llm_max_tokens is the PER-SLOT context
+    # (--ctx-size / --parallel), not --ctx-size itself.
+    # Consumers read this key directly — there is no per-call-site default, so
+    # changing the value here changes every path (config.py is the single source).
+    "synthesis_context_budget": 35500,
     # Map-Reduce trigger: context exceeding this goes through chunked extraction
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.
@@ -216,9 +210,7 @@ CONTEXT_CONFIG = {
     "map_reduce_reduce_limit": 15000,  # 65536 × 0.7 × 0.33
     # ── Retrieval executor hardcoded values (moved from executor.py) ──
     # Structured extraction: sampling size for uniform sampling (start/middle/end)
-    "extraction_sample_size": 12000,
     # Structured extraction: LLM max_tokens for data extraction
-    "extraction_max_tokens": 4096,
     # Chapter retrieval: max chapters LLM can select
     "chapter_select_max": 20,
     # Chapter retrieval: LLM max_tokens for chapter selection
@@ -247,9 +239,7 @@ CONTEXT_CONFIG = {
     # Decomposed sub-query merge context cap (per sub-query)
     "decomposed_sub_merge_cap": 30000,
     # Extraction sampling: size of each fragment (start/middle/end/tail)
-    "extraction_fragment_size": 3000,
     # Extraction fallback truncation limit
-    "extraction_fallback_limit": 3000,
     # Minimum step quota (for multi-step queries)
     "min_step_quota": 5000,
     # Minimum single-step quota (for single-step queries with large quota)
@@ -416,7 +406,6 @@ CONTEXT_CONFIG = {
 
 # Planner configuration
 PLANNER_CONFIG = {
-    "coarse_topk": 100,
     "doc_filter_cap": 30,
     "title_display_max": 50,
     "filename_display_max": 40,
@@ -447,9 +436,6 @@ AGENTIC_CONFIG = {
     "fts_threshold": 5.0,
     "fts_min_results": 2,
     "vector_score_scale": 10.0,
-    "verify_page_content_limit": 1500,
-    "verify_max_pages": 2,
-    "extract_page_content_limit": 2000,
     "query_page_content_limit": 2000,
     "candidate_pages_max": 10,
     "answer_min_length": 100,
@@ -458,7 +444,6 @@ AGENTIC_CONFIG = {
     # Key terms for catalog chapter prioritization (generic English terms only; no language-specific hardcoding)
     "catalog_key_terms": ['feature', 'overview', 'specification', 'introduction'],
     # Keywords for comparison detection (language-agnostic)
-    "compare_keywords": ['vs', 'versus', 'compare', 'comparison', 'diff', 'difference'],
 }
 
 # =============================================================================
@@ -477,11 +462,9 @@ _emb_max_input_tokens = int(os.environ.get("OPENLAD_EMB_MAX_INPUT_TOKENS", "2048
 
 EMBEDDING_CONFIG = {
     # Embedding model context window (must match llama-server -c value)
-    "ctx_size": _emb_ctx,
     # Conservative token→char ratio (1.5 for mixed CN/EN, 4.0 for pure EN)
     "token_to_char_ratio": _emb_char_ratio,
     # Safety margin: only use this fraction of the context window
-    "safety_ratio": _emb_safety,
     # Hard cap: any single chunk exceeding this will be split (derived).
     # Bound by both the context window and the physical batch: whichever is
     # tighter wins, so chunks stay embeddable on small-batch deployments.
@@ -513,8 +496,6 @@ OCR_CONFIG = {
     "language": "zh_en",
     "min_confidence": 0.6,
     "enable_deskew": True,
-    "enable_dewarp": False,
-    "enable_denoise": True,
     "fallback_engine": "vlm",
 }
 
@@ -567,15 +548,11 @@ CHART_CONFIG = {
     "max_image_size": 1024,
     "append_to_raw_text": True,
     # Page classification / image description guards
-    "vlm_blank_image_threshold": 0.005,   # ratio of non-white pixels; below this is blank
     "vlm_min_text_len_for_candidate": 1000,  # pages with more text are not VLM candidates
     "vlm_image_description_enabled": os.environ.get("OPENLAD_IMAGE_DESCRIPTION", "0").strip().lower()
                                      in ("1", "on", "true"),
     "vlm_image_description_max_tokens": 1024,
     "vlm_image_description_temperature": 0.2,
-    # Cost guard for deep VLM analysis of CHART pages.
-    # 0 = unlimited (analyze every classified CHART page). Set >0 to cap cost on large schematics.
-    "vlm_max_chart_pages_per_doc": int(os.environ.get("OPENLAD_VLM_MAX_CHART_PAGES", "0")),
     # Dedicated OCR endpoint transcription (used when model_config ocr_url is
     # set): visual candidate pages are transcribed directly instead of the
     # VLM classify -> CHART/IMAGE split.
@@ -665,9 +642,6 @@ RATE_LIMIT_CONFIG = {
     "query_per_minute": 30,
     "upload_per_minute": 10,
     "max_query_length": 2000,
-    "agent_max_steps": 8,
-    "agent_max_replan": 3,
-    "agent_step_timeout_seconds": 120,
 }
 
 # Login rate limit (dual-track: per-username + per-IP). Throttle only, no lockout.
@@ -681,7 +655,6 @@ LOGIN_RATE_LIMIT = {
 # 0 / negative = never expires. Preset options surfaced in the admin UI.
 API_KEY_CONFIG = {
     "default_ttl_days": int(os.environ.get("OPENLAD_API_KEY_TTL_DAYS", "90")),
-    "ttl_presets_days": [90, 180, 365],  # 3 months / half year / 1 year
 }
 
 # =============================================================================
@@ -690,8 +663,6 @@ API_KEY_CONFIG = {
 TENANT_CONFIG = {
     "default_storage_quota_mb": int(os.environ.get("OPENLAD_DEFAULT_QUOTA_MB", "10240")),
     "max_tenants": int(os.environ.get("OPENLAD_MAX_TENANTS", "100")),
-    "enable_api_key_auth": True,
-    "enable_password_auth": True,
 }
 
 # =============================================================================
@@ -705,8 +676,6 @@ PLUGIN_CONFIG = {
         # OPENLAD_INDUSTRIES_DIRS=/srv/packs:/srv/more
         *[d for d in os.environ.get("OPENLAD_INDUSTRIES_DIRS", "").split(os.pathsep) if d],
     ],
-    "enable_hot_reload": os.environ.get("OPENLAD_HOT_RELOAD", "false").lower() == "true",
-    "hot_reload_interval_seconds": 30,
 }
 
 ensure_dirs()
