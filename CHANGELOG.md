@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Added a model-driven Agent kernel without embedding retrieval strategy in
+  Core.** Native tool calls, dynamic tool schemas, request-local observations,
+  and explicit budgets let the configured model choose its path from task and
+  tool results. Generic registration/schema checks, tenant-safe handlers, and
+  bounded failures provide deterministic guardrails without fixed search,
+  comparison, facet, review, or repair stages. The configured model client now
+  returns per-call native tool state; the legacy query path is unchanged.
+
 ### Fixed
 
 - **An unreadable page image no longer aborts the whole document.** Image

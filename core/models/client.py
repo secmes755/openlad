@@ -76,6 +76,7 @@ class ChatResult:
 
     text: str
     finish_reason: str | None = None
+    tool_calls: tuple[dict, ...] = ()
 
     @property
     def hit_token_cap(self) -> bool:
@@ -306,6 +307,14 @@ class ModelClient:
                 api_key=self.ocr_api_key)
         return self._chat_completion_result(messages, max_tokens, temperature)
 
+    def chat_with_tools(self, messages: list, tools: list, max_tokens: int = 2048,
+                        temperature: float = 0.0,
+                        tool_choice: str = "auto") -> ChatResult:
+        """Return one native tool-capable reply without publishing shared call state."""
+        return self._chat_completion_result(
+            messages, max_tokens=max_tokens, temperature=temperature,
+            tools=tools, tool_choice=tool_choice)
+
     def _chat_completion(self, messages: list, max_tokens: int = 2048,
                          temperature: float = 0.7, json_mode: bool = False,
                          json_array_mode: bool = False,
@@ -320,7 +329,8 @@ class ModelClient:
                                 temperature: float = 0.7, json_mode: bool = False,
                                 json_array_mode: bool = False,
                                 base_url: str | None = None, model: str | None = None,
-                                api_key: str | None = None) -> ChatResult:
+                                api_key: str | None = None, tools: list | None = None,
+                                tool_choice: str | None = None) -> ChatResult:
         """Perform a chat completion and return text plus its finish reason.
 
         The finish reason is carried on the returned :class:`ChatResult`
@@ -371,6 +381,10 @@ class ModelClient:
         # FIX: Always disable thinking mode for all requests to reduce latency
         # and prevent token waste on internal reasoning text
         payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         if json_mode:
             if json_array_mode:
                 payload["response_format"] = {
@@ -441,7 +455,9 @@ class ModelClient:
                 if not content.strip() and msg.get("reasoning_content"):
                     logger.warning(f"[MODEL] content empty (reasoning_content={len(msg['reasoning_content'])} chars), "
                                    f"model may have exhausted tokens during thinking. Returning empty.")
-                return ChatResult(text=content, finish_reason=finish_reason)
+                return ChatResult(
+                    text=content, finish_reason=finish_reason,
+                    tool_calls=tuple(msg.get("tool_calls") or ()))
             except Exception as e:
                 if attempt < max_retries - 1:
                     wait = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
