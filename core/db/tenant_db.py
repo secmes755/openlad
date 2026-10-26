@@ -605,7 +605,9 @@ class TenantMetadataDB:
         return ids
 
 
-    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: set[int] | None = None) -> list[dict]:
+    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False,
+                          page_filter: set[int] | None = None,
+                          doc_id_filter: set[str] | None = None) -> list[dict]:
         """Chunk-level FTS search (OpenLAD: downgraded from page-level to chunk-level)
 
         FIX: When force_bigram_only=True, skip FTS trigram search and go directly to bigram LIKE search.
@@ -657,6 +659,14 @@ class TenantMetadataDB:
             page_filter_params = list(page_filter)
             logger.info(f"[FTS] Applying page_filter: {sorted(page_filter)[:20]}{'...' if len(page_filter) > 20 else ''} ({len(page_filter)} pages)")
 
+        doc_filter_sql = ""
+        doc_filter_params = []
+        if doc_id_filter:
+            doc_filter_sql = f"AND dc.doc_id IN ({','.join(['?'] * len(doc_id_filter))})"
+            doc_filter_params = sorted(doc_id_filter)
+        filter_sql = page_filter_sql + doc_filter_sql
+        filter_params = page_filter_params + doc_filter_params
+
         # 1. FTS5 trigram search (3+ characters)
         # FIX: When force_bigram_only=True, skip FTS search and go directly to bigram LIKE
         if trigram_tokens and not force_bigram_only:
@@ -669,9 +679,9 @@ class TenantMetadataDB:
                             SELECT dc.id, dc.doc_id, dc.page_id, dc.page_num, dc.section_title,
                                    dc.chunk_text, dc.chunk_text_preview, rank
                             FROM doc_chunks_fts JOIN doc_chunks dc ON doc_chunks_fts.rowid = dc.id
-                            WHERE doc_chunks_fts MATCH ? {page_filter_sql}
+                            WHERE doc_chunks_fts MATCH ? {filter_sql}
                             ORDER BY rank LIMIT ?
-                        """, (and_query,) + tuple(page_filter_params) + (limit,)).fetchall()
+                        """, (and_query,) + tuple(filter_params) + (limit,)).fetchall()
                         for r in rows:
                             cid = r["id"]
                             if cid not in seen_chunk_ids:
@@ -694,9 +704,9 @@ class TenantMetadataDB:
                             SELECT dc.id, dc.doc_id, dc.page_id, dc.page_num, dc.section_title,
                                    dc.chunk_text, dc.chunk_text_preview, rank
                             FROM doc_chunks_fts JOIN doc_chunks dc ON doc_chunks_fts.rowid = dc.id
-                            WHERE doc_chunks_fts MATCH ? {page_filter_sql}
+                            WHERE doc_chunks_fts MATCH ? {filter_sql}
                             ORDER BY rank LIMIT ?
-                        """, (match_query,) + tuple(page_filter_params) + (limit * 2,)).fetchall()
+                        """, (match_query,) + tuple(filter_params) + (limit * 2,)).fetchall()
                         for r in rows:
                             cid = r["id"]
                             if cid not in seen_chunk_ids:
@@ -729,21 +739,21 @@ class TenantMetadataDB:
                             SELECT dc.id, dc.doc_id, dc.page_id, dc.page_num, dc.section_title,
                                    dc.chunk_text, dc.chunk_text_preview, ({match_score}) as match_count
                             FROM doc_chunks dc
-                            WHERE ({conditions}) {exclude_sql} {page_filter_sql}
+                            WHERE ({conditions}) {exclude_sql} {filter_sql}
                             ORDER BY match_count DESC, dc.page_num
                             LIMIT ?
                         """
-                        query_params = params + params + list(seen_chunk_ids) + page_filter_params + [like_limit]
+                        query_params = params + params + list(seen_chunk_ids) + filter_params + [like_limit]
                     else:
                         sql = f"""
                             SELECT dc.id, dc.doc_id, dc.page_id, dc.page_num, dc.section_title,
                                    dc.chunk_text, dc.chunk_text_preview, ({match_score}) as match_count
                             FROM doc_chunks dc
-                            WHERE ({conditions}) {page_filter_sql}
+                            WHERE ({conditions}) {filter_sql}
                             ORDER BY match_count DESC, dc.page_num
                             LIMIT ?
                         """
-                        query_params = params + params + page_filter_params + [like_limit]
+                        query_params = params + params + filter_params + [like_limit]
                     rows = conn.execute(sql, query_params).fetchall()
                     for r in rows:
                         cid = r["id"]

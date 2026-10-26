@@ -72,7 +72,8 @@ def test_agent_can_finish_without_any_unconditional_tool_stage():
     assert result["answer"] == "No retrieval is needed."
     assert result["retrieval_trace"]["observations"] == []
     assert result["retrieval_trace"]["metrics"] == {
-        "steps": 1, "model_calls": 1, "tool_calls": 0}
+        "steps": 1, "model_calls": 1, "tool_calls": 0,
+        "db_calls": 0, "embedding_calls": 0, "policy_feedback": 0}
 
 
 def test_tool_observations_change_the_agents_next_action():
@@ -208,6 +209,35 @@ def test_shared_runtime_interleaves_requests_without_sharing_tenant_state():
         assert trace["tenant_id"] == tenant
         assert trace["observations"][0]["result"]["tenant"] == tenant
         assert trace["observations"][0]["result"]["task"] == f"task-{tenant}"
+
+
+def test_observation_compaction_preserves_structured_metadata():
+    value = {"ok": True, "items": [{
+        "doc_id": "a" * 64, "page_num": 7, "total_chars": 10000,
+        "content": "x" * 10000,
+    }]}
+    compacted = AgentRuntime._compact(value, 2000)
+    parsed = json.loads(compacted)
+
+    assert parsed["observation_truncated"] is True
+    assert parsed["items"][0]["page_num"] == 7
+    assert parsed["items"][0]["total_chars"] == 10000
+    assert len(parsed["items"][0]["content"]) < 1000
+
+
+def test_observation_compaction_does_not_drop_candidate_tail():
+    items = [{"doc_id": f"{index:064x}", "page_num": index + 1,
+              "section_title": "Section", "doc_name": "document",
+              "channel": "keyword", "excerpt": "x" * 1000}
+             for index in range(12)]
+    value = {"ok": True, "items": items,
+             "evidence_refs": [{"doc_id": item["doc_id"], "page_num": item["page_num"]}
+                               for item in items]}
+    parsed = json.loads(AgentRuntime._compact(value, 6000))
+
+    assert len(parsed["items"]) == 12
+    assert parsed["items"][-1]["doc_id"] == f"{11:064x}"
+    assert "evidence_refs" not in parsed
 
 
 def test_profile_instructions_are_data_not_core_policy():

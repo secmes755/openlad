@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparison, facet, review, or repair stages. The configured model client now
   returns per-call native tool state; the legacy query path is unchanged.
 
+- **Added model-selectable document tools and append-only evidence.** Tenant-
+  scoped catalog, keyword/vector/structure/fact/read capabilities share a
+  request-local evidence workspace without imposing a retrieval sequence.
+  Candidates and readable segments are distinct; full/short-ID citation checks,
+  bounded policy feedback, offset reads, structured observation compaction, and
+  workspace/budget summaries keep responses source-accountable while the Agent
+  retains control of tool selection.
+
 ### Fixed
 
 - **An unreadable page image no longer aborts the whole document.** Image

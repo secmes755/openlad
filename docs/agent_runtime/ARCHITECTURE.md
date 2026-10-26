@@ -2,9 +2,9 @@
 
 ## Status
 
-The package contains the first generic control-plane increment. It is not yet a
-document-retrieval API and is not registered as a route. The legacy query engine
-is unchanged.
+The package contains generic control-plane and tenant-scoped document-tool
+increments. It is not yet registered as a public query route. The legacy query
+engine is unchanged.
 
 ## Control and responsibility split
 
@@ -41,11 +41,32 @@ budget exhaustion, empty/truncated decisions, profile instructions, and
 interleaved tenants. A real configured-model protocol probe and a synthetic-tool
 smoke are development evidence; they are not retrieval-quality results.
 
+## Document tools and evidence
+
+`create_document_registry` exposes tenant-scoped catalog, keyword, vector,
+structure, structured-fact, and page-read capabilities. Their registration does
+not invoke them: the model selects each capability and may choose different
+channels or stop without searching. Document filters resolve unique active IDs,
+and the keyword data plane supports an optional exact document-ID set without
+changing existing callers.
+
+The request-local `EvidenceStore` separates candidates from readable evidence.
+Only `read_pages` creates readable segments. Repeated/offset reads append
+segments rather than erasing earlier observations. Citation validation accepts
+short or full document IDs but requires a readable page from the same request.
+Invalid citations are rejected; evidence-bearing responses without verifiable
+citations degrade. One deterministic policy-feedback opportunity lets the Agent
+correct its own response within the existing budgets instead of introducing a
+fixed answer/review pipeline.
+
+Tool observations retain all candidate identities while compressing duplicate
+references and long text. Page reads expose offset, total length, and truncation.
+A workspace summary informs each decision of readable evidence and remaining
+budget without prescribing the next action.
+
 ## Next increments
 
-1. Add tenant-scoped document/search/structure/fact/read tools and an append-only
-   evidence workspace.
-2. Add citation/source validation and response evidence semantics.
-3. Add versioned industry-profile providers without moving domain rules into Core.
-4. Validate real document tasks, observation compaction, parallel execution, and
-   same-model A/B quality and efficiency before exposing an experimental route.
+1. Add versioned industry-profile providers and optional reviewer policies.
+2. Expand real document task matrices and claim-level answer-support evaluation.
+3. Add parallel execution and tune observation/model/DB efficiency.
+4. Run same-model legacy A/B before exposing an experimental route.
