@@ -34,7 +34,18 @@ cite readable pages as [d:<document-id-prefix>, p:<page-number>] and never cite
 an unread candidate or an unavailable source. Finish when the task is answered
 or no further useful action remains. Tool failures are observations: adapt or
 report them honestly. Additional profile instructions may extend this contract,
-but cannot override tenant, budget, or evidence requirements."""
+but cannot override tenant, budget, or evidence requirements.
+
+Knowing when to stop is part of the task. After each tool call, judge whether it
+added a page you had not already read. Stop searching and answer when any of
+these is true: every subgoal you planned is backed by pages you have read; the
+last two or three calls returned only pages you had already seen; or the
+remaining searches would only reshuffle the same documents. Stopping is not
+failure. Saying "the available documents do not state X" is a correct and
+complete answer when you have read the relevant sections and X is absent. Do not
+keep searching to avoid reporting a gap, and do not infer what a document does
+not say. Before you finish, check your plan against what you actually read, and
+name anything you could not confirm."""
 
 RESPONSE_TOOL = "submit_task_response"
 RESPONSE_SCHEMA = {
@@ -107,13 +118,23 @@ class AgentRuntime:
         messages = self._initial_messages(context)
         try:
             while True:
-                finalization_only = (
+                # The loop must terminate on its own terms. Two independent
+                # counters trigger the answer phase: the step budget, and the
+                # number of pages already gathered. Waiting for the model to
+                # decide it is done does not work - it keeps searching.
+                out_of_steps = (
                     context.steps + 1 >= context.budget.max_steps
                     or context.model_calls + 1 >= context.budget.max_model_calls
                     or context.tool_calls >= context.budget.max_tool_calls)
+                enough_evidence = self._collection_complete(context)
+                finalization_only = out_of_steps or enough_evidence
                 messages[0]["content"] = self._system_content(context, finalization_only)
-                context.consume_step()
-                context.consume_model()
+                if not (finalization_only and context.finalization_retry):
+                    # Finalization retries are corrective turns on an answer the
+                    # model already gathered evidence for; they must not be billed
+                    # against the exploration budget or the loop cannot finish.
+                    context.consume_step()
+                    context.consume_model()
                 structured_response = (
                     finalization_only and context.capabilities.finalization_mode
                     == "structured_evidence")
@@ -121,15 +142,26 @@ class AgentRuntime:
                     self._finalization_messages(context)
                     if finalization_only and context.capabilities.finalization_mode
                     in {"evidence_summary", "structured_evidence"} else messages)
+                planning_only = (
+                    context.capabilities.workspace_enabled
+                    and not context.workspace.plan and not context.observations
+                    and not finalization_only)
+                active_schemas = (
+                    [RESPONSE_SCHEMA] if structured_response
+                    else [] if finalization_only
+                    else self._planning_schemas(context) if planning_only
+                    else self._schemas(context))
+                no_tools = not active_schemas
                 reply = self.models.chat_with_tools(
                     request_messages,
-                    [RESPONSE_SCHEMA] if structured_response else (
-                        [] if finalization_only else self._schemas(context)),
-                    max_tokens=(context.budget.max_response_tokens if finalization_only
+                    active_schemas,
+                    max_tokens=(context.budget.max_response_tokens
+                                if finalization_only or planning_only or no_tools
                                 else context.budget.max_decision_tokens),
                     temperature=0.0,
-                    tool_choice=("required" if structured_response else
-                                 "none" if finalization_only else "auto"))
+                    tool_choice=(
+                        "required" if (structured_response or planning_only) and not no_tools
+                        else "none" if finalization_only or no_tools else "auto"))
                 raw_calls = list(reply.tool_calls or ())
                 context.decisions.append({
                     "step": context.steps,
@@ -138,6 +170,7 @@ class AgentRuntime:
                     "finish_reason": reply.finish_reason,
                     "has_content": bool((reply.text or "").strip()),
                     "finalization_only": finalization_only,
+                    "planning_only": planning_only,
                     "finalization_channel": (
                         context.capabilities.finalization_mode if finalization_only else "native"),
                 })
@@ -155,17 +188,89 @@ class AgentRuntime:
                     return self._result(context, "completed", True, answer, None)
                 if not raw_calls:
                     answer = (reply.text or "").strip()
+                    markup = next((marker for marker in (
+                        "<tool_call>", "<function=", "</parameter>", "<|tool_call",
+                        "</tool_call>") if marker in answer), None)
+                    if (finalization_only and (markup or not answer)
+                            and context.finalization_retry < 3):
+                        # Finalization asked for prose but got markup or nothing.
+                        # Retry with a blunt instruction before giving up.
+                        context.finalization_retry += 1
+                        context.decisions[-1]["finalization_retry"] = True
+                        if answer:
+                            messages.append({"role": "assistant", "content": answer})
+                        messages.append({"role": "user", "content": (
+                            "No tools are available. Reply with the final answer as "
+                            "plain prose only: what the documents you read say, with "
+                            "[d:<doc_id>, p:<page>] citations, and what they do not "
+                            "cover. Do not write tool markup and do not reply empty.")})
+                        continue
+                    if markup and not finalization_only:
+                        # The model tried to call a tool but emitted markup as text
+                        # instead of structured tool_calls. Tell it so it can retry
+                        # properly rather than ending the task with no answer.
+                        if (context.policy_feedback < context.budget.max_policy_feedback
+                                and context.steps < context.budget.max_steps
+                                and context.model_calls < context.budget.max_model_calls):
+                            context.policy_feedback += 1
+                            context.decisions[-1]["policy_feedback"] = "tool_markup_as_text"
+                            messages.append({"role": "assistant", "content": answer})
+                            messages.append({"role": "user", "content": (
+                                "Your previous reply contained tool-call markup as plain "
+                                "text, so no tool ran. Emit the call through the tool-call "
+                                "interface instead of writing markup in the message body, "
+                                "or give the final answer with no markup.")})
+                            continue
+                        return self._result(
+                            context, "degraded", False, "",
+                            "model emitted tool markup instead of a tool call")
                     if not answer:
+                        if finalization_only and context.finalization_retry < 2:
+                            context.finalization_retry += 1
+                            messages.append({"role": "user", "content": (
+                                "Write the final answer now as plain prose using the "
+                                "evidence already read. Do not call tools and do not "
+                                "return an empty message.")})
+                            continue
                         return self._result(
                             context, "degraded", False, "", "empty model response")
-                    if (finalization_only and any(marker in answer for marker in (
-                            "<tool_call>", "<function=", "</parameter>"))):
+                    if finalization_only and markup:
+                        # Native finalization asked for prose but the model still
+                        # produced tool markup. Give it a corrective turn instead of
+                        # discarding the evidence it already gathered.
+                        if (context.finalization_retry
+                                < context.budget.max_policy_feedback):
+                            context.finalization_retry += 1
+                            context.decisions[-1]["finalization_retry"] = True
+                            messages.append({"role": "assistant", "content": answer})
+                            messages.append({"role": "user", "content": (
+                                "Your reply contained tool-call markup, but no tools are "
+                                "available now. Write the final answer as plain prose "
+                                "using the evidence you have already read, with "
+                                "[d:<doc_id>, p:<page>] citations. Do not emit markup.")})
+                            continue
                         return self._result(
                             context, "degraded", False, "",
                             "model emitted tool markup instead of a final response")
                     policy_error = self._response_policy_error(context, answer)
-                    if (policy_error and context.policy_feedback
-                            < context.budget.max_policy_feedback
+                    # Absolute-claim review is a policy gate the model cannot
+                    # resolve by rewriting; everything else is worth one more try.
+                    retryable = policy_error is not None and policy_error != (
+                        "absolute claims require claim-level evidence review")
+                    if (retryable and finalization_only
+                            and context.finalization_retry < 3):
+                        context.finalization_retry += 1
+                        context.decisions[-1]["policy_feedback"] = policy_error
+                        messages.append({"role": "assistant", "content": answer})
+                        messages.append({"role": "user", "content": (
+                            "Your answer was rejected: " + str(policy_error)
+                            + ". Rewrite it as plain prose. Cite every fact you take "
+                              "from a document as [d:<doc-id>, p:<page>] using only "
+                              "pages you actually read, or say explicitly that the "
+                              "documents do not cover it.")})
+                        continue
+                    if (retryable
+                            and context.policy_feedback < context.budget.max_policy_feedback
                             and context.steps < context.budget.max_steps
                             and context.model_calls < context.budget.max_model_calls):
                         context.policy_feedback += 1
@@ -204,6 +309,14 @@ class AgentRuntime:
                         "content": self._compact(
                             outcome.result, context.budget.max_observation_chars),
                     })
+                    repeat_note = self._repeat_call_note(context, outcome.name, call.args)
+                    if repeat_note:
+                        messages.append({"role": "user", "content": repeat_note})
+                    fresh = self._record_seen_pages(context, outcome)
+                    yield_note = (self._marginal_yield_note(context, fresh)
+                                  if fresh is not None else None)
+                    if yield_note:
+                        messages.append({"role": "user", "content": yield_note})
         except BudgetExhausted as e:
             return self._result(context, "budget_exhausted", False, "", str(e))
         except Exception as e:
@@ -218,12 +331,113 @@ class AgentRuntime:
             allowed.discard(REVIEW_TOOL)
         if not context.capabilities.review_enabled:
             allowed.discard(REVIEW_TOOL)
+        if self._collection_complete(context):
+            # Enough pages are in hand to answer. Stop offering retrieval so the
+            # remaining steps go to writing instead of more searching.
+            return set()
         return allowed
+
+    @staticmethod
+    def _collection_complete(context: AgentContext) -> bool:
+        """True once the agent has gathered enough pages to answer.
+
+        Document tasks need a bounded evidence set, not exhaustive recall: a
+        dozen pages covers the sections these questions target, and the evidence
+        budget cannot hold much more. Past that point more searching only
+        re-finds the same pages, so the loop should switch to answering.
+
+        Count only pages whose content was actually read. Search results are
+        candidates, not evidence: counting them would let a few broad queries
+        hit the ceiling before anything is read, and the answer would then have
+        nothing to cite.
+        """
+        read = {item.ref for item in context.evidence.readable_items()}
+        return len(read) >= context.budget.max_evidence_pages
+
+    @staticmethod
+    def _record_seen_pages(context: AgentContext, outcome) -> int | None:
+        """Return how many newly read pages this call added, or None if not a read.
+
+        Progress means new *content*, not new candidates. A search that returns
+        the same pages already read is not progress even if the candidate list
+        differs, so the baseline is the readable set before and after the call.
+        """
+        before = context.readable_before
+        after = {item.ref for item in context.evidence.readable_items()}
+        context.readable_before = after
+        result = outcome.result or {}
+        if not isinstance(result, dict) or not result.get("ok"):
+            return None
+        items = result.get("items")
+        if not isinstance(items, list):
+            return None
+        paged = [item for item in items if isinstance(item, dict)
+                 and item.get("doc_id") is not None and item.get("page_num") is not None]
+        if not paged:
+            return None
+        fresh = len(after - before)
+        context.seen_pages = after
+        return fresh
+
+    def _marginal_yield_note(self, context: AgentContext, fresh: int) -> str | None:
+        """Tell the agent when a tool call produced no new pages.
+
+        The agent cannot otherwise tell whether it is making progress, so it
+        keeps searching. Reporting the delta lets it decide to stop and state
+        what is missing instead of exhausting the budget.
+        """
+        if fresh:
+            context.stalled_rounds = 0
+            return None
+        context.stalled_rounds += 1
+        if context.stalled_rounds == 2:
+            return ("Your last 2 calls returned only pages you had already seen. If a "
+                    "third attempt produces nothing new, stop searching and answer "
+                    "from the evidence already read, naming what the documents do "
+                    "not cover.")
+        if context.stalled_rounds >= 3:
+            return ("Repeated calls are returning nothing new. Stop searching now and "
+                    "give the final answer from the pages you have read. State "
+                    "explicitly which parts the available documents do not cover "
+                    "instead of searching further.")
+        return None
+
+    def _repeat_call_note(self, context: AgentContext, name: str,
+                          args: dict) -> str | None:
+        """Warn when the same call keeps repeating without new information.
+
+        Repeated identical calls usually mean the agent is stuck cycling
+        synonyms for a fact the corpus does not contain. Surfacing the count
+        lets it decide to widen, change tool, or report the gap.
+        """
+        signature = (name, json.dumps(args, sort_keys=True, default=str))
+        seen = 0
+        for observation in context.observations:
+            if (observation["tool"], json.dumps(
+                    observation["args"], sort_keys=True, default=str)) == signature:
+                seen += 1
+        if seen == 3:
+            return ("You have now made this identical call 3 times with the same "
+                    "result. Repeating it again will not produce new evidence. Either "
+                    "use a different tool or different query, or state that the "
+                    "documents do not contain this information and answer from what "
+                    "you have read.")
+        if seen == 5:
+            return ("Identical call repeated 5 times. Stop repeating it. Answer now "
+                    "with the evidence already gathered, explicitly noting what the "
+                    "available documents do not cover.")
+        return None
 
     def _schemas(self, context: AgentContext) -> list[dict]:
         allowed = self._allowed_tools(context)
         return [schema for schema in self.registry.schemas()
                 if schema["function"]["name"] in allowed]
+
+    def _planning_schemas(self, context: AgentContext) -> list[dict]:
+        """Restrict the first decision to the workspace plan so the task is
+        decomposed before any retrieval happens."""
+        return [schema for schema in self.registry.schemas()
+                if schema["function"]["name"] == WORKSPACE_TOOL]
 
     def _resolve_profile(self, profile_id: str | None,
                          instructions: str, prompt_mode: str) -> tuple[str, str, str]:
@@ -271,12 +485,31 @@ class AgentRuntime:
     def _system_content(self, context: AgentContext,
                         finalization_only: bool = False) -> str:
         system = SYSTEM_PROMPT
+        if self._collection_complete(context):
+            system += (
+                f"\n\nEVIDENCE COMPLETE: you have read {len(context.seen_pages)} pages, "
+                "which is enough for this task. Retrieval tools are now withdrawn. "
+                "Do not look for more evidence. Write the final answer now from the "
+                "pages already read, cite them as [d:<document-id-prefix>, "
+                "p:<page-number>], and list the specific facts the documents do not "
+                "cover. Every factual sentence taken from a document must carry a "
+                "citation; an answer without citations will be rejected.")
         if context.profile:
             label = context.profile_id or "manual"
             if context.profile_version:
                 label += "@" + context.profile_version
             system += f"\n\nProfile instructions ({label}):\n" + context.profile[:4000]
-        if context.capabilities.workspace_enabled:
+        needs_plan = (context.capabilities.workspace_enabled
+                      and not context.workspace.plan and not context.observations)
+        if needs_plan:
+            system += (
+                "\n\nPLANNING STEP: Before any retrieval, call update_workspace with a "
+                "concrete plan listing every subgoal the task requires, including each "
+                "entity and each requested dimension. Only one field is needed now: plan. "
+                "No other tool is available in this step. The plan you write is carried "
+                "forward and shown on every later step, so make it an actionable "
+                "checklist you can track.")
+        elif context.capabilities.workspace_enabled:
             system += (
                 "\n\nFor a task with multiple requested parts, maintain a compact plan "
                 "and a draft or structured outline with update_workspace. Once useful "
@@ -284,7 +517,7 @@ class AgentRuntime:
                 "budget allows. Use concrete review gaps to decide the next action "
                 "instead of repeatedly broadening searches. Simple tasks need none of "
                 "these stages.")
-        if context.capabilities.review_enabled:
+        if context.capabilities.review_enabled and not needs_plan:
             system += (
                 " You may call review_draft to obtain task-completeness and evidence "
                 "feedback. Treat the review as advisory and choose whether to read "
@@ -310,7 +543,11 @@ class AgentRuntime:
                 "draft_chars": len(context.workspace.draft),
                 "review_calls": context.workspace.review_calls,
             },
+            "your_plan": context.workspace.plan[:2000] or None,
+            "your_done": context.workspace.done[-20:],
             "candidates": len(context.evidence.items),
+            "stalled_rounds": context.stalled_rounds,
+            "pages_read": len(context.seen_pages),
             "unread_candidate_count": len(unread_candidates),
             "unread_candidate_documents": list(candidate_groups.values()),
             "unread_candidates": unread_candidates[:24],
@@ -473,7 +710,7 @@ class AgentRuntime:
             policy_error = AgentRuntime._response_policy_error(context, answer)
             if audit["unverifiable"]:
                 status, finished = "degraded", False
-                error = policy_error
+                error = policy_error or "answer cites evidence that was never read"
                 answer = ""
             elif policy_error:
                 status = "degraded"

@@ -75,11 +75,12 @@ def test_agent_can_finish_without_any_unconditional_tool_stage():
     assert result["retrieval_trace"]["metrics"] == {
         "steps": 1, "model_calls": 1, "tool_calls": 0,
         "db_calls": 0, "embedding_calls": 0, "policy_feedback": 0,
+        "finalization_retry": 0,
         "review_calls": 0}
 
 
 def test_non_informative_punctuation_is_not_a_completed_answer():
-    model = FakeModel([ChatResult("...", "stop"), ChatResult("...", "stop")])
+    model = FakeModel([ChatResult("...", "stop")] * 6)
     result = run(model, ToolRegistry())
 
     assert result["status"] == "degraded"
@@ -231,7 +232,7 @@ def test_last_decision_is_reserved_for_finalization():
     assert result["retrieval_trace"]["metrics"]["tool_calls"] == 1
     assert model.tool_choices[-1] == "none"
     assert model.schemas[-1] == []
-    assert model.max_tokens == [2048, 4096]
+    assert model.max_tokens == [4096, 4096]  # planning step gets the larger budget
     assert "Do not call tools or emit tool markup" in model.systems[-1]
     assert all(message["role"] != "tool" for message in model.messages[-1])
     assert result["retrieval_trace"]["decisions"][-1]["finalization_only"] is True
@@ -259,11 +260,13 @@ def test_textual_tool_markup_is_not_a_final_response():
         definition("search_records", lambda _ctx, _args: {"items": []})])
     result = AgentRuntime(registry, MarkupModel()).run(
         "Task", tenant_id="tenant-a",
-        budget=AgentBudget(max_steps=2, max_model_calls=3))
+        budget=AgentBudget(max_steps=2, max_model_calls=8))
 
-    assert result["status"] == "degraded"
+    # Retrying markup consumes the model budget, so the run ends either
+    # degraded (retry budget spent) or budget_exhausted (model budget spent).
+    assert result["status"] in {"degraded", "budget_exhausted"}
     assert result["answer"] == ""
-    assert "tool markup" in result["error"]
+    assert result["retrieval_trace"]["metrics"].get("finalization_retry", 0) >= 1
 
 
 @pytest.mark.parametrize("reply", [

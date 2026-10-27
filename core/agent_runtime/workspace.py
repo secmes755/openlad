@@ -21,13 +21,23 @@ def update_workspace(context: AgentContext, args: dict) -> dict:
     if "draft" in args:
         context.workspace.draft = args["draft"].strip()
         updated.append("draft")
+    if "done" in args:
+        for entry in args["done"]:
+            entry = str(entry).strip()
+            if entry and entry not in context.workspace.done:
+                if len(context.workspace.done) >= 20:
+                    raise ValueError("workspace done limit reached")
+                context.workspace.done.append(entry)
+        updated.append("done")
     if not updated:
-        raise ValueError("at least one non-empty plan, note, or draft is required")
+        raise ValueError(
+            "at least one non-empty plan, note, draft, or done entry is required")
     return {
         "updated": updated,
         "plan_chars": len(context.workspace.plan),
         "note_count": len(context.workspace.notes),
         "draft_chars": len(context.workspace.draft),
+        "done": list(context.workspace.done),
     }
 
 
@@ -41,6 +51,8 @@ def register_workspace_tools(registry: ToolRegistry, reviewer) -> None:
                 "plan": {"type": "string", "maxLength": 4000},
                 "note": {"type": "string", "maxLength": 2000},
                 "draft": {"type": "string", "maxLength": 12000},
+                "done": {"type": "array", "maxItems": 20,
+                         "items": {"type": "string", "maxLength": 200}},
             }, "additionalProperties": False},
             update_workspace,
         ))

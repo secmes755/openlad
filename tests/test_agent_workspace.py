@@ -253,6 +253,11 @@ def test_guided_structured_response_submits_coverage_and_verifiable_references()
         def chat_with_tools(self, _messages, schemas, **kwargs):
             if kwargs["tool_choice"] == "auto":
                 return tool_result("read_record", {})
+            if kwargs["tool_choice"] == "required" and not hasattr(self, "planned"):
+                # The first decision is restricted to the workspace plan.
+                assert [s["function"]["name"] for s in schemas] == ["update_workspace"]
+                self.planned = True
+                return tool_result("update_workspace", {"plan": "Read Alpha evidence"})
             assert kwargs["tool_choice"] == "required"
             assert schemas[0]["function"]["name"] == "submit_task_response"
             return tool_result("submit_task_response", {
@@ -265,7 +270,7 @@ def test_guided_structured_response_submits_coverage_and_verifiable_references()
         read_record)])
     result = AgentRuntime(registry, StructuredModel()).run(
         "Check Alpha", tenant_id="tenant-a", capability_id="guided",
-        budget=AgentBudget(max_steps=2, max_model_calls=2))
+        budget=AgentBudget(max_steps=3, max_model_calls=3))
 
     assert result["status"] == "completed"
     assert result["task_coverage"][0]["subtask"] == "Alpha"

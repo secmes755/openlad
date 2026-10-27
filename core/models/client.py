@@ -4,6 +4,7 @@ Directly inherits mature implementation from predecessor, fully generalized, no 
 """
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -378,6 +379,13 @@ class ModelClient:
             "max_tokens": max_tokens,
             "temperature": temperature
         }
+        # Qwen3.6 instruct-mode sampling defaults. Opt-in via environment so that
+        # earlier runs remain comparable and other models are unaffected.
+        if os.environ.get("OPENLAD_ENABLE_SAMPLING_DEFAULTS", "").lower() in {"1", "true", "yes"}:
+            payload.setdefault("top_p", 0.8)
+            payload.setdefault("top_k", 20)
+            payload.setdefault("min_p", 0.0)
+            payload.setdefault("presence_penalty", 1.5)
         # FIX: Always disable thinking mode for all requests to reduce latency
         # and prevent token waste on internal reasoning text
         payload["chat_template_kwargs"] = {"enable_thinking": False}

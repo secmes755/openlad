@@ -274,8 +274,7 @@ def test_agent_cannot_cite_candidate_without_reading_it(env, doc_ref):
     model = NativeModel([
         tool_call("search_keyword", {"query": "Alpha"}),
         ChatResult(f"Alpha [d:{doc_ref}, p:1]", "stop"),
-        ChatResult(f"Still unread [d:{doc_ref}, p:1]", "stop"),
-    ])
+    ] + [ChatResult(f"Still unread [d:{doc_ref}, p:1]", "stop")] * 4)
     result = AgentRuntime(create_document_registry(), model).run(
         "Alpha", tenant_id="tenant-a")
 
@@ -369,8 +368,7 @@ def test_read_evidence_without_citation_degrades_instead_of_overclaiming(env):
         tool_call("search_keyword", {"query": "Alpha"}),
         tool_call("read_pages", {"refs": [{"doc_id": A, "page_num": 1}]}, "call-2"),
         ChatResult("Alpha fact", "stop"),
-        ChatResult("Alpha fact without a source", "stop"),
-    ])
+    ] + [ChatResult("Alpha fact without a source", "stop")] * 8)
     result = AgentRuntime(create_document_registry(), model).run(
         "Alpha", tenant_id="tenant-a")
 

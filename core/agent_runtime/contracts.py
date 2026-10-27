@@ -21,12 +21,13 @@ class AgentBudget:
     max_tool_calls: int = 12
     max_db_calls: int = 100
     max_embedding_calls: int = 12
-    max_policy_feedback: int = 1
+    max_policy_feedback: int = 3
     max_review_calls: int = 1
     allow_unreviewed_absolute_claims: bool = False
     max_decision_tokens: int = 2048
     max_response_tokens: int = 4096
     max_observation_chars: int = 6000
+    max_evidence_pages: int = 8
     max_history_items: int = 10
     max_history_chars: int = 1500
     max_evidence_chars: int = 48000
@@ -47,6 +48,7 @@ class AgentWorkspace:
     plan: str = ""
     notes: list[str] = field(default_factory=list)
     draft: str = ""
+    done: list[str] = field(default_factory=list)
     review_calls: int = 0
 
     def snapshot(self) -> dict:
@@ -81,6 +83,10 @@ class AgentContext:
     db_calls: int = 0
     embedding_calls: int = 0
     policy_feedback: int = 0
+    finalization_retry: int = 0
+    stalled_rounds: int = 0
+    seen_pages: set = field(default_factory=set)
+    readable_before: set = field(default_factory=set)
     evidence: EvidenceStore = field(default_factory=EvidenceStore)
     workspace: AgentWorkspace = field(default_factory=AgentWorkspace)
     task_coverage: list[dict] = field(default_factory=list)
@@ -130,5 +136,6 @@ class AgentContext:
             "db_calls": self.db_calls,
             "embedding_calls": self.embedding_calls,
             "policy_feedback": self.policy_feedback,
+            "finalization_retry": self.finalization_retry,
             "review_calls": self.workspace.review_calls,
         }
