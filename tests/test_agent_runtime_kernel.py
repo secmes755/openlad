@@ -181,6 +181,26 @@ def test_budget_exhaustion_is_not_a_completed_answer():
     assert result["retrieval_trace"]["metrics"]["model_calls"] == 2
 
 
+def test_workspace_summary_distinguishes_unread_candidates_from_read_pages():
+    context = AgentContext(tenant_id="tenant-a", question="Task")
+    context.evidence.add_candidates([
+        {"doc_id": "a" * 64, "page_num": 1, "section_title": "Read"},
+        {"doc_id": "b" * 64, "page_num": 2, "section_title": "Unread"},
+    ], "keyword")
+    context.evidence.mark_read({
+        "doc_id": "a" * 64, "page_num": 1, "content": "readable fact"})
+
+    system = AgentRuntime(ToolRegistry(), FakeModel([]))._system_content(context)
+    payload = json.loads(system.split("Current workspace and remaining budget:\n", 1)[1])
+
+    assert payload["unread_candidate_count"] == 1
+    assert payload["unread_candidates"] == [{
+        "doc_id": "b" * 64, "page_num": 2, "section_title": "Unread"}]
+    assert payload["unread_candidate_documents"] == [{
+        "doc_id": "b" * 64, "unread_count": 1,
+        "candidates": [{"page_num": 2, "section_title": "Unread"}]}]
+
+
 def test_last_decision_is_reserved_for_finalization():
     class FinalizationModel:
         def __init__(self):

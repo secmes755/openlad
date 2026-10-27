@@ -91,6 +91,13 @@ default), fairly allocated across readable pages. Every item reports original
 and included character counts plus an explicit truncation flag; omitted text must
 never be interpreted as evidence of absence.
 
+Search candidates carry a read-state annotation, and repeated page reads report
+whether the page was already read. Decision-time workspace state lists unread
+candidate references separately from readable pages, allowing the model to merge
+search results and avoid redundant reads without Core choosing a retrieval path.
+The generic evidence contract also requires overview lists, later parameter lines,
+and tables to be reconciled rather than treating the first list as exhaustive.
+
 ## Profiles and bounded finalization
 
 `PluginProfileProvider` adapts the existing external pack registry. Profiles are

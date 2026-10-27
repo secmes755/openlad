@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 CITE_RE = re.compile(
     r"[\[\(]d:([0-9a-fA-F]{4,64}),\s*((?:p:\d+(?:-\d+)?\s*,?\s*)+)[\]\)]")
+MALFORMED_CITE_RE = re.compile(r"[\[\(]\s*d\s*:[^\]\)]*[\]\)]", re.IGNORECASE)
 PAGE_RE = re.compile(r"p:(\d+)(?:-(\d+))?")
 PAGE_ONLY_RE = re.compile(
     r"(?<![\w:])pp?\.\s*(\d+)(?:\s*[-–—]\s*(\d+))?", re.IGNORECASE)
@@ -130,6 +131,8 @@ class EvidenceStore:
     def audit_answer(self, answer: str) -> dict:
         readable = {item.ref for item in self.readable_items()}
         cited = extract_citations(answer)
+        malformed = [match.group(0) for match in MALFORMED_CITE_RE.finditer(answer or "")
+                     if not CITE_RE.fullmatch(match.group(0))]
         page_references = extract_page_references(answer)
         readable_docs = {ref[0] for ref in readable}
         ambiguous_pages = []
@@ -152,6 +155,7 @@ class EvidenceStore:
             "cited": cited,
             "verifiable": verifiable,
             "unverifiable": unverifiable,
+            "malformed_citations": malformed,
             "ambiguous_page_references": ambiguous_pages,
             "readable_pages": len(readable),
         }

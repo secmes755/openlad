@@ -24,7 +24,12 @@ SYSTEM_PROMPT = """You are a document task agent.
 Choose tools from the task and the observations returned by previous tools. Do not
 follow a predetermined retrieval sequence. Use only tool evidence for document
 facts, distinguish candidates from content actually read, and state the scope
-actually checked when evidence is insufficient. When using document evidence,
+actually checked when evidence is insufficient. Consolidate candidate references
+across searches, prioritize relevant unread pages, and avoid rereading a page
+unless another offset is needed. For a multi-entity task, inspect unread candidate
+groups across the relevant documents before concluding that evidence is missing.
+Reconcile overview lists, later parameter lines, and tables; an initial list may
+not be exhaustive. When using document evidence,
 cite readable pages as [d:<document-id-prefix>, p:<page-number>] and never cite
 an unread candidate or an unavailable source. Finish when the task is answered
 or no further useful action remains. Tool failures are observations: adapt or
@@ -284,6 +289,20 @@ class AgentRuntime:
                 " You may call review_draft to obtain task-completeness and evidence "
                 "feedback. Treat the review as advisory and choose whether to read "
                 "more, revise, or finish.")
+        readable_refs = {
+            (item.doc_id, item.page_num) for item in context.evidence.readable_items()}
+        unread_candidates = [{
+            "doc_id": item.doc_id, "page_num": item.page_num,
+            "section_title": item.section_title,
+        } for item in context.evidence.items.values() if item.ref not in readable_refs]
+        candidate_groups = {}
+        for item in unread_candidates:
+            group = candidate_groups.setdefault(item["doc_id"], {
+                "doc_id": item["doc_id"], "unread_count": 0, "candidates": []})
+            group["unread_count"] += 1
+            if len(group["candidates"]) < 6:
+                group["candidates"].append({
+                    "page_num": item["page_num"], "section_title": item["section_title"]})
         workspace = {
             "agent_workspace": {
                 "plan": context.workspace.plan[:2000],
@@ -292,6 +311,9 @@ class AgentRuntime:
                 "review_calls": context.workspace.review_calls,
             },
             "candidates": len(context.evidence.items),
+            "unread_candidate_count": len(unread_candidates),
+            "unread_candidate_documents": list(candidate_groups.values()),
+            "unread_candidates": unread_candidates[:24],
             "readable_evidence": [{
                 "doc_id": item.doc_id, "page_num": item.page_num,
                 "segments": [{"offset": segment["offset"], "chars": len(segment["content"])}
@@ -430,6 +452,8 @@ class AgentRuntime:
         audit = context.evidence.audit_answer(answer)
         if audit["unverifiable"]:
             return "answer contains citations to unread or unavailable evidence"
+        if audit["malformed_citations"]:
+            return "answer contains malformed document citations"
         if audit["ambiguous_page_references"]:
             return "page-only citations are ambiguous across readable documents"
         if (context.evidence.items and not audit["verifiable"]

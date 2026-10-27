@@ -12,6 +12,7 @@ from core.agent_runtime import (
 )
 from core.agent_runtime.document_tools import (
     create_document_registry,
+    get_structure,
     lookup_facts,
     read_pages,
     search_keyword,
@@ -58,6 +59,8 @@ def test_page_only_citations_resolve_only_against_one_readable_document():
     assert store.audit_answer("Unread p.12")["unverifiable"] == [(A, 12)]
     assert extract_page_references(f"Explicit (d:{A}, p:9-10), p.11") == [11]
     assert extract_page_references("Invalid p.1-1000") == []
+    malformed = store.audit_answer("Unknown [d:无, p:无]")
+    assert malformed["malformed_citations"] == ["[d:无, p:无]"]
 
     store.mark_read({"doc_id": B, "page_num": 9, "content": "other document"})
     ambiguous = store.audit_answer("Ambiguous p.9")
@@ -193,13 +196,21 @@ def test_document_tools_separate_candidates_from_readable_evidence(env):
     vector = search_vector(context, {"query": "Alpha"})
     structure = search_structure(context, {"query": "Overview"})
     facts = lookup_facts(context, {"subject": "Alpha"})
+    structure_map = get_structure(context, {"doc_id": A})
 
     assert keyword["items"] and vector["items"] and structure["items"] and facts["items"]
+    assert structure_map["items"][0]["doc_id"] == A
+    assert structure_map["evidence_refs"] == [{"doc_id": A, "page_num": 1}]
     assert context.evidence.snapshot()["candidates"] == 1
     assert context.evidence.snapshot()["readable_pages"] == 0
 
     read = read_pages(context, {"refs": [{"doc_id": "aaaaaaaa", "page_num": 1}]})
     assert read["items"][0]["content"] == "Alpha fact"
+    repeated = read_pages(context, {"refs": [{"doc_id": A, "page_num": 1}]})
+    assert repeated["stats"]["previously_read_pages"] == 1
+    assert repeated["items"][0]["page_previously_read"] is True
+    keyword_after_read = search_keyword(context, {"query": "Alpha"})
+    assert keyword_after_read["items"][0]["page_already_read"] is True
     audit = context.evidence.audit_answer("Alpha [d:aaaaaaaa, p:1]")
     assert audit["verifiable"] == [(A, 1)]
     assert context.evidence.sources(audit)[0]["doc_name"] == "alpha.txt"

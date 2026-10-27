@@ -90,6 +90,13 @@ def _page_record(context: AgentContext, mdb, page: dict, channel: str,
     }
 
 
+def _annotate_read_state(context: AgentContext, items: list[dict]) -> list[dict]:
+    readable = {(item.doc_id, item.page_num) for item in context.evidence.readable_items()}
+    for item in items:
+        item["page_already_read"] = (item.get("doc_id"), item.get("page_num")) in readable
+    return items
+
+
 def list_documents(context: AgentContext, args: dict) -> dict:
     mdb = _mdb(context)
     value = f"%{args.get('filter', '')}%"
@@ -123,6 +130,7 @@ def search_keyword(context: AgentContext, args: dict) -> dict:
                 context, mdb, page, "keyword",
                 chunk.get("chunk_text") or page.get("raw_text") or ""))
     items = items[:limit]
+    _annotate_read_state(context, items)
     refs = context.evidence.add_candidates(items, "keyword")
     return {"ok": True, "items": items, "health": [],
             "stats": {"returned": len(items)}, "evidence_refs": refs}
@@ -151,6 +159,7 @@ def search_vector(context: AgentContext, args: dict) -> dict:
                 hit.get("chunk_text") or page.get("raw_text") or ""))
         if len(items) >= limit:
             break
+    _annotate_read_state(context, items)
     refs = context.evidence.add_candidates(items, "vector")
     return {"ok": True, "items": items, "health": [],
             "stats": {"returned": len(items)}, "evidence_refs": refs}
@@ -195,9 +204,14 @@ def get_structure(context: AgentContext, args: dict) -> dict:
             "SELECT section_title, section_level, start_page, end_page, summary "
             "FROM doc_structure_index WHERE doc_id=? AND section_level<=? "
             "ORDER BY start_page, section_level", (doc_id, depth)).fetchall()
-    items = [dict(row) for row in rows]
+    items = [{"doc_id": doc_id, **dict(row)} for row in rows]
+    refs = context.evidence.add_candidates([{
+        "doc_id": doc_id, "page_num": item["start_page"],
+        "end_page": item["end_page"], "section_title": item["section_title"],
+        "excerpt": item["summary"] or "",
+    } for item in items], "structure")
     return {"ok": True, "items": items, "health": [],
-            "stats": {"returned": len(items)}}
+            "stats": {"returned": len(items)}, "evidence_refs": refs}
 
 
 def lookup_facts(context: AgentContext, args: dict) -> dict:
@@ -226,6 +240,7 @@ def lookup_facts(context: AgentContext, args: dict) -> dict:
               "subject": row["entity"], "attribute": row["attribute"],
               "value": row["value"], "unit": row["unit"],
               "excerpt": row["source_text"]} for row in rows]
+    _annotate_read_state(context, items)
     refs = context.evidence.add_candidates(items, "facts")
     return {"ok": True, "items": items, "health": [],
             "stats": {"returned": len(items)}, "evidence_refs": refs}
@@ -234,6 +249,8 @@ def lookup_facts(context: AgentContext, args: dict) -> dict:
 def read_pages(context: AgentContext, args: dict) -> dict:
     mdb = _mdb(context)
     items, health, refs = [], [], []
+    previously_read = 0
+    read_refs = {(item.doc_id, item.page_num) for item in context.evidence.readable_items()}
     for ref in args["refs"]:
         try:
             doc_id = _resolve_doc(context, mdb, ref["doc_id"])
@@ -247,16 +264,19 @@ def read_pages(context: AgentContext, args: dict) -> dict:
             offset = args.get("offset", 0)
             max_chars = args.get("max_chars", 4000)
             record = _page_record(context, mdb, page, "read", raw)
+            record["page_previously_read"] = (doc_id, page_num) in read_refs
+            previously_read += int(record["page_previously_read"])
             record["offset"] = offset
             record["total_chars"] = len(raw)
             record["truncated"] = offset + max_chars < len(raw)
             record["content"] = raw[offset:offset + max_chars]
             items.append(record)
             refs.append(context.evidence.mark_read(record))
+            read_refs.add((doc_id, page_num))
         except Exception as e:
             health.append({"kind": "read_error", "ref": ref, "message": str(e)[:300]})
     return {"ok": True, "items": items, "health": health,
-            "stats": {"returned": len(items)},
+            "stats": {"returned": len(items), "previously_read_pages": previously_read},
             "evidence_refs": [ref for ref in refs if ref]}
 
 

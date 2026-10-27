@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   autonomous native response remain separate. Coverage is model-reported, not
   semantic approval.
 
+- **Expose candidate/read state for model-driven retrieval decisions.** Search
+  results and repeat reads identify previously read pages, while workspace state
+  separates unread candidates from readable evidence. Generic guidance reconciles
+  overview lists with later details and tables without prescribing tool order.
+
 - **Preserve complete readable evidence for finalization and review.** A separate,
   bounded evidence budget is shared across pages, with original/included lengths
   and explicit truncation metadata. Final response and reviewer instructions check
