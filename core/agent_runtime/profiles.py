@@ -23,7 +23,8 @@ class PluginProfileProvider:
     def __init__(self, scan_dirs: list[str] | None = None, registry=None):
         self.registry = registry or PluginRegistry(scan_dirs=scan_dirs or [])
 
-    def resolve(self, profile_id: str | None = None) -> AgentProfile:
+    def resolve(self, profile_id: str | None = None,
+                prompt_mode: str = "full") -> AgentProfile:
         selected = (self.registry.get_plugin(profile_id)
                     if profile_id else self.registry.get_generic())
         if selected is None:
@@ -34,7 +35,7 @@ class PluginProfileProvider:
         if composed is None:
             raise ProfileNotFound(f"Agent profile is unavailable: {profile_id}")
         prompts = composed.retrieval.get_retrieval_prompts()
-        instructions = self._render(prompts)
+        instructions = self._render(prompts, prompt_mode)
         base = self.registry.get_generic()
         version = str(composed.manifest.version)
         if base is not None and base.manifest.id != composed.manifest.id:
@@ -42,11 +43,15 @@ class PluginProfileProvider:
         return AgentProfile(composed.manifest.id, version, instructions)
 
     @staticmethod
-    def _render(prompts: dict) -> str:
+    def _render(prompts: dict, prompt_mode: str = "full") -> str:
         sections = []
         system = str(prompts.get("system_prompt") or "").strip()
         if system:
             sections.append(system)
+        if prompt_mode == "system_only":
+            return "\n\n".join(sections)
+        if prompt_mode != "full":
+            raise ValueError(f"unknown profile prompt mode: {prompt_mode}")
         rules = prompts.get("answer_rules") or []
         if isinstance(rules, list) and rules:
             sections.append("Response guidance:\n" + "\n".join(

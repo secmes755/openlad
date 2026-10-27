@@ -289,7 +289,7 @@ def test_absolute_claim_requires_an_explicit_trusted_policy(env, allow, expected
         ChatResult(answer, "stop"), ChatResult(answer, "stop"),
     ])
     result = AgentRuntime(create_document_registry(), model).run(
-        "Alpha support", tenant_id="tenant-a",
+        "Alpha support", tenant_id="tenant-a", capability_id="constrained",
         budget=AgentBudget(allow_unreviewed_absolute_claims=allow))
 
     assert result["status"] == expected

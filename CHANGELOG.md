@@ -34,9 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Added response-claim diagnostics and conservative absolute-claim policy.**
   Statement citation coverage is exposed without claiming semantic support.
-  Unreviewed absolute claims degrade by default; only an explicit trusted budget
-  option can relax that boundary. This does not introduce an industry-specific
-  response rule or an automatic model-review pipeline.
+  Constrained mode rejects unreviewed absolute claims; only an explicit trusted
+  budget option can relax that boundary. This does not introduce an industry-
+  specific response rule or an automatic model-review pipeline.
+
+- **Added model-capability modes and an Agent-owned review loop.** Autonomous and
+  constrained finalization policies are separate from industry profiles. Optional
+  request-local plan/note/draft tools and bounded native structured draft reviews
+  let the Agent identify task gaps and choose its own next action without making
+  planning or review a mandatory pipeline.
 
 ### Fixed
 

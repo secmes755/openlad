@@ -25,12 +25,31 @@ rather than empty successes.
 and observation size. Shared runtime and registry objects carry no per-request
 tenant, messages, or results.
 
-## Model protocol
+## Model protocol and capability policy
 
 The existing configured `ModelClient` supports native OpenAI-compatible tool
 calls through `chat_with_tools`. `ChatResult` carries tool calls and finish reason
 on the individual response; callers do not read shared last-call mirrors. No
 model name, gateway, or credential is defined by the Agent package.
+
+Model capabilities are independent of industry profiles. `autonomous` preserves
+native reasoning history at finalization and permits absolute claims subject to
+ordinary evidence policy. `guided` combines workspace/review guidance with
+evidence-summary finalization and conservative response boundaries. `constrained`
+retains full legacy industry prompts for experiment reproduction. Autonomous and
+guided modes inject only the industry role/system prompt, leaving task planning,
+retrieval, and response organization to the Agent rather than legacy answer-
+expansion rules. Workspace/review tools can be disabled by capability at both
+schema and execution boundaries. Unknown capability IDs fail explicitly.
+
+## Agent-owned workspace and optional review
+
+`update_workspace` lets the Agent maintain a compact plan, notes, and a draft or
+outline. It is request-local and never a required stage. `review_draft` is another
+model-selected tool: a bounded native structured review identifies missing task
+parts, unsupported claims, contradictions, and advisory next actions. Its result
+is an observation, not an approval or a fixed transition to retrieval. The Agent
+may read more, revise, or finish; simple tasks can invoke neither tool.
 
 ## Current acceptance
 
@@ -83,10 +102,11 @@ Citation validity is not claim-level support: an answer can cite real pages and
 still overstate an absence or mix in unsupported claims. Complex multi-part
 responses can also omit citations and correctly degrade. Statement-level
 citation coverage is returned as a diagnostic only and always leaves
-`semantic_support_verified=false`. Absolute absence/support claims are rejected
-unless the trusted caller explicitly opts into unreviewed claims; this is not a
-semantic review and is not enabled by industry profiles. These remain explicit
-quality gates for reviewer/claim evaluation.
+`semantic_support_verified=false`. In `constrained` capability mode, absolute
+absence/support claims are rejected unless the trusted caller explicitly opts
+into unreviewed claims. Autonomous mode leaves ordinary evidence policy in
+control. This lexical guard is not semantic review and is not enabled by industry
+profiles. Draft review is advisory and likewise does not verify facts.
 
 ## Next increments
 

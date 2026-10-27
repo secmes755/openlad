@@ -5,9 +5,12 @@ import copy
 import json
 import logging
 
+from .capabilities import CapabilityProvider
 from .contracts import AgentBudget, AgentContext, BudgetExhausted, ToolCall
 from .evidence import citation_coverage, has_absolute_claim, has_insufficient_evidence_statement
+from .review import DraftReviewer
 from .tools import ToolOutcome, ToolRegistry
+from .workspace import REVIEW_TOOL, WORKSPACE_TOOL, register_workspace_tools
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +29,26 @@ but cannot override tenant, budget, or evidence requirements."""
 class AgentRuntime:
     """Shared stateless runtime; every decision and observation is request-local."""
 
-    def __init__(self, registry: ToolRegistry, model_client, profile_provider=None):
-        self.registry = registry
+    def __init__(self, registry: ToolRegistry, model_client, profile_provider=None,
+                 capability_provider=None, reviewer=None):
+        self.registry = registry.clone()
         self.models = model_client
         self.profile_provider = profile_provider
+        self.capability_provider = capability_provider or CapabilityProvider()
+        self.reviewer = reviewer or DraftReviewer(model_client)
+        register_workspace_tools(self.registry, self.reviewer.review)
 
     def run(self, question: str, *, tenant_id: str, chat_history=None,
             budget: AgentBudget | None = None,
-            profile_instructions: str = "", profile_id: str | None = None) -> dict:
+            profile_instructions: str = "", profile_id: str | None = None,
+            capability_id: str | None = None) -> dict:
+        capabilities = self.capability_provider.resolve(capability_id)
         profile, resolved_id, version = self._resolve_profile(
-            profile_id, profile_instructions)
+            profile_id, profile_instructions, capabilities.profile_prompt_mode)
         context = AgentContext(
             tenant_id=tenant_id, question=question,
             chat_history=tuple(chat_history or ()), budget=budget or AgentBudget(),
+            capabilities=capabilities,
             profile=profile, profile_id=resolved_id, profile_version=version)
         messages = self._initial_messages(context)
         try:
@@ -51,9 +61,11 @@ class AgentRuntime:
                 context.consume_step()
                 context.consume_model()
                 request_messages = (
-                    self._finalization_messages(context) if finalization_only else messages)
+                    self._finalization_messages(context)
+                    if finalization_only and context.capabilities.finalization_mode
+                    == "evidence_summary" else messages)
                 reply = self.models.chat_with_tools(
-                    request_messages, [] if finalization_only else self.registry.schemas(),
+                    request_messages, [] if finalization_only else self._schemas(context),
                     max_tokens=(context.budget.max_response_tokens if finalization_only
                                 else context.budget.max_decision_tokens),
                     temperature=0.0,
@@ -66,7 +78,8 @@ class AgentRuntime:
                     "finish_reason": reply.finish_reason,
                     "has_content": bool((reply.text or "").strip()),
                     "finalization_only": finalization_only,
-                    "finalization_channel": "evidence_summary" if finalization_only else "native",
+                    "finalization_channel": (
+                        context.capabilities.finalization_mode if finalization_only else "native"),
                 })
                 if reply.hit_token_cap:
                     return self._result(
@@ -110,7 +123,8 @@ class AgentRuntime:
                                 "kind": "invalid_action", "message": parse_error}},
                             0.0)
                     else:
-                        outcome = self.registry.execute(context, call)
+                        outcome = self.registry.execute(
+                            context, call, allowed_tools=self._allowed_tools(context))
                     context.observations.append({
                         "step": context.steps, "call_id": outcome.call_id,
                         "tool": outcome.name, "args": call.args,
@@ -129,14 +143,28 @@ class AgentRuntime:
                            context.tenant_id, e)
             return self._result(context, "degraded", False, "", str(e))
 
+    def _allowed_tools(self, context: AgentContext) -> set[str]:
+        allowed = self.registry.names()
+        if not context.capabilities.workspace_enabled:
+            allowed.discard(WORKSPACE_TOOL)
+            allowed.discard(REVIEW_TOOL)
+        if not context.capabilities.review_enabled:
+            allowed.discard(REVIEW_TOOL)
+        return allowed
+
+    def _schemas(self, context: AgentContext) -> list[dict]:
+        allowed = self._allowed_tools(context)
+        return [schema for schema in self.registry.schemas()
+                if schema["function"]["name"] in allowed]
+
     def _resolve_profile(self, profile_id: str | None,
-                         instructions: str) -> tuple[str, str, str]:
+                         instructions: str, prompt_mode: str) -> tuple[str, str, str]:
         if profile_id and instructions:
             raise ValueError("profile_id and profile_instructions are mutually exclusive")
         if instructions:
             return instructions, "manual", ""
         if self.profile_provider is not None:
-            profile = self.profile_provider.resolve(profile_id)
+            profile = self.profile_provider.resolve(profile_id, prompt_mode=prompt_mode)
             return profile.instructions, profile.profile_id, profile.version
         if profile_id:
             raise ValueError("a profile provider is required when profile_id is used")
@@ -171,7 +199,8 @@ class AgentRuntime:
         } for observation in context.observations[-16:]]
         messages.append({"role": "user", "content": (
             "Readable evidence and retrieval scope for the final response:\n"
-            + json.dumps({"readable_evidence": evidence, "retrieval_scope": scope},
+            + json.dumps({"readable_evidence": evidence, "retrieval_scope": scope,
+                          "agent_workspace": context.workspace.snapshot()},
                          ensure_ascii=False, default=str)
             + "\nAnswer the original task now. Use only readable evidence for "
               "document facts and include [d:<document-id>, p:<page>] citations. "
@@ -187,7 +216,26 @@ class AgentRuntime:
             if context.profile_version:
                 label += "@" + context.profile_version
             system += f"\n\nProfile instructions ({label}):\n" + context.profile[:4000]
+        if context.capabilities.workspace_enabled:
+            system += (
+                "\n\nFor a task with multiple requested parts, maintain a compact plan "
+                "and a draft or structured outline with update_workspace. Once useful "
+                "readable evidence exists, review that draft before finalizing when "
+                "budget allows. Use concrete review gaps to decide the next action "
+                "instead of repeatedly broadening searches. Simple tasks need none of "
+                "these stages.")
+        if context.capabilities.review_enabled:
+            system += (
+                " You may call review_draft to obtain task-completeness and evidence "
+                "feedback. Treat the review as advisory and choose whether to read "
+                "more, revise, or finish.")
         workspace = {
+            "agent_workspace": {
+                "plan": context.workspace.plan[:2000],
+                "notes": context.workspace.notes[-5:],
+                "draft_chars": len(context.workspace.draft),
+                "review_calls": context.workspace.review_calls,
+            },
             "candidates": len(context.evidence.items),
             "readable_evidence": [{
                 "doc_id": item.doc_id, "page_num": item.page_num,
@@ -284,6 +332,7 @@ class AgentRuntime:
                 and not has_insufficient_evidence_statement(answer)):
             return "answer has no verifiable citation to readable evidence"
         if (has_absolute_claim(answer)
+                and not context.capabilities.allow_absolute_claims
                 and not context.budget.allow_unreviewed_absolute_claims):
             return "absolute claims require claim-level evidence review"
         return None
@@ -313,8 +362,13 @@ class AgentRuntime:
             "citation_audit": audit,
             "claim_citation_coverage": citation_coverage(answer),
             "evidence": context.evidence.snapshot(),
+            "workspace": context.workspace.snapshot(),
             "retrieval_trace": {
                 "tenant_id": context.tenant_id,
+                "capability": {
+                    "id": context.capabilities.capability_id,
+                    "finalization_mode": context.capabilities.finalization_mode,
+                },
                 "profile": {"id": context.profile_id, "version": context.profile_version},
                 "decisions": context.decisions,
                 "observations": context.observations,

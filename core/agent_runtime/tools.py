@@ -53,13 +53,20 @@ class ToolRegistry:
         return copy.deepcopy([
             definition.schema() for definition in self._definitions.values()])
 
-    def execute(self, context: AgentContext, call: ToolCall) -> ToolOutcome:
+    def names(self) -> set[str]:
+        return set(self._definitions)
+
+    def clone(self) -> ToolRegistry:
+        return ToolRegistry(self._definitions.values())
+
+    def execute(self, context: AgentContext, call: ToolCall,
+                allowed_tools: set[str] | None = None) -> ToolOutcome:
         context.consume_tool()
         started = time.monotonic()
         definition = self._definitions.get(call.name)
-        if definition is None:
+        if definition is None or (allowed_tools is not None and call.name not in allowed_tools):
             return ToolOutcome(call.call_id, call.name, _error(
-                "unknown_tool", f"unknown tool: {call.name}"), 0.0)
+                "unknown_tool", f"unknown or disabled tool: {call.name}"), 0.0)
         validation_error = _validate(definition.parameters, call.args)
         if validation_error:
             return ToolOutcome(call.call_id, call.name, _error(

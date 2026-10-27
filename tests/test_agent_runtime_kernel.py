@@ -74,7 +74,8 @@ def test_agent_can_finish_without_any_unconditional_tool_stage():
     assert result["retrieval_trace"]["observations"] == []
     assert result["retrieval_trace"]["metrics"] == {
         "steps": 1, "model_calls": 1, "tool_calls": 0,
-        "db_calls": 0, "embedding_calls": 0, "policy_feedback": 0}
+        "db_calls": 0, "embedding_calls": 0, "policy_feedback": 0,
+        "review_calls": 0}
 
 
 def test_tool_observations_change_the_agents_next_action():
@@ -194,7 +195,7 @@ def test_last_decision_is_reserved_for_finalization():
     registry = ToolRegistry([
         definition("search_records", lambda _ctx, _args: {"items": []})])
     result = AgentRuntime(registry, model).run(
-        "Task", tenant_id="tenant-a",
+        "Task", tenant_id="tenant-a", capability_id="constrained",
         budget=AgentBudget(max_steps=2, max_model_calls=3))
 
     assert result["status"] == "completed"

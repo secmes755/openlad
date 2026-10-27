@@ -48,6 +48,11 @@ def test_external_profile_is_composed_and_versioned(tmp_path):
     assert "base-rule" in profile.instructions
     assert "custom-rule" in profile.instructions
 
+    agent_profile = provider.resolve("custom", prompt_mode="system_only")
+    assert "Custom system" in agent_profile.instructions
+    assert "base-rule" not in agent_profile.instructions
+    assert "custom-rule" not in agent_profile.instructions
+
 
 def test_runtime_injects_profile_and_records_resolved_version(tmp_path):
     make_pack(tmp_path, "generic", "1.0.0", "Base system", "base-rule")
@@ -62,6 +67,7 @@ def test_runtime_injects_profile_and_records_resolved_version(tmp_path):
     system = model.calls[0][0]["content"]
     assert "custom@1.0.0+2.3.0" in system
     assert "Custom system" in system
+    assert "custom-rule" not in system
     assert result["retrieval_trace"]["profile"] == {
         "id": "custom", "version": "1.0.0+2.3.0"}
 
