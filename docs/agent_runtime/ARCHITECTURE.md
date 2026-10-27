@@ -73,11 +73,14 @@ The request-local `EvidenceStore` separates candidates from readable evidence.
 Only `read_pages` creates readable segments. Repeated/offset reads append
 segments rather than erasing earlier observations. Citation validation accepts
 short or full document IDs, square/parenthesized references, and bounded page
-ranges; every expanded page must be readable in the same request. Invalid
-citations are rejected. Positive evidence-bearing responses without verifiable
-citations degrade, while a leading scoped-insufficiency conclusion does not need
-an irrelevant citation. One deterministic policy-feedback opportunity lets the
-Agent correct its own response within existing budgets.
+ranges; every expanded page must be readable in the same request. Natural
+`p.9` / `pp.10–12` references resolve only when exactly one document is readable;
+across multiple readable documents they are explicitly ambiguous. This changes
+citation syntax compatibility, not evidence requirements. Invalid citations are
+rejected. Positive evidence-bearing responses without verifiable citations
+degrade, while a leading scoped-insufficiency conclusion does not need an
+irrelevant citation. One deterministic policy-feedback opportunity lets the Agent
+correct its own response within existing budgets.
 
 Tool observations retain all candidate identities while compressing duplicate
 references and long text. Page reads expose offset, total length, and truncation.
@@ -102,11 +105,14 @@ Citation validity is not claim-level support: an answer can cite real pages and
 still overstate an absence or mix in unsupported claims. Complex multi-part
 responses can also omit citations and correctly degrade. Statement-level
 citation coverage is returned as a diagnostic only and always leaves
-`semantic_support_verified=false`. In `constrained` capability mode, absolute
-absence/support claims are rejected unless the trusted caller explicitly opts
-into unreviewed claims. Autonomous mode leaves ordinary evidence policy in
-control. This lexical guard is not semantic review and is not enabled by industry
-profiles. Draft review is advisory and likewise does not verify facts.
+`semantic_support_verified=false`. In `constrained` capability mode, unqualified
+absolute absence/support claims are rejected unless the trusted caller explicitly
+opts into unreviewed claims. Statement-level inspection distinguishes explicit
+uncertainty and meta-negation from actual absolute assertions; this remains a
+conservative heuristic, not semantic proof. Autonomous mode leaves that policy to
+ordinary evidence handling. Citation presence or reviewer output never grants
+semantic approval.
+
 
 ## Next increments
 

@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision uses readable evidence and retrieval scope without native tool
   history, with independent decision/response token limits. Scoped insufficiency
   is distinguished from positive answers, and citations support bounded page
-  ranges without relaxing readable-page validation.
+  ranges without relaxing readable-page validation. Natural page-only citations
+  resolve only against one readable document and remain ambiguous across documents.
 
 - **Added response-claim diagnostics and conservative absolute-claim policy.**
   Statement citation coverage is exposed without claiming semantic support.
@@ -45,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   planning or review a mandatory pipeline.
 
 ### Fixed
+
+- **Punctuation-only model output no longer counts as a completed answer.**
+  Non-informative responses degrade while retaining raw output for diagnostics.
+
+- **Qualified uncertainty is not mistaken for an absolute claim.** The constrained
+  response guard inspects individual statements and still rejects actual
+  unqualified absence/support assertions.
 
 - **An unreadable page image no longer aborts the whole document.** Image
   correction wrapped its work in ``try/except`` and fell back to

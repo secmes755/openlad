@@ -325,9 +325,13 @@ class AgentRuntime:
     def _response_policy_error(context: AgentContext, answer: str) -> str | None:
         if not answer:
             return None
+        if not any(character.isalnum() for character in answer):
+            return "model returned an empty or non-informative response"
         audit = context.evidence.audit_answer(answer)
         if audit["unverifiable"]:
             return "answer contains citations to unread or unavailable evidence"
+        if audit["ambiguous_page_references"]:
+            return "page-only citations are ambiguous across readable documents"
         if (context.evidence.items and not audit["verifiable"]
                 and not has_insufficient_evidence_statement(answer)):
             return "answer has no verifiable citation to readable evidence"

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 CITE_RE = re.compile(
     r"[\[\(]d:([0-9a-fA-F]{4,64}),\s*((?:p:\d+(?:-\d+)?\s*,?\s*)+)[\]\)]")
 PAGE_RE = re.compile(r"p:(\d+)(?:-(\d+))?")
+PAGE_ONLY_RE = re.compile(
+    r"(?<![\w:])pp?\.\s*(\d+)(?:\s*[-–—]\s*(\d+))?", re.IGNORECASE)
 INSUFFICIENT_RE = re.compile(
     r"未找到|没有找到|无法确认|未提及|未明确|无法回答|无法比较|"
     r"缺少[^。！？\n]{0,30}(?:文档|资料|证据|信息)|"
@@ -17,10 +19,20 @@ INSUFFICIENT_RE = re.compile(
 ABSOLUTE_RE = re.compile(
     r"不支持|无法支持|不存在|does not support|cannot support|does not exist",
     re.IGNORECASE)
+QUALIFIED_ABSOLUTE_RE = re.compile(
+    r"无法确认(?:是|是否)[^。！？\n]{0,30}(?:不支持|不存在)|"
+    r"(?:不作为|不等于|并不意味着|并非)[^。！？\n]{0,12}(?:不支持|不存在)|"
+    r"cannot determine[^.!?\n]{0,40}(?:does not support|does not exist)|"
+    r"not (?:a conclusion|evidence) of (?:does not support|does not exist)",
+    re.IGNORECASE)
 
 
 def has_absolute_claim(text: str) -> bool:
-    return bool(ABSOLUTE_RE.search(text or ""))
+    """Detect unqualified absolute claims, not explicit uncertainty or meta-negation."""
+    for statement in re.split(r"(?<=[。！？!?])|\n+", text or ""):
+        if ABSOLUTE_RE.search(statement) and not QUALIFIED_ABSOLUTE_RE.search(statement):
+            return True
+    return False
 
 
 def citation_coverage(text: str) -> dict:
@@ -35,7 +47,8 @@ def citation_coverage(text: str) -> dict:
             if len(statement) >= 12:
                 statements.append(statement)
     uncited = [statement[:240] for statement in statements
-               if not extract_citations(statement)]
+               if not extract_citations(statement)
+               and not extract_page_references(statement)]
     cited_count = len(statements) - len(uncited)
     return {
         "statements": len(statements),
@@ -117,6 +130,19 @@ class EvidenceStore:
     def audit_answer(self, answer: str) -> dict:
         readable = {item.ref for item in self.readable_items()}
         cited = extract_citations(answer)
+        page_references = extract_page_references(answer)
+        readable_docs = {ref[0] for ref in readable}
+        ambiguous_pages = []
+        if len(readable_docs) == 1:
+            doc_id = next(iter(readable_docs))
+            seen = set(cited)
+            for page_num in page_references:
+                ref = (doc_id, page_num)
+                if ref not in seen:
+                    cited.append(ref)
+                    seen.add(ref)
+        elif len(readable_docs) > 1:
+            ambiguous_pages = page_references
         verifiable, unverifiable = [], []
         for short_id, page_num in cited:
             hit = next((ref for ref in readable
@@ -126,6 +152,7 @@ class EvidenceStore:
             "cited": cited,
             "verifiable": verifiable,
             "unverifiable": unverifiable,
+            "ambiguous_page_references": ambiguous_pages,
             "readable_pages": len(readable),
         }
 
@@ -188,3 +215,19 @@ def extract_citations(text: str) -> list[tuple[str, int]]:
                     citations.append(ref)
                     seen.add(ref)
     return citations
+
+
+def extract_page_references(text: str) -> list[int]:
+    """Read natural p.9 / pp.10–12 references, excluding explicit d:/p: citations."""
+    masked = CITE_RE.sub(lambda match: " " * len(match.group(0)), text or "")
+    pages, seen = [], set()
+    for match in PAGE_ONLY_RE.finditer(masked):
+        first = int(match.group(1))
+        last = int(match.group(2)) if match.group(2) else first
+        if last < first or last - first > 50:
+            continue
+        for page_num in range(first, last + 1):
+            if page_num not in seen:
+                pages.append(page_num)
+                seen.add(page_num)
+    return pages

@@ -78,6 +78,15 @@ def test_agent_can_finish_without_any_unconditional_tool_stage():
         "review_calls": 0}
 
 
+def test_non_informative_punctuation_is_not_a_completed_answer():
+    model = FakeModel([ChatResult("...", "stop"), ChatResult("...", "stop")])
+    result = run(model, ToolRegistry())
+
+    assert result["status"] == "degraded"
+    assert "non-informative" in result["error"]
+    assert result["answer"] == "..."  # preserved as failed raw output for diagnostics
+
+
 def test_tool_observations_change_the_agents_next_action():
     def decide(messages):
         tool_messages = [item for item in messages if item["role"] == "tool"]

@@ -18,7 +18,12 @@ from core.agent_runtime.document_tools import (
     search_structure,
     search_vector,
 )
-from core.agent_runtime.evidence import citation_coverage, extract_citations
+from core.agent_runtime.evidence import (
+    citation_coverage,
+    extract_citations,
+    extract_page_references,
+    has_absolute_claim,
+)
 from core.db.tenant_db import TenantMetadataDB
 from core.models.client import ChatResult
 
@@ -40,6 +45,33 @@ def test_parenthesized_page_ranges_require_every_page_to_be_read():
     assert extract_citations(f"Invalid (d:{A}, p:1-1000)") == []
 
 
+def test_page_only_citations_resolve_only_against_one_readable_document():
+    store = EvidenceStore()
+    for page in (9, 10, 11):
+        store.mark_read({"doc_id": A, "page_num": page, "content": f"page {page}"})
+
+    audit = store.audit_answer("Alpha p.9; Beta pp.10–11; repeated p.9")
+    assert audit["verifiable"] == [(A, 9), (A, 10), (A, 11)]
+    assert audit["unverifiable"] == []
+    assert audit["ambiguous_page_references"] == []
+    assert store.audit_answer("Unread p.12")["unverifiable"] == [(A, 12)]
+    assert extract_page_references(f"Explicit (d:{A}, p:9-10), p.11") == [11]
+    assert extract_page_references("Invalid p.1-1000") == []
+
+    store.mark_read({"doc_id": B, "page_num": 9, "content": "other document"})
+    ambiguous = store.audit_answer("Ambiguous p.9")
+    assert ambiguous["ambiguous_page_references"] == [9]
+    assert ambiguous["cited"] == []
+
+
+def test_absolute_claim_guard_ignores_explicit_uncertainty_not_real_negations():
+    assert has_absolute_claim("Alpha 不支持 Beta。")
+    assert has_absolute_claim("其他信息无法确认。\nAlpha 不支持 Beta。")
+    assert not has_absolute_claim("无法确认是“不支持”还是“文档未列出”。")
+    assert not has_absolute_claim("未读取页面不作为“不支持”的结论。")
+    assert not has_absolute_claim("未找到页面并不等于不存在相关资料。")
+
+
 def test_statement_citation_coverage_is_diagnostic_not_semantic_proof():
     coverage = citation_coverage(
         f"Alpha is 5 units (d:{A}, p:1).\nBeta is 6 units.")
@@ -48,6 +80,7 @@ def test_statement_citation_coverage_is_diagnostic_not_semantic_proof():
     assert coverage["cited_statements"] == 1
     assert coverage["coverage"] == 0.5
     assert coverage["semantic_support_verified"] is False
+    assert citation_coverage("Alpha is 5 units, p.9.")["cited_statements"] == 1
 
 
 def make_db(path, docs):
