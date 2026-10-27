@@ -22,6 +22,7 @@ class AgentBudget:
     max_db_calls: int = 100
     max_embedding_calls: int = 12
     max_policy_feedback: int = 1
+    allow_unreviewed_absolute_claims: bool = False
     max_decision_tokens: int = 2048
     max_response_tokens: int = 4096
     max_observation_chars: int = 6000

@@ -3,7 +3,13 @@ import json
 
 import pytest
 
-from core.agent_runtime import AgentContext, AgentRuntime, EvidenceStore, document_tools
+from core.agent_runtime import (
+    AgentBudget,
+    AgentContext,
+    AgentRuntime,
+    EvidenceStore,
+    document_tools,
+)
 from core.agent_runtime.document_tools import (
     create_document_registry,
     lookup_facts,
@@ -12,7 +18,7 @@ from core.agent_runtime.document_tools import (
     search_structure,
     search_vector,
 )
-from core.agent_runtime.evidence import extract_citations
+from core.agent_runtime.evidence import citation_coverage, extract_citations
 from core.db.tenant_db import TenantMetadataDB
 from core.models.client import ChatResult
 
@@ -32,6 +38,16 @@ def test_parenthesized_page_ranges_require_every_page_to_be_read():
     unread = store.audit_answer(f"Facts (d:{A}, p:1-3)")
     assert unread["unverifiable"] == [(A, 3)]
     assert extract_citations(f"Invalid (d:{A}, p:1-1000)") == []
+
+
+def test_statement_citation_coverage_is_diagnostic_not_semantic_proof():
+    coverage = citation_coverage(
+        f"Alpha is 5 units (d:{A}, p:1).\nBeta is 6 units.")
+
+    assert coverage["statements"] == 2
+    assert coverage["cited_statements"] == 1
+    assert coverage["coverage"] == 0.5
+    assert coverage["semantic_support_verified"] is False
 
 
 def make_db(path, docs):
@@ -262,6 +278,23 @@ def test_absolute_claim_does_not_get_insufficient_evidence_exemption(env):
 
     mixed_response = "Alpha is 5 units.\n" + "x" * 350 + "\n文档未明确提及。"
     assert AgentRuntime._response_policy_error(context, mixed_response) == error
+
+
+@pytest.mark.parametrize("allow,expected", [(False, "degraded"), (True, "completed")])
+def test_absolute_claim_requires_an_explicit_trusted_policy(env, allow, expected):
+    env("tenant-a", [(A, "a.txt", "Alpha fact", "ready")])
+    answer = f"Alpha does not support Beta [d:{A}, p:1]"
+    model = NativeModel([
+        tool_call("read_pages", {"refs": [{"doc_id": A, "page_num": 1}]}),
+        ChatResult(answer, "stop"), ChatResult(answer, "stop"),
+    ])
+    result = AgentRuntime(create_document_registry(), model).run(
+        "Alpha support", tenant_id="tenant-a",
+        budget=AgentBudget(allow_unreviewed_absolute_claims=allow))
+
+    assert result["status"] == expected
+    if not allow:
+        assert result["error"] == "absolute claims require claim-level evidence review"
 
 
 def test_read_evidence_without_citation_degrades_instead_of_overclaiming(env):

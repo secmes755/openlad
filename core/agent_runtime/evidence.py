@@ -14,6 +14,36 @@ INSUFFICIENT_RE = re.compile(
     r"not found|no relevant|cannot determine|unable to find|not mentioned|"
     r"insufficient evidence|no [\w -]{0,40}documentation",
     re.IGNORECASE)
+ABSOLUTE_RE = re.compile(
+    r"不支持|无法支持|不存在|does not support|cannot support|does not exist",
+    re.IGNORECASE)
+
+
+def has_absolute_claim(text: str) -> bool:
+    return bool(ABSOLUTE_RE.search(text or ""))
+
+
+def citation_coverage(text: str) -> dict:
+    """Diagnostic citation presence per statement, not semantic claim support."""
+    statements = []
+    for line in (text or "").splitlines():
+        if not line.strip() or re.fullmatch(r"[\s|:\-]+", line):
+            continue
+        for statement in re.split(
+                r"(?<=[。！？；])\s*|(?<=[.!?])\s+(?=[A-Z])", line):
+            statement = statement.strip()
+            if len(statement) >= 12:
+                statements.append(statement)
+    uncited = [statement[:240] for statement in statements
+               if not extract_citations(statement)]
+    cited_count = len(statements) - len(uncited)
+    return {
+        "statements": len(statements),
+        "cited_statements": cited_count,
+        "coverage": round(cited_count / len(statements), 4) if statements else None,
+        "uncited_examples": uncited[:8],
+        "semantic_support_verified": False,
+    }
 
 
 def has_insufficient_evidence_statement(text: str) -> bool:

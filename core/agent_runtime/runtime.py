@@ -6,7 +6,7 @@ import json
 import logging
 
 from .contracts import AgentBudget, AgentContext, BudgetExhausted, ToolCall
-from .evidence import has_insufficient_evidence_statement
+from .evidence import citation_coverage, has_absolute_claim, has_insufficient_evidence_statement
 from .tools import ToolOutcome, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -283,6 +283,9 @@ class AgentRuntime:
         if (context.evidence.items and not audit["verifiable"]
                 and not has_insufficient_evidence_statement(answer)):
             return "answer has no verifiable citation to readable evidence"
+        if (has_absolute_claim(answer)
+                and not context.budget.allow_unreviewed_absolute_claims):
+            return "absolute claims require claim-level evidence review"
         return None
 
     @staticmethod
@@ -308,6 +311,7 @@ class AgentRuntime:
             "error": error,
             "sources": context.evidence.sources(audit),
             "citation_audit": audit,
+            "claim_citation_coverage": citation_coverage(answer),
             "evidence": context.evidence.snapshot(),
             "retrieval_trace": {
                 "tenant_id": context.tenant_id,

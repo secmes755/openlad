@@ -81,9 +81,12 @@ Ordinary model-selected final responses do not pass through this stage.
 
 Citation validity is not claim-level support: an answer can cite real pages and
 still overstate an absence or mix in unsupported claims. Complex multi-part
-responses can also omit citations and correctly degrade. These remain explicit
-quality gates for reviewer/claim evaluation; completion status and keyword-only
-matrix checks must not be treated as production accuracy certification.
+responses can also omit citations and correctly degrade. Statement-level
+citation coverage is returned as a diagnostic only and always leaves
+`semantic_support_verified=false`. Absolute absence/support claims are rejected
+unless the trusted caller explicitly opts into unreviewed claims; this is not a
+semantic review and is not enabled by industry profiles. These remain explicit
+quality gates for reviewer/claim evaluation.
 
 ## Next increments
 

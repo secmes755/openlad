@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is distinguished from positive answers, and citations support bounded page
   ranges without relaxing readable-page validation.
 
+- **Added response-claim diagnostics and conservative absolute-claim policy.**
+  Statement citation coverage is exposed without claiming semantic support.
+  Unreviewed absolute claims degrade by default; only an explicit trusted budget
+  option can relax that boundary. This does not introduce an industry-specific
+  response rule or an automatic model-review pipeline.
+
 ### Fixed
 
 - **An unreadable page image no longer aborts the whole document.** Image
