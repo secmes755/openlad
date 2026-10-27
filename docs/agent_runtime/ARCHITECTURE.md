@@ -85,7 +85,11 @@ correct its own response within existing budgets.
 Tool observations retain all candidate identities while compressing duplicate
 references and long text. Page reads expose offset, total length, and truncation.
 A workspace summary informs each decision of readable evidence and remaining
-budget without prescribing the next action.
+budget without prescribing the next action. Evidence-summary finalization and
+draft review share a separate bounded `max_evidence_chars` budget (48,000 by
+default), fairly allocated across readable pages. Every item reports original
+and included character counts plus an explicit truncation flag; omitted text must
+never be interpreted as evidence of absence.
 
 ## Profiles and bounded finalization
 
@@ -95,11 +99,19 @@ resolved version in the trace. Core does not auto-detect an industry or load its
 vocabulary into planning code.
 
 When only one decision remains (or the tool budget is exhausted), the runtime
-uses a finalization-only model call. It removes native tool history and supplies
-bounded readable segments plus retrieval-scope observations. This prevents a
-model from spending its last decision on another tool call or emitting tool
-markup as the answer. Decision and response token limits are independent.
+uses a finalization-only model call. Autonomous mode retains native reasoning
+history. Evidence-summary modes replace it with bounded readable segments plus
+retrieval-scope observations, preventing another tool call or tool markup from
+masquerading as an answer. Decision and response token limits are independent.
 Ordinary model-selected final responses do not pass through this stage.
+
+`constrained` retains the original prose evidence summary for experiment
+reproduction. `guided` uses `structured_evidence`: the model must call
+`submit_task_response` once with 1–16 task-coverage items, each marked supported
+or unverified, plus readable page references and the final answer. Supported
+items require references; references are still validated against request-local
+read evidence. Model-reported coverage is returned in the result and is not
+semantic approval.
 
 Citation validity is not claim-level support: an answer can cite real pages and
 still overstate an absence or mix in unsupported claims. Complex multi-part

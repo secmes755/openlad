@@ -20,7 +20,7 @@ class CapabilityProvider:
             ),
             "guided": AgentCapabilities(
                 capability_id="guided",
-                finalization_mode="evidence_summary",
+                finalization_mode="structured_evidence",
                 workspace_enabled=True,
                 review_enabled=True,
                 allow_absolute_claims=False,
@@ -34,7 +34,7 @@ class CapabilityProvider:
             profile = self.profiles[resolved]
         except KeyError as e:
             raise CapabilityNotFound(f"unknown model capability profile: {resolved}") from e
-        if profile.finalization_mode not in {"native", "evidence_summary"}:
+        if profile.finalization_mode not in {"native", "evidence_summary", "structured_evidence"}:
             raise ValueError(f"invalid finalization mode: {profile.finalization_mode}")
         if profile.profile_prompt_mode not in {"system_only", "full"}:
             raise ValueError(f"invalid profile prompt mode: {profile.profile_prompt_mode}")

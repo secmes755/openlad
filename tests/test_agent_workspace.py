@@ -181,9 +181,11 @@ def test_draft_reviewer_uses_native_structured_output_and_bounded_budget():
     class ReviewModel:
         def __init__(self):
             self.calls = 0
+            self.messages = []
 
-        def chat_with_tools(self, _messages, schemas, **kwargs):
+        def chat_with_tools(self, messages, schemas, **kwargs):
             self.calls += 1
+            self.messages.append(copy.deepcopy(messages))
             assert kwargs["tool_choice"] == "required"
             assert schemas[0]["function"]["name"] == "submit_draft_review"
             review = {"complete": False, "missing_subtasks": ["Beta"],
@@ -194,12 +196,17 @@ def test_draft_reviewer_uses_native_structured_output_and_bounded_budget():
     context = AgentContext(
         tenant_id="tenant-a", question="Alpha and Beta",
         budget=AgentBudget(max_review_calls=1))
+    context.evidence.mark_read({
+        "doc_id": "a" * 64, "page_num": 9, "content": ("a" * 1500) + "TARGET"})
     model = ReviewModel()
     reviewer = DraftReviewer(model)
     result = reviewer.review(context, {"draft": "Alpha only"})
 
     assert result["ok"] is True
     assert result["review"]["missing_subtasks"] == ["Beta"]
+    payload = json.loads(model.messages[0][1]["content"])
+    assert "TARGET" in payload["readable_evidence"][0]["content"]
+    assert payload["readable_evidence"][0]["truncated"] is False
     assert context.model_calls == 1
     assert context.workspace.review_calls == 1
     second = reviewer.review(context, {"draft": "Alpha only"})
@@ -230,6 +237,67 @@ def test_autonomous_finalization_keeps_native_reasoning_history():
         "id": "autonomous", "finalization_mode": "native"}
     assert result["retrieval_trace"]["decisions"][-1][
         "finalization_channel"] == "native"
+
+
+def test_guided_structured_response_submits_coverage_and_verifiable_references():
+    from core.agent_runtime import ToolDefinition
+
+    doc_id = "a" * 64
+
+    def read_record(context, _args):
+        context.evidence.mark_read({
+            "doc_id": doc_id, "page_num": 1, "content": "Alpha evidence"})
+        return {"ok": True}
+
+    class StructuredModel:
+        def chat_with_tools(self, _messages, schemas, **kwargs):
+            if kwargs["tool_choice"] == "auto":
+                return tool_result("read_record", {})
+            assert kwargs["tool_choice"] == "required"
+            assert schemas[0]["function"]["name"] == "submit_task_response"
+            return tool_result("submit_task_response", {
+                "task_coverage": [{"subtask": "Alpha", "status": "supported",
+                                   "evidence_refs": [{"doc_id": doc_id, "page_num": 1}]}],
+                "answer": "Alpha is supported by the readable evidence."})
+
+    registry = ToolRegistry([ToolDefinition(
+        "read_record", "Read a record", {"type": "object", "properties": {}},
+        read_record)])
+    result = AgentRuntime(registry, StructuredModel()).run(
+        "Check Alpha", tenant_id="tenant-a", capability_id="guided",
+        budget=AgentBudget(max_steps=2, max_model_calls=2))
+
+    assert result["status"] == "completed"
+    assert result["task_coverage"][0]["subtask"] == "Alpha"
+    assert result["sources"] == [{
+        "doc_id": doc_id, "page_num": 1, "doc_name": "", "section_title": ""}]
+    assert f"[d:{doc_id}, p:1]" in result["answer"]
+    assert result["retrieval_trace"]["decisions"][-1][
+        "finalization_channel"] == "structured_evidence"
+
+
+def test_guided_structured_response_rejects_prose_and_missing_support_refs():
+    class ProseModel:
+        def chat_with_tools(self, *_args, **_kwargs):
+            return ChatResult("Unstructured response.", "stop")
+
+    result = AgentRuntime(ToolRegistry(), ProseModel()).run(
+        "Task", tenant_id="tenant-a", capability_id="guided",
+        budget=AgentBudget(max_steps=1))
+    assert result["status"] == "degraded"
+    assert "exactly one structured response" in result["error"]
+
+    class UnsupportedModel:
+        def chat_with_tools(self, *_args, **_kwargs):
+            return tool_result("submit_task_response", {
+                "task_coverage": [{"subtask": "Alpha", "status": "supported",
+                                   "evidence_refs": []}], "answer": "Alpha."})
+
+    result = AgentRuntime(ToolRegistry(), UnsupportedModel()).run(
+        "Task", tenant_id="tenant-a", capability_id="guided",
+        budget=AgentBudget(max_steps=1))
+    assert result["status"] == "degraded"
+    assert "require readable evidence references" in result["error"]
 
 
 def test_draft_reviewer_rejects_incomplete_structure():

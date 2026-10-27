@@ -231,3 +231,55 @@ def extract_page_references(text: str) -> list[int]:
                 pages.append(page_num)
                 seen.add(page_num)
     return pages
+
+
+def readable_evidence_payload(store: EvidenceStore, max_chars: int) -> list[dict]:
+    """Fairly allocate a bounded evidence budget without hiding truncation."""
+    readable = store.readable_items()
+    if not readable:
+        return []
+    lengths = [sum(len(segment["content"]) for segment in item.segments)
+               for item in readable]
+    budget = max(0, int(max_chars))
+    base = budget // len(readable)
+    allocations = [min(length, base) for length in lengths]
+    remaining = budget - sum(allocations)
+    while remaining:
+        active = [index for index, length in enumerate(lengths)
+                  if allocations[index] < length]
+        if not active:
+            break
+        share = max(1, remaining // len(active))
+        progressed = False
+        for index in active:
+            addition = min(lengths[index] - allocations[index], share, remaining)
+            allocations[index] += addition
+            remaining -= addition
+            progressed = progressed or addition > 0
+            if not remaining:
+                break
+        if not progressed:
+            break
+
+    payload = []
+    for item, length, allocation in zip(readable, lengths, allocations, strict=True):
+        parts, left, included = [], allocation, 0
+        for segment in item.segments:
+            content = segment["content"][:left]
+            if content:
+                parts.append(f"[offset {segment['offset']}]\n{content}")
+                included += len(content)
+                left -= len(content)
+            if left <= 0:
+                break
+        payload.append({
+            "doc_id": item.doc_id,
+            "page_num": item.page_num,
+            "doc_name": item.doc_name,
+            "section_title": item.section_title,
+            "content": "\n".join(parts),
+            "content_chars": length,
+            "included_chars": included,
+            "truncated": included < length,
+        })
+    return payload

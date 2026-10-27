@@ -220,10 +220,11 @@ def test_last_decision_is_reserved_for_finalization():
 def test_finalization_messages_carry_readable_evidence_without_tool_history():
     context = AgentContext(tenant_id="tenant-a", question="Task")
     context.evidence.mark_read({
-        "doc_id": "a" * 64, "page_num": 1, "content": "readable fact"})
+        "doc_id": "a" * 64, "page_num": 1, "content": ("a" * 1500) + "TARGET"})
     messages = AgentRuntime(ToolRegistry(), FakeModel([]))._finalization_messages(context)
 
-    assert "readable fact" in messages[-1]["content"]
+    assert "TARGET" in messages[-1]["content"]
+    assert '"truncated": false' in messages[-1]["content"]
     assert all(message["role"] != "tool" for message in messages)
 
 

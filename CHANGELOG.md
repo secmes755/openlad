@@ -45,6 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   let the Agent identify task gaps and choose its own next action without making
   planning or review a mandatory pipeline.
 
+- **Added structured task-coverage responses for guided finalization.** The model
+  submits supported/unverified subtasks, readable evidence references, and the
+  final answer through a native output tool. The legacy constrained summary and
+  autonomous native response remain separate. Coverage is model-reported, not
+  semantic approval.
+
+- **Preserve complete readable evidence for finalization and review.** A separate,
+  bounded evidence budget is shared across pages, with original/included lengths
+  and explicit truncation metadata. Final response and reviewer instructions check
+  every requested dimension and never infer absence from omitted text.
+
 ### Fixed
 
 - **Punctuation-only model output no longer counts as a completed answer.**

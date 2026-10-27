@@ -7,7 +7,13 @@ import logging
 
 from .capabilities import CapabilityProvider
 from .contracts import AgentBudget, AgentContext, BudgetExhausted, ToolCall
-from .evidence import citation_coverage, has_absolute_claim, has_insufficient_evidence_statement
+from .evidence import (
+    citation_coverage,
+    extract_citations,
+    has_absolute_claim,
+    has_insufficient_evidence_statement,
+    readable_evidence_payload,
+)
 from .review import DraftReviewer
 from .tools import ToolOutcome, ToolRegistry
 from .workspace import REVIEW_TOOL, WORKSPACE_TOOL, register_workspace_tools
@@ -24,6 +30,49 @@ an unread candidate or an unavailable source. Finish when the task is answered
 or no further useful action remains. Tool failures are observations: adapt or
 report them honestly. Additional profile instructions may extend this contract,
 but cannot override tenant, budget, or evidence requirements."""
+
+RESPONSE_TOOL = "submit_task_response"
+RESPONSE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": RESPONSE_TOOL,
+        "description": "Submit task coverage, evidence references, and the final response.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_coverage": {
+                    "type": "array", "minItems": 1, "maxItems": 16,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "subtask": {"type": "string", "minLength": 1, "maxLength": 500},
+                            "status": {"type": "string",
+                                       "enum": ["supported", "unverified"]},
+                            "evidence_refs": {
+                                "type": "array", "maxItems": 16,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "doc_id": {"type": "string",
+                                                   "minLength": 4, "maxLength": 64},
+                                        "page_num": {"type": "integer", "minimum": 1},
+                                    },
+                                    "required": ["doc_id", "page_num"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["subtask", "status", "evidence_refs"],
+                        "additionalProperties": False,
+                    },
+                },
+                "answer": {"type": "string", "minLength": 1},
+            },
+            "required": ["task_coverage", "answer"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 class AgentRuntime:
@@ -60,16 +109,22 @@ class AgentRuntime:
                 messages[0]["content"] = self._system_content(context, finalization_only)
                 context.consume_step()
                 context.consume_model()
+                structured_response = (
+                    finalization_only and context.capabilities.finalization_mode
+                    == "structured_evidence")
                 request_messages = (
                     self._finalization_messages(context)
                     if finalization_only and context.capabilities.finalization_mode
-                    == "evidence_summary" else messages)
+                    in {"evidence_summary", "structured_evidence"} else messages)
                 reply = self.models.chat_with_tools(
-                    request_messages, [] if finalization_only else self._schemas(context),
+                    request_messages,
+                    [RESPONSE_SCHEMA] if structured_response else (
+                        [] if finalization_only else self._schemas(context)),
                     max_tokens=(context.budget.max_response_tokens if finalization_only
                                 else context.budget.max_decision_tokens),
                     temperature=0.0,
-                    tool_choice="none" if finalization_only else "auto")
+                    tool_choice=("required" if structured_response else
+                                 "none" if finalization_only else "auto"))
                 raw_calls = list(reply.tool_calls or ())
                 context.decisions.append({
                     "step": context.steps,
@@ -85,6 +140,14 @@ class AgentRuntime:
                     return self._result(
                         context, "degraded", False, "",
                         "model decision reached the token cap")
+                if structured_response:
+                    answer, response_error = self._parse_structured_response(
+                        context, raw_calls)
+                    if response_error:
+                        return self._result(context, "degraded", False, "", response_error)
+                    context.decisions[-1]["response_contract"] = "task_coverage"
+                    context.decisions[-1]["task_coverage"] = context.task_coverage
+                    return self._result(context, "completed", True, answer, None)
                 if not raw_calls:
                     answer = (reply.text or "").strip()
                     if not answer:
@@ -173,24 +236,8 @@ class AgentRuntime:
     def _finalization_messages(self, context: AgentContext) -> list[dict]:
         messages = self._initial_messages(context)
         messages[0]["content"] = self._system_content(context, True)
-        readable = context.evidence.readable_items()
-        per_item = max(1000, (context.budget.max_observation_chars * 2)
-                       // max(1, len(readable)))
-        evidence = []
-        for item in readable:
-            parts, remaining = [], per_item
-            for segment in item.segments:
-                content = segment["content"][:remaining]
-                if content:
-                    parts.append(f"[offset {segment['offset']}]\n{content}")
-                    remaining -= len(content)
-                if remaining <= 0:
-                    break
-            evidence.append({
-                "doc_id": item.doc_id, "page_num": item.page_num,
-                "doc_name": item.doc_name, "section_title": item.section_title,
-                "content": "\n".join(parts),
-            })
+        evidence = readable_evidence_payload(
+            context.evidence, context.budget.max_evidence_chars)
         scope = [{
             "tool": observation["tool"], "args": observation["args"],
             "ok": observation["result"].get("ok", False),
@@ -202,10 +249,18 @@ class AgentRuntime:
             + json.dumps({"readable_evidence": evidence, "retrieval_scope": scope,
                           "agent_workspace": context.workspace.snapshot()},
                          ensure_ascii=False, default=str)
-            + "\nAnswer the original task now. Use only readable evidence for "
+            + "\nAnswer the original task now. Cover every requested entity and dimension, "
+              "without adding unrelated capabilities. Use only readable evidence for "
               "document facts and include [d:<document-id>, p:<page>] citations. "
-              "If a claim is not established, state only the scope checked; do "
-              "not turn missing evidence into an absolute claim of absence.")})
+              "Before stating that something is unverified, check all supplied content. "
+              "An item marked truncated=true has omitted text: never treat that omitted "
+              "text as evidence of absence. State only the scope actually checked; do "
+              "not turn missing evidence into an absolute claim of absence."
+            + (" Call submit_task_response exactly once: enumerate each requested subtask "
+               "with supported/unverified status and readable evidence references, then "
+               "provide the final answer."
+               if context.capabilities.finalization_mode == "structured_evidence"
+               else " Provide the best supported final response now."))})
         return messages
 
     def _system_content(self, context: AgentContext,
@@ -270,6 +325,51 @@ class AgentRuntime:
                 messages.append({"role": item["role"], "content": content})
         messages.append({"role": "user", "content": context.question})
         return messages
+
+    def _parse_structured_response(self, context: AgentContext,
+                                   raw_calls: list) -> tuple[str, str | None]:
+        if len(raw_calls) != 1:
+            return "", "model did not submit exactly one structured response"
+        call, parse_error = self._parse_call(raw_calls[0], 0)
+        if parse_error or call.name != RESPONSE_TOOL:
+            return "", "invalid structured response: " + (parse_error or call.name)
+        answer = str(call.args.get("answer") or "").strip()
+        coverage = call.args.get("task_coverage")
+        if not answer or not isinstance(coverage, list) or not 1 <= len(coverage) <= 16:
+            return "", "structured response requires an answer and 1-16 coverage items"
+        normalized, references = [], []
+        for item in coverage:
+            if not isinstance(item, dict):
+                return "", "structured coverage items must be objects"
+            subtask = str(item.get("subtask") or "").strip()
+            status = item.get("status")
+            refs = item.get("evidence_refs")
+            if (not subtask or status not in {"supported", "unverified"}
+                    or not isinstance(refs, list) or len(refs) > 16):
+                return "", "invalid structured coverage item"
+            normalized_refs = []
+            for ref in refs:
+                doc_id = str(ref.get("doc_id") or "").strip() if isinstance(ref, dict) else ""
+                page_num = ref.get("page_num") if isinstance(ref, dict) else None
+                if (not 4 <= len(doc_id) <= 64 or isinstance(page_num, bool)
+                        or not isinstance(page_num, int) or page_num < 1):
+                    return "", "invalid structured evidence reference"
+                normalized_ref = {"doc_id": doc_id, "page_num": page_num}
+                normalized_refs.append(normalized_ref)
+                pair = (doc_id, page_num)
+                if pair not in references:
+                    references.append(pair)
+            if status == "supported" and not normalized_refs:
+                return "", "supported coverage items require readable evidence references"
+            normalized.append({"subtask": subtask, "status": status,
+                               "evidence_refs": normalized_refs})
+        context.task_coverage = normalized
+        inline = set(extract_citations(answer))
+        missing = [ref for ref in references if ref not in inline]
+        if missing:
+            answer += "\n\nEvidence references:\n" + "\n".join(
+                f"[d:{doc_id}, p:{page_num}]" for doc_id, page_num in missing)
+        return answer, None
 
     @staticmethod
     def _parse_call(raw: dict, index: int) -> tuple[ToolCall, str | None]:
@@ -367,6 +467,7 @@ class AgentRuntime:
             "claim_citation_coverage": citation_coverage(answer),
             "evidence": context.evidence.snapshot(),
             "workspace": context.workspace.snapshot(),
+            "task_coverage": context.task_coverage,
             "retrieval_trace": {
                 "tenant_id": context.tenant_id,
                 "capability": {

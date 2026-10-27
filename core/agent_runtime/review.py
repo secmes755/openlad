@@ -2,6 +2,7 @@
 import json
 
 from .contracts import AgentContext
+from .evidence import readable_evidence_payload
 
 REVIEW_SCHEMA = {
     "type": "function",
@@ -55,9 +56,13 @@ class DraftReviewer:
         messages = [
             {"role": "system", "content": (
                 "Review a draft against the original task and supplied readable evidence. "
-                "Identify omitted task parts, unsupported claims, and contradictions. Do "
-                "not invent facts or prescribe a fixed retrieval workflow. Suggested actions "
-                "are advisory to the Agent. Call submit_draft_review exactly once.")},
+                "Check every requested entity and dimension, omitted task parts, unsupported "
+                "claims, contradictions, and unrelated expansions. Explicitly check claims "
+                "that information is missing against all supplied content. An item marked "
+                "truncated=true has omitted text, not evidence of absence; suggest a targeted "
+                "read when needed. Set complete=false for any substantive gap. Do not invent "
+                "facts or prescribe a fixed retrieval workflow. Suggested actions are advisory "
+                "to the Agent. Call submit_draft_review exactly once.")},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
         ]
         reply = self.models.chat_with_tools(
@@ -89,12 +94,5 @@ class DraftReviewer:
 
     @staticmethod
     def _evidence(context: AgentContext) -> list[dict]:
-        readable = context.evidence.readable_items()
-        per_item = max(1000, 8000 // max(1, len(readable)))
-        return [{
-            "doc_id": item.doc_id,
-            "page_num": item.page_num,
-            "doc_name": item.doc_name,
-            "content": "\n".join(
-                segment["content"] for segment in item.segments)[:per_item],
-        } for item in readable]
+        return readable_evidence_payload(
+            context.evidence, context.budget.max_evidence_chars)

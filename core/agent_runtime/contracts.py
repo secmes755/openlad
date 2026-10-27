@@ -29,12 +29,13 @@ class AgentBudget:
     max_observation_chars: int = 6000
     max_history_items: int = 10
     max_history_chars: int = 1500
+    max_evidence_chars: int = 48000
 
 
 @dataclass(frozen=True)
 class AgentCapabilities:
     capability_id: str = "autonomous"
-    finalization_mode: str = "native"  # native or evidence_summary
+    finalization_mode: str = "native"  # native, evidence_summary, structured_evidence
     workspace_enabled: bool = True
     review_enabled: bool = True
     allow_absolute_claims: bool = True
@@ -82,6 +83,7 @@ class AgentContext:
     policy_feedback: int = 0
     evidence: EvidenceStore = field(default_factory=EvidenceStore)
     workspace: AgentWorkspace = field(default_factory=AgentWorkspace)
+    task_coverage: list[dict] = field(default_factory=list)
     cache: dict = field(default_factory=dict)
     decisions: list[dict] = field(default_factory=list)
     observations: list[dict] = field(default_factory=list)

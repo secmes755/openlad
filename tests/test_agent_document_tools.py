@@ -23,6 +23,7 @@ from core.agent_runtime.evidence import (
     extract_citations,
     extract_page_references,
     has_absolute_claim,
+    readable_evidence_payload,
 )
 from core.db.tenant_db import TenantMetadataDB
 from core.models.client import ChatResult
@@ -70,6 +71,27 @@ def test_absolute_claim_guard_ignores_explicit_uncertainty_not_real_negations():
     assert not has_absolute_claim("无法确认是“不支持”还是“文档未列出”。")
     assert not has_absolute_claim("未读取页面不作为“不支持”的结论。")
     assert not has_absolute_claim("未找到页面并不等于不存在相关资料。")
+
+
+def test_evidence_payload_preserves_full_pages_and_exposes_truncation():
+    store = EvidenceStore()
+    body = ("a" * 1000) + "TARGET" + ("b" * 1500)
+    store.mark_read({"doc_id": A, "page_num": 9, "offset": 0, "content": body})
+    store.mark_read({"doc_id": A, "page_num": 9, "offset": len(body), "content": "TAIL"})
+    store.mark_read({"doc_id": B, "page_num": 12, "content": "short"})
+
+    full = readable_evidence_payload(store, 10000)
+    assert "TARGET" in full[0]["content"] and "TAIL" in full[0]["content"]
+    assert all(not item["truncated"] for item in full)
+    assert [item["included_chars"] for item in full] == [len(body) + 4, 5]
+
+    limited = readable_evidence_payload(store, 800)
+    assert len(limited) == 2
+    assert limited[0]["content_chars"] == len(body) + 4
+    assert limited[0]["truncated"] is True
+    assert limited[0]["included_chars"] < limited[0]["content_chars"]
+    assert limited[1]["truncated"] is False
+    assert sum(item["included_chars"] for item in limited) <= 800
 
 
 def test_statement_citation_coverage_is_diagnostic_not_semantic_proof():
