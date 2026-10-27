@@ -2,15 +2,19 @@
 from .contracts import AgentBudget, AgentContext, BudgetExhausted, ToolCall
 from .document_tools import create_document_registry
 from .evidence import EvidenceStore
+from .profiles import AgentProfile, PluginProfileProvider, ProfileNotFound
 from .runtime import AgentRuntime
 from .tools import ToolDefinition, ToolRegistry
 
 __all__ = [
     "AgentBudget",
     "AgentContext",
+    "AgentProfile",
     "AgentRuntime",
     "BudgetExhausted",
     "EvidenceStore",
+    "PluginProfileProvider",
+    "ProfileNotFound",
     "ToolCall",
     "ToolDefinition",
     "ToolRegistry",

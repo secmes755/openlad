@@ -8,6 +8,7 @@ import pytest
 
 from core.agent_runtime import (
     AgentBudget,
+    AgentContext,
     AgentRuntime,
     ToolDefinition,
     ToolRegistry,
@@ -170,6 +171,70 @@ def test_budget_exhaustion_is_not_a_completed_answer():
     assert result["retrieval_trace"]["metrics"]["model_calls"] == 2
 
 
+def test_last_decision_is_reserved_for_finalization():
+    class FinalizationModel:
+        def __init__(self):
+            self.tool_choices = []
+            self.schemas = []
+            self.systems = []
+            self.messages = []
+            self.max_tokens = []
+
+        def chat_with_tools(self, messages, schemas, **kwargs):
+            self.tool_choices.append(kwargs["tool_choice"])
+            self.schemas.append(schemas)
+            self.systems.append(messages[0]["content"])
+            self.messages.append(copy.deepcopy(messages))
+            self.max_tokens.append(kwargs["max_tokens"])
+            if kwargs["tool_choice"] == "none":
+                return ChatResult("Finished within budget.", "stop")
+            return call("search_records", {"query": "task"})
+
+    model = FinalizationModel()
+    registry = ToolRegistry([
+        definition("search_records", lambda _ctx, _args: {"items": []})])
+    result = AgentRuntime(registry, model).run(
+        "Task", tenant_id="tenant-a",
+        budget=AgentBudget(max_steps=2, max_model_calls=3))
+
+    assert result["status"] == "completed"
+    assert result["retrieval_trace"]["metrics"]["tool_calls"] == 1
+    assert model.tool_choices[-1] == "none"
+    assert model.schemas[-1] == []
+    assert model.max_tokens == [2048, 4096]
+    assert "Do not call tools or emit tool markup" in model.systems[-1]
+    assert all(message["role"] != "tool" for message in model.messages[-1])
+    assert result["retrieval_trace"]["decisions"][-1]["finalization_only"] is True
+
+
+def test_finalization_messages_carry_readable_evidence_without_tool_history():
+    context = AgentContext(tenant_id="tenant-a", question="Task")
+    context.evidence.mark_read({
+        "doc_id": "a" * 64, "page_num": 1, "content": "readable fact"})
+    messages = AgentRuntime(ToolRegistry(), FakeModel([]))._finalization_messages(context)
+
+    assert "readable fact" in messages[-1]["content"]
+    assert all(message["role"] != "tool" for message in messages)
+
+
+def test_textual_tool_markup_is_not_a_final_response():
+    class MarkupModel:
+        def chat_with_tools(self, _messages, _schemas, **kwargs):
+            if kwargs["tool_choice"] == "none":
+                return ChatResult("<tool_call><function=search_records>", "stop")
+            return call("search_records", {"query": "task"})
+
+    registry = ToolRegistry([
+        definition("search_records", lambda _ctx, _args: {"items": []})])
+    result = AgentRuntime(registry, MarkupModel()).run(
+        "Task", tenant_id="tenant-a",
+        budget=AgentBudget(max_steps=2, max_model_calls=3))
+
+    assert result["status"] == "degraded"
+    assert result["answer"] == ""
+    assert "tool markup" in result["error"]
+
+
 @pytest.mark.parametrize("reply", [
     ChatResult("", "stop"),
     ChatResult("partial", "length"),
@@ -246,4 +311,4 @@ def test_profile_instructions_are_data_not_core_policy():
 
     system = model.calls[0][0][0]["content"]
     assert "Use the active pack." in system
-    assert result["retrieval_trace"]["profile"] == "Use the active pack."
+    assert result["retrieval_trace"]["profile"] == {"id": "manual", "version": ""}

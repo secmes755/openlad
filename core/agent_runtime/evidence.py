@@ -4,8 +4,22 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-CITE_RE = re.compile(r"\[d:([0-9a-fA-F]{4,64}),\s*((?:p:\d+\s*,?\s*)+)\]")
-PAGE_RE = re.compile(r"p:(\d+)")
+CITE_RE = re.compile(
+    r"[\[\(]d:([0-9a-fA-F]{4,64}),\s*((?:p:\d+(?:-\d+)?\s*,?\s*)+)[\]\)]")
+PAGE_RE = re.compile(r"p:(\d+)(?:-(\d+))?")
+INSUFFICIENT_RE = re.compile(
+    r"未找到|没有找到|无法确认|未提及|未明确|无法回答|无法比较|"
+    r"缺少[^。！？\n]{0,30}(?:文档|资料|证据|信息)|"
+    r"没有[^。！？\n]{0,30}(?:相关|关于)[^。！？\n]{0,30}(?:文档|资料|信息)|"
+    r"not found|no relevant|cannot determine|unable to find|not mentioned|"
+    r"insufficient evidence|no [\w -]{0,40}documentation",
+    re.IGNORECASE)
+
+
+def has_insufficient_evidence_statement(text: str) -> bool:
+    # The leading conclusion must be insufficiency. A positive answer cannot
+    # gain a citation exemption from a caveat buried later in the response.
+    return bool(INSUFFICIENT_RE.search((text or "").strip()[:300]))
 
 
 @dataclass
@@ -131,9 +145,16 @@ class EvidenceStore:
 
 
 def extract_citations(text: str) -> list[tuple[str, int]]:
-    citations = []
+    citations, seen = [], set()
     for match in CITE_RE.finditer(text or ""):
         doc_id = match.group(1).lower()
-        citations.extend(
-            (doc_id, int(page)) for page in PAGE_RE.findall(match.group(2)))
+        for start, end in PAGE_RE.findall(match.group(2)):
+            first, last = int(start), int(end) if end else int(start)
+            if last < first or last - first > 50:
+                continue
+            for page_num in range(first, last + 1):
+                ref = (doc_id, page_num)
+                if ref not in seen:
+                    citations.append(ref)
+                    seen.add(ref)
     return citations

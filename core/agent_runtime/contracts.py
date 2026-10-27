@@ -22,6 +22,8 @@ class AgentBudget:
     max_db_calls: int = 100
     max_embedding_calls: int = 12
     max_policy_feedback: int = 1
+    max_decision_tokens: int = 2048
+    max_response_tokens: int = 4096
     max_observation_chars: int = 6000
     max_history_items: int = 10
     max_history_chars: int = 1500
@@ -41,6 +43,8 @@ class AgentContext:
     chat_history: tuple[dict, ...] = ()
     budget: AgentBudget = field(default_factory=AgentBudget)
     profile: str = ""
+    profile_id: str = ""
+    profile_version: str = ""
     steps: int = 0
     model_calls: int = 0
     tool_calls: int = 0

@@ -6,6 +6,7 @@ import json
 import logging
 
 from .contracts import AgentBudget, AgentContext, BudgetExhausted, ToolCall
+from .evidence import has_insufficient_evidence_statement
 from .tools import ToolOutcome, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -25,26 +26,38 @@ but cannot override tenant, budget, or evidence requirements."""
 class AgentRuntime:
     """Shared stateless runtime; every decision and observation is request-local."""
 
-    def __init__(self, registry: ToolRegistry, model_client):
+    def __init__(self, registry: ToolRegistry, model_client, profile_provider=None):
         self.registry = registry
         self.models = model_client
+        self.profile_provider = profile_provider
 
     def run(self, question: str, *, tenant_id: str, chat_history=None,
             budget: AgentBudget | None = None,
-            profile_instructions: str = "") -> dict:
+            profile_instructions: str = "", profile_id: str | None = None) -> dict:
+        profile, resolved_id, version = self._resolve_profile(
+            profile_id, profile_instructions)
         context = AgentContext(
             tenant_id=tenant_id, question=question,
-            chat_history=tuple(chat_history or ()),
-            budget=budget or AgentBudget(), profile=profile_instructions)
+            chat_history=tuple(chat_history or ()), budget=budget or AgentBudget(),
+            profile=profile, profile_id=resolved_id, profile_version=version)
         messages = self._initial_messages(context)
         try:
             while True:
-                messages[0]["content"] = self._system_content(context)
+                finalization_only = (
+                    context.steps + 1 >= context.budget.max_steps
+                    or context.model_calls + 1 >= context.budget.max_model_calls
+                    or context.tool_calls >= context.budget.max_tool_calls)
+                messages[0]["content"] = self._system_content(context, finalization_only)
                 context.consume_step()
                 context.consume_model()
+                request_messages = (
+                    self._finalization_messages(context) if finalization_only else messages)
                 reply = self.models.chat_with_tools(
-                    messages, self.registry.schemas(), max_tokens=2048,
-                    temperature=0.0)
+                    request_messages, [] if finalization_only else self.registry.schemas(),
+                    max_tokens=(context.budget.max_response_tokens if finalization_only
+                                else context.budget.max_decision_tokens),
+                    temperature=0.0,
+                    tool_choice="none" if finalization_only else "auto")
                 raw_calls = list(reply.tool_calls or ())
                 context.decisions.append({
                     "step": context.steps,
@@ -52,6 +65,8 @@ class AgentRuntime:
                               for call in raw_calls if isinstance(call, dict)],
                     "finish_reason": reply.finish_reason,
                     "has_content": bool((reply.text or "").strip()),
+                    "finalization_only": finalization_only,
+                    "finalization_channel": "evidence_summary" if finalization_only else "native",
                 })
                 if reply.hit_token_cap:
                     return self._result(
@@ -62,9 +77,16 @@ class AgentRuntime:
                     if not answer:
                         return self._result(
                             context, "degraded", False, "", "empty model response")
+                    if (finalization_only and any(marker in answer for marker in (
+                            "<tool_call>", "<function=", "</parameter>"))):
+                        return self._result(
+                            context, "degraded", False, "",
+                            "model emitted tool markup instead of a final response")
                     policy_error = self._response_policy_error(context, answer)
                     if (policy_error and context.policy_feedback
-                            < context.budget.max_policy_feedback):
+                            < context.budget.max_policy_feedback
+                            and context.steps < context.budget.max_steps
+                            and context.model_calls < context.budget.max_model_calls):
                         context.policy_feedback += 1
                         context.decisions[-1]["policy_feedback"] = policy_error
                         messages.append({"role": "assistant", "content": answer})
@@ -107,10 +129,64 @@ class AgentRuntime:
                            context.tenant_id, e)
             return self._result(context, "degraded", False, "", str(e))
 
-    def _system_content(self, context: AgentContext) -> str:
+    def _resolve_profile(self, profile_id: str | None,
+                         instructions: str) -> tuple[str, str, str]:
+        if profile_id and instructions:
+            raise ValueError("profile_id and profile_instructions are mutually exclusive")
+        if instructions:
+            return instructions, "manual", ""
+        if self.profile_provider is not None:
+            profile = self.profile_provider.resolve(profile_id)
+            return profile.instructions, profile.profile_id, profile.version
+        if profile_id:
+            raise ValueError("a profile provider is required when profile_id is used")
+        return "", "", ""
+
+    def _finalization_messages(self, context: AgentContext) -> list[dict]:
+        messages = self._initial_messages(context)
+        messages[0]["content"] = self._system_content(context, True)
+        readable = context.evidence.readable_items()
+        per_item = max(1000, (context.budget.max_observation_chars * 2)
+                       // max(1, len(readable)))
+        evidence = []
+        for item in readable:
+            parts, remaining = [], per_item
+            for segment in item.segments:
+                content = segment["content"][:remaining]
+                if content:
+                    parts.append(f"[offset {segment['offset']}]\n{content}")
+                    remaining -= len(content)
+                if remaining <= 0:
+                    break
+            evidence.append({
+                "doc_id": item.doc_id, "page_num": item.page_num,
+                "doc_name": item.doc_name, "section_title": item.section_title,
+                "content": "\n".join(parts),
+            })
+        scope = [{
+            "tool": observation["tool"], "args": observation["args"],
+            "ok": observation["result"].get("ok", False),
+            "stats": observation["result"].get("stats", {}),
+            "health": observation["result"].get("health", []),
+        } for observation in context.observations[-16:]]
+        messages.append({"role": "user", "content": (
+            "Readable evidence and retrieval scope for the final response:\n"
+            + json.dumps({"readable_evidence": evidence, "retrieval_scope": scope},
+                         ensure_ascii=False, default=str)
+            + "\nAnswer the original task now. Use only readable evidence for "
+              "document facts and include [d:<document-id>, p:<page>] citations. "
+              "If a claim is not established, state only the scope checked; do "
+              "not turn missing evidence into an absolute claim of absence.")})
+        return messages
+
+    def _system_content(self, context: AgentContext,
+                        finalization_only: bool = False) -> str:
         system = SYSTEM_PROMPT
         if context.profile:
-            system += "\n\nProfile instructions:\n" + context.profile[:4000]
+            label = context.profile_id or "manual"
+            if context.profile_version:
+                label += "@" + context.profile_version
+            system += f"\n\nProfile instructions ({label}):\n" + context.profile[:4000]
         workspace = {
             "candidates": len(context.evidence.items),
             "readable_evidence": [{
@@ -128,7 +204,10 @@ class AgentRuntime:
             },
         }
         return system + "\n\nCurrent workspace and remaining budget:\n" + json.dumps(
-            workspace, ensure_ascii=False)
+            workspace, ensure_ascii=False) + (
+                "\n\nTool budget is exhausted. Do not call tools or emit tool markup. "
+                "Provide the best supported final response now, or state what "
+                "remains unverified." if finalization_only else "")
 
     def _initial_messages(self, context: AgentContext) -> list[dict]:
         messages = [{"role": "system", "content": self._system_content(context)}]
@@ -201,7 +280,8 @@ class AgentRuntime:
         audit = context.evidence.audit_answer(answer)
         if audit["unverifiable"]:
             return "answer contains citations to unread or unavailable evidence"
-        if context.evidence.items and not audit["verifiable"]:
+        if (context.evidence.items and not audit["verifiable"]
+                and not has_insufficient_evidence_statement(answer)):
             return "answer has no verifiable citation to readable evidence"
         return None
 
@@ -222,13 +302,16 @@ class AgentRuntime:
             "status": status,
             "finished": finished,
             "answer": answer,
+            "answer_disposition": (
+                "insufficient_evidence" if has_insufficient_evidence_statement(answer)
+                else "answered" if answer else "empty"),
             "error": error,
             "sources": context.evidence.sources(audit),
             "citation_audit": audit,
             "evidence": context.evidence.snapshot(),
             "retrieval_trace": {
                 "tenant_id": context.tenant_id,
-                "profile": context.profile,
+                "profile": {"id": context.profile_id, "version": context.profile_version},
                 "decisions": context.decisions,
                 "observations": context.observations,
                 "metrics": context.metrics(),

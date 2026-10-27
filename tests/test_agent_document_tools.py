@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from core.agent_runtime import AgentContext, AgentRuntime, document_tools
+from core.agent_runtime import AgentContext, AgentRuntime, EvidenceStore, document_tools
 from core.agent_runtime.document_tools import (
     create_document_registry,
     lookup_facts,
@@ -12,11 +12,26 @@ from core.agent_runtime.document_tools import (
     search_structure,
     search_vector,
 )
+from core.agent_runtime.evidence import extract_citations
 from core.db.tenant_db import TenantMetadataDB
 from core.models.client import ChatResult
 
 A = "a" * 64
 B = "b" * 64
+
+
+def test_parenthesized_page_ranges_require_every_page_to_be_read():
+    store = EvidenceStore()
+    store.mark_read({"doc_id": A, "page_num": 1, "content": "one"})
+    store.mark_read({"doc_id": A, "page_num": 2, "content": "two"})
+
+    audit = store.audit_answer(f"Facts (d:{A}, p:1-2)")
+    assert audit["verifiable"] == [(A, 1), (A, 2)]
+    assert audit["unverifiable"] == []
+
+    unread = store.audit_answer(f"Facts (d:{A}, p:1-3)")
+    assert unread["unverifiable"] == [(A, 3)]
+    assert extract_citations(f"Invalid (d:{A}, p:1-1000)") == []
 
 
 def make_db(path, docs):
@@ -220,6 +235,33 @@ def test_policy_feedback_lets_agent_read_and_correct_its_own_response(env):
     assert result["retrieval_trace"]["metrics"]["policy_feedback"] == 1
     assert [item["tool"] for item in result["retrieval_trace"]["observations"]] == [
         "search_keyword", "read_pages"]
+
+
+def test_scoped_insufficient_response_does_not_require_irrelevant_citation(env):
+    env("tenant-a", [(A, "a.txt", "Alpha fact", "ready")])
+    model = NativeModel([
+        tool_call("search_keyword", {"query": "Alpha"}),
+        ChatResult("未找到相关文档，无法回答。", "stop"),
+    ])
+    result = AgentRuntime(create_document_registry(), model).run(
+        "Missing", tenant_id="tenant-a")
+
+    assert result["status"] == "completed"
+    assert result["evidence"]["candidates"] > 0
+    assert result["answer_disposition"] == "insufficient_evidence"
+
+
+def test_absolute_claim_does_not_get_insufficient_evidence_exemption(env):
+    env("tenant-a", [(A, "a.txt", "Alpha fact", "ready")])
+    context = AgentContext(tenant_id="tenant-a", question="Alpha")
+    search_keyword(context, {"query": "Alpha"})
+
+    error = AgentRuntime._response_policy_error(context, "Alpha is unsupported.")
+
+    assert error == "answer has no verifiable citation to readable evidence"
+
+    mixed_response = "Alpha is 5 units.\n" + "x" * 350 + "\n文档未明确提及。"
+    assert AgentRuntime._response_policy_error(context, mixed_response) == error
 
 
 def test_read_evidence_without_citation_degrades_instead_of_overclaiming(env):

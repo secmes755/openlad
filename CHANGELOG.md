@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace/budget summaries keep responses source-accountable while the Agent
   retains control of tool selection.
 
+- **Added versioned Agent profiles and bounded finalization.** Existing external
+  industry packs are explicitly resolved and traced by version. A final-budget
+  decision uses readable evidence and retrieval scope without native tool
+  history, with independent decision/response token limits. Scoped insufficiency
+  is distinguished from positive answers, and citations support bounded page
+  ranges without relaxing readable-page validation.
+
 ### Fixed
 
 - **An unreadable page image no longer aborts the whole document.** Image

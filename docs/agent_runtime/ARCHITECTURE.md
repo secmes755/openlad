@@ -53,20 +53,41 @@ changing existing callers.
 The request-local `EvidenceStore` separates candidates from readable evidence.
 Only `read_pages` creates readable segments. Repeated/offset reads append
 segments rather than erasing earlier observations. Citation validation accepts
-short or full document IDs but requires a readable page from the same request.
-Invalid citations are rejected; evidence-bearing responses without verifiable
-citations degrade. One deterministic policy-feedback opportunity lets the Agent
-correct its own response within the existing budgets instead of introducing a
-fixed answer/review pipeline.
+short or full document IDs, square/parenthesized references, and bounded page
+ranges; every expanded page must be readable in the same request. Invalid
+citations are rejected. Positive evidence-bearing responses without verifiable
+citations degrade, while a leading scoped-insufficiency conclusion does not need
+an irrelevant citation. One deterministic policy-feedback opportunity lets the
+Agent correct its own response within existing budgets.
 
 Tool observations retain all candidate identities while compressing duplicate
 references and long text. Page reads expose offset, total length, and truncation.
 A workspace summary informs each decision of readable evidence and remaining
 budget without prescribing the next action.
 
+## Profiles and bounded finalization
+
+`PluginProfileProvider` adapts the existing external pack registry. Profiles are
+selected explicitly, composed with the generic base, and recorded with their
+resolved version in the trace. Core does not auto-detect an industry or load its
+vocabulary into planning code.
+
+When only one decision remains (or the tool budget is exhausted), the runtime
+uses a finalization-only model call. It removes native tool history and supplies
+bounded readable segments plus retrieval-scope observations. This prevents a
+model from spending its last decision on another tool call or emitting tool
+markup as the answer. Decision and response token limits are independent.
+Ordinary model-selected final responses do not pass through this stage.
+
+Citation validity is not claim-level support: an answer can cite real pages and
+still overstate an absence or mix in unsupported claims. Complex multi-part
+responses can also omit citations and correctly degrade. These remain explicit
+quality gates for reviewer/claim evaluation; completion status and keyword-only
+matrix checks must not be treated as production accuracy certification.
+
 ## Next increments
 
-1. Add versioned industry-profile providers and optional reviewer policies.
-2. Expand real document task matrices and claim-level answer-support evaluation.
-3. Add parallel execution and tune observation/model/DB efficiency.
-4. Run same-model legacy A/B before exposing an experimental route.
+1. Add optional reviewer policies and claim-level answer-support evaluation.
+2. Expand real document matrices and tune observation/model/DB efficiency.
+3. Run same-model legacy A/B before exposing an experimental route.
+4. Add an authenticated experimental API only after the A/B gates are defined.
