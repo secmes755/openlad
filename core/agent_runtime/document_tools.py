@@ -91,9 +91,22 @@ def _page_record(context: AgentContext, mdb, page: dict, channel: str,
 
 
 def _annotate_read_state(context: AgentContext, items: list[dict]) -> list[dict]:
+    """Mark each result page as readable or merely a candidate.
+
+    A page can only be cited after read_pages returned its content. Search
+    results are leads, not evidence, so the distinction must be explicit in
+    the payload: otherwise the model cites a page number it only saw in a
+    result list and the answer fails verification.
+    """
     readable = {(item.doc_id, item.page_num) for item in context.evidence.readable_items()}
     for item in items:
-        item["page_already_read"] = (item.get("doc_id"), item.get("page_num")) in readable
+        ref = (item.get("doc_id"), item.get("page_num"))
+        already = ref in readable
+        item["page_already_read"] = already
+        item["citable"] = already
+        if not already:
+            item["note"] = ("Candidate only. Call read_pages with this doc_id and "
+                            "page_num before citing it.")
     return items
 
 
@@ -108,9 +121,25 @@ def list_documents(context: AgentContext, args: dict) -> dict:
             "WHERE status != 'deleted' AND (title LIKE ? OR filename LIKE ?) "
             "ORDER BY filename LIMIT ?", (value, value, limit)).fetchall()
     items = [{"doc_id": row["id"], "filename": row["filename"],
-              "title": row["title"]} for row in rows]
+              "title": row["title"],
+              # The filename often carries the product code while the derived
+              # title does not ("瑞芯微 datasheet" vs RK3572 Datasheet V1.0.pdf).
+              # Surface that hint so the agent can tell documents apart.
+              "filename_hint": _filename_stem(row["filename"])}
+             for row in rows]
     return {"ok": True, "items": items, "health": [],
             "stats": {"returned": len(items)}}
+
+
+def _filename_stem(filename: str) -> str:
+    """Readable stem of a stored filename, dropping the uuid prefix."""
+    stem = filename.rsplit("/", 1)[-1]
+    if stem.lower().endswith(".pdf"):
+        stem = stem[:-4]
+    head, _, tail = stem.partition("_")
+    if tail and len(head) >= 8 and head.count("-") >= 1:
+        stem = tail
+    return stem.strip()
 
 
 def search_keyword(context: AgentContext, args: dict) -> dict:

@@ -386,6 +386,12 @@ class ModelClient:
             payload.setdefault("top_k", 20)
             payload.setdefault("min_p", 0.0)
             payload.setdefault("presence_penalty", 1.5)
+        if os.environ.get("OPENLAD_DETERMINISTIC", "").lower() in {"1", "true", "yes"}:
+            # Keep Unsloth's sampling defaults intact: changing them makes this
+            # model emit empty replies. Only pin the seed so repeat runs start
+            # from the same state.
+            payload["seed"] = 0
+            payload["temperature"] = 0.0
         # FIX: Always disable thinking mode for all requests to reduce latency
         # and prevent token waste on internal reasoning text
         payload["chat_template_kwargs"] = {"enable_thinking": False}

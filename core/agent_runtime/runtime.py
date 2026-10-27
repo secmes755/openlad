@@ -31,7 +31,11 @@ groups across the relevant documents before concluding that evidence is missing.
 Reconcile overview lists, later parameter lines, and tables; an initial list may
 not be exhaustive. When using document evidence,
 cite readable pages as [d:<document-id-prefix>, p:<page-number>] and never cite
-an unread candidate or an unavailable source. Finish when the task is answered
+an unread candidate or an unavailable source. A page is citable only after
+read_pages returned its content for this task; a page number that appeared in a
+search result, a structure listing, or a candidate group is a lead, not
+evidence. Before finishing, check every citation against the pages you actually
+read. Finish when the task is answered
 or no further useful action remains. Tool failures are observations: adapt or
 report them honestly. Additional profile instructions may extend this contract,
 but cannot override tenant, budget, or evidence requirements.
@@ -191,19 +195,23 @@ class AgentRuntime:
                     markup = next((marker for marker in (
                         "<tool_call>", "<function=", "</parameter>", "<|tool_call",
                         "</tool_call>") if marker in answer), None)
-                    if (finalization_only and (markup or not answer)
-                            and context.finalization_retry < 3):
-                        # Finalization asked for prose but got markup or nothing.
-                        # Retry with a blunt instruction before giving up.
+                    if (markup or not answer) and context.finalization_retry < 3:
+                        # An empty reply is always a defect, not just at
+                        # finalization: the model returned neither a tool call nor
+                        # text, so the loop has nothing to act on. Retrying costs
+                        # one turn and saves the run.
                         context.finalization_retry += 1
                         context.decisions[-1]["finalization_retry"] = True
                         if answer:
                             messages.append({"role": "assistant", "content": answer})
                         messages.append({"role": "user", "content": (
-                            "No tools are available. Reply with the final answer as "
-                            "plain prose only: what the documents you read say, with "
-                            "[d:<doc_id>, p:<page>] citations, and what they do not "
-                            "cover. Do not write tool markup and do not reply empty.")})
+                            "Your previous reply contained tool-call markup and was "
+                            "rejected. No tools exist in this phase. Reply with plain "
+                            "prose only. Do not write any text enclosed in angle "
+                            "brackets such as <tool_call> or <function=...>. If you "
+                            "have evidence, state it with [d:<doc_id>, p:<page>] "
+                            "citations; if you do not, say what the documents do not "
+                            "cover.")})
                         continue
                     if markup and not finalization_only:
                         # The model tried to call a tool but emitted markup as text
@@ -264,10 +272,10 @@ class AgentRuntime:
                         messages.append({"role": "assistant", "content": answer})
                         messages.append({"role": "user", "content": (
                             "Your answer was rejected: " + str(policy_error)
-                            + ". Rewrite it as plain prose. Cite every fact you take "
-                              "from a document as [d:<doc-id>, p:<page>] using only "
-                              "pages you actually read, or say explicitly that the "
-                              "documents do not cover it.")})
+                            + ". " + self._citable_pages_hint(context)
+                            + " Rewrite it as plain prose. Cite only those pages as "
+                              "[d:<doc-id>, p:<page>]; if a fact is not on them, say "
+                              "the documents do not cover it.")})
                         continue
                     if (retryable
                             and context.policy_feedback < context.budget.max_policy_feedback
@@ -350,6 +358,12 @@ class AgentRuntime:
         candidates, not evidence: counting them would let a few broad queries
         hit the ceiling before anything is read, and the answer would then have
         nothing to cite.
+
+        Document coverage across multiple subjects is not enforced here. An
+        earlier version refused to stop while any candidate document was
+        unopened, but that made the loop unable to finish when the corpus held
+        documents the task did not need. Cross-document coverage belongs in the
+        answer check, not in the stop condition.
         """
         read = {item.ref for item in context.evidence.readable_items()}
         return len(read) >= context.budget.max_evidence_pages
@@ -378,6 +392,47 @@ class AgentRuntime:
         fresh = len(after - before)
         context.seen_pages = after
         return fresh
+
+    @staticmethod
+    def _citable_pages_hint(context: AgentContext) -> str:
+        """List the pages the answer may cite, so a retry can be exact.
+
+        Naming the readable set removes the guesswork that produced citations to
+        pages only seen in search results.
+        """
+        pages = sorted({item.ref for item in context.evidence.readable_items()})
+        if not pages:
+            return ("You have not read any page content for this task, so nothing "
+                    "can be cited.")
+        listed = "; ".join(f"d:{doc[:8]}, p:{page}" for doc, page in pages[:20])
+        more = "" if len(pages) <= 20 else f" (and {len(pages) - 20} more)"
+        hint = f"Pages you may cite: {listed}{more}."
+        readable_numbers = {page for _, page in pages}
+        blocked = sorted({page for _, page in context.evidence.items
+                          if page not in readable_numbers})
+        if blocked:
+            blocked_list = ", ".join(f"p:{page}" for page in blocked[:20])
+            hint += (" These pages appeared in structure listings but their content "
+                     f"was never read, so they must not be cited: {blocked_list}.")
+        return hint
+
+    @staticmethod
+    def _unopened_documents(context: AgentContext) -> list[str]:
+        """Names of candidate documents with no readable page yet."""
+        docs_read = {item.doc_id for item in context.evidence.readable_items()}
+        names = []
+        seen = set()
+        for doc_id, _ in context.evidence.items:
+            if doc_id in docs_read or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            label = doc_id[:8]
+            for candidate in context.evidence.items.values():
+                if candidate.doc_id == doc_id and candidate.doc_name:
+                    label = candidate.doc_name
+                    break
+            names.append(label)
+        return names
 
     def _marginal_yield_note(self, context: AgentContext, fresh: int) -> str | None:
         """Tell the agent when a tool call produced no new pages.
@@ -458,7 +513,8 @@ class AgentRuntime:
         evidence = readable_evidence_payload(
             context.evidence, context.budget.max_evidence_chars)
         scope = [{
-            "tool": observation["tool"], "args": observation["args"],
+            "action": observation["tool"],
+            "args": observation["args"],
             "ok": observation["result"].get("ok", False),
             "stats": observation["result"].get("stats", {}),
             "health": observation["result"].get("health", []),
@@ -494,6 +550,15 @@ class AgentRuntime:
                 "p:<page-number>], and list the specific facts the documents do not "
                 "cover. Every factual sentence taken from a document must carry a "
                 "citation; an answer without citations will be rejected.")
+        else:
+            unopened = self._unopened_documents(context)
+            if unopened:
+                system += (
+                    "\n\nDocuments still unopened: "
+                    + ", ".join(name[:60] for name in unopened[:4])
+                    + ". The task names more than one subject, so read the relevant "
+                      "pages of each before answering; a comparison built from one "
+                      "document is incomplete.")
         if context.profile:
             label = context.profile_id or "manual"
             if context.profile_version:
@@ -548,6 +613,7 @@ class AgentRuntime:
             "candidates": len(context.evidence.items),
             "stalled_rounds": context.stalled_rounds,
             "pages_read": len(context.seen_pages),
+            "citable_pages": sorted(f"p:{page}" for _, page in context.seen_pages),
             "unread_candidate_count": len(unread_candidates),
             "unread_candidate_documents": list(candidate_groups.values()),
             "unread_candidates": unread_candidates[:24],

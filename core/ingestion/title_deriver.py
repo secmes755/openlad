@@ -57,7 +57,7 @@ def generate_identifiable_title(model_client, filename: str, summary: str,
 文档分类: {cat_text}
 
 请提取以下三个字段：
-1. subject: 文档主要描述的主体（公司/组织/项目/个人名称，使用全称；无法确定填 null）
+1. subject: 文档主要描述的对象。优先使用具体型号/产品名（如 RK3572、iPhone 15、Qwen3.6）；若文档描述的是公司、组织、项目或个人且没有具体型号，则用其全称。无法确定填 null
 2. year: 文档内容涉及的年份（4位数字；无法确定填 null）
 3. doc_type: 文档类型（如 年度报告/员工手册/体检报告/datasheet；无法确定填 null）
 

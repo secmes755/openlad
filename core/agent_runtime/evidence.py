@@ -5,9 +5,10 @@ import re
 from dataclasses import dataclass, field
 
 CITE_RE = re.compile(
-    r"[\[\(]d:([0-9a-fA-F]{4,64}),\s*((?:p:\d+(?:-\d+)?\s*,?\s*)+)[\]\)]")
+    r"[\[\(]d:([0-9a-fA-F]{4,64}),\s*"
+    r"((?:p:\d+(?:-\d+)?\s*,?\s*|\d+(?:-\d+)?\s*,?\s*)+)[\]\)]")
 MALFORMED_CITE_RE = re.compile(r"[\[\(]\s*d\s*:[^\]\)]*[\]\)]", re.IGNORECASE)
-PAGE_RE = re.compile(r"p:(\d+)(?:-(\d+))?")
+PAGE_RE = re.compile(r"(?:p:)?(\d+)(?:-(\d+))?")
 PAGE_ONLY_RE = re.compile(
     r"(?<![\w:])pp?\.\s*(\d+)(?:\s*[-–—]\s*(\d+))?", re.IGNORECASE)
 INSUFFICIENT_RE = re.compile(
