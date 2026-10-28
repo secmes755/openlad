@@ -243,8 +243,9 @@ def test_pymupdf_fallback_keeps_page_boundaries(monkeypatch):
 
     from core.ingestion.parser import DocumentParser
     pages = DocumentParser._extract_pages_with_pymupdf("dummy.pdf")
-    # empty page dropped, order preserved
-    assert pages == ["page one text", "page three text"]
+    # One entry per page, blank pages included: dropping them would shift the
+    # numbering and make page-level citations point at the wrong page.
+    assert pages == ["page one text", "", "page three text"]
 
 
 # ---- source_text continuation (PDF line-wrap) ----

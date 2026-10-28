@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # pass and the parse pass cannot deadlock against each other.
 _PDFPLUMBER_LOCK = threading.RLock()
 
+# Per-file verdict from the child-process probe in _pdfplumber_is_safe.
+_PDFPLUMBER_SAFETY_CACHE: dict[tuple, bool] = {}
+
 # Attempt to import parsing libraries
 try:
     import pandas as pd
@@ -430,6 +433,55 @@ class DocumentParser:
     # PDF Parsing
     # ========================================================================
 
+    @staticmethod
+    def _pdfplumber_is_safe(path: Path) -> bool:
+        """Probe pdfplumber in a child process, because it can abort the process.
+
+        pdfminer runs the parser through C-level state and, on some files,
+        segfaults on the very first page instead of raising. A segfault cannot
+        be caught in-process, so the probe runs in a forked child: the parent
+        survives the crash and falls back to PyMuPDF. The result is cached per
+        file fingerprint so each document is probed once.
+        """
+        try:
+            stat = path.stat()
+        except OSError:
+            return False
+        key = (str(path), stat.st_size, int(stat.st_mtime))
+        cached = _PDFPLUMBER_SAFETY_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+        import os as _os
+        import subprocess as _subprocess
+        import sys as _sys
+
+        probe = (
+            "import warnings,sys; warnings.filterwarnings('ignore')\n"
+            "import pdfplumber\n"
+            "with pdfplumber.open(sys.argv[1]) as pdf:\n"
+            "    for i in range(min(3, len(pdf.pages))):\n"
+            "        pdf.pages[i].extract_text()\n"
+            "print('OK')\n"
+        )
+        ok = False
+        try:
+            proc = _subprocess.run(
+                [_sys.executable, "-c", probe, str(path)],
+                capture_output=True, timeout=120,
+                env={**_os.environ, "PYTHONFAULTHANDLER": "0"},
+            )
+            ok = proc.returncode == 0 and b"OK" in proc.stdout
+            if not ok:
+                logger.warning(
+                    f"pdfplumber probe failed for {path.name} "
+                    f"(rc={proc.returncode}); using PyMuPDF text extraction"
+                )
+        except Exception as exc:
+            logger.warning(f"pdfplumber probe error for {path.name}: {exc}")
+        _PDFPLUMBER_SAFETY_CACHE[key] = ok
+        return ok
+
     def _parse_pdf(self, path: Path) -> ParsedDocument:
         """Parse PDF file - pypdf for metadata/TOC, pdfplumber for text/tables, pdf2image for rendering"""
         doc = ParsedDocument()
@@ -440,6 +492,33 @@ class DocumentParser:
         if not HAS_PYPDF or not HAS_PDFPLUMBER:
             logger.error("pypdf or pdfplumber unavailable, cannot parse PDF")
             doc.pages.append(ParsedPage(page_num=1, raw_text="PDF parsing failed: pypdf/pdfplumber not installed"))
+            return doc
+
+        # pdfminer can abort the whole process on some files instead of raising,
+        # so ask a child process first. When it is unsafe, take the PyMuPDF path
+        # for text and skip the pdfplumber-dependent passes entirely; tables are
+        # then recovered by the vision model, which is what the table pages need
+        # anyway.
+        if not self._pdfplumber_is_safe(path):
+            logger.warning(
+                f"{path.name}: pdfplumber is unsafe for this file, "
+                "extracting text with PyMuPDF"
+            )
+            page_texts = self._extract_pages_with_pymupdf(str(path))
+            if page_texts:
+                for i, text in enumerate(page_texts, start=1):
+                    doc.pages.append(ParsedPage(
+                        page_num=i,
+                        raw_text=text,
+                        content_dict={"pdf_text": text, "text_source": "pymupdf"},
+                    ))
+                doc.metadata["num_pages"] = len(page_texts)
+                doc.metadata.setdefault("parse_warnings", []).append(
+                    "pdfplumber probe failed; text extracted with PyMuPDF"
+                )
+                return doc
+            logger.error(f"{path.name}: PyMuPDF fallback produced no text")
+            doc.pages.append(ParsedPage(page_num=1, raw_text="PDF parsing failed: no extractable text"))
             return doc
 
         # Rotated repeated text (watermarks) is removed from the PDF *before* any
@@ -927,10 +1006,12 @@ class DocumentParser:
             for i in range(doc.page_count):
                 try:
                     t = doc[i].get_text()
-                    if t and t.strip():
-                        page_texts.append(t)
                 except Exception:
-                    pass
+                    t = ""
+                # Keep one entry per page, blank included: dropping empty pages
+                # shifts every later page number, and page-level citations and
+                # structure indexing then point at the wrong page.
+                page_texts.append(t or "")
             doc.close()
             return page_texts
         except Exception as e:

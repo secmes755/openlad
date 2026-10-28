@@ -93,6 +93,11 @@ def _patch_pdf_machinery(monkeypatch, n_pages=3, reader_error=None):
     monkeypatch.setattr(parser_mod, "pdfplumber", fake_plumber, raising=False)
     monkeypatch.setattr(parser_mod, "sanitize_pdf_watermark", lambda p: (p, {}))
     monkeypatch.setattr(parser_mod, "text_integrity_warnings", lambda report: [])
+    # The safety probe shells out to a real child process, which would bypass
+    # these fakes and report the real pdfplumber verdict. Treat the fakes as
+    # safe so the tests exercise the normal path.
+    monkeypatch.setattr(parser_mod.DocumentParser, "_pdfplumber_is_safe",
+                        staticmethod(lambda path: True))
     monkeypatch.setattr(
         parser_mod, "get_model_client",
         lambda: (_ for _ in ()).throw(RuntimeError("no model in test")),
