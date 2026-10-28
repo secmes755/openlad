@@ -1468,7 +1468,17 @@ class SegmentMerger:
             existing_pages = set(r.page_num for r in doc_results if r.page_num)
             if existing_pages and self.metadata_db:
                 expanded = self._expand_section_pages(doc_id, existing_pages, self.metadata_db)
+                # Expansion exists to complete a section, not to replace what
+                # matched. A chapter heading can span a hundred pages, and adding
+                # all of them at low score still fills the character budget first
+                # because they are appended before truncation: one query retrieved
+                # 14 pages, expanded to 167, and the page holding the answer was
+                # cut. Cap the supplement relative to what actually matched.
+                expand_cap = cfg.get("section_expand_max_pages", 24)
+                added = 0
                 for page_num, info in expanded.items():
+                    if added >= expand_cap:
+                        break
                     if not info.get('raw_text'):
                         continue
                     expanded_r = SearchResult(
@@ -1479,6 +1489,7 @@ class SegmentMerger:
                         text_source='section_expand'
                     )
                     doc_results.append(expanded_r)
+                    added += 1
 
         for doc_id, doc_results in doc_groups.items():
             # FIX: Apply penalty/boost FIRST, then filter, to avoid high-value pages

@@ -280,6 +280,10 @@ CONTEXT_CONFIG = {
     "merger_default_max_chars": 32000,
     # Merger: minimum chars per document
     "merger_min_chars_per_doc": 5000,
+    # Section expansion adds whole chapter ranges to complete a hit. Uncapped it
+    # added 153 pages to a 14-page result and the character budget then dropped
+    # the page being asked about. Keep the supplement smaller than the match.
+    "section_expand_max_pages": 24,
     # Merger: minimum score threshold for results
     "merger_min_score_threshold": 0.15,
     # Merger: low-value page score penalty
