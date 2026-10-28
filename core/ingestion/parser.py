@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 # parsed at once segfault inside extract_text instead of raising. The crash
 # surfaced while the ingest worker ran vision transcription on one document and
 # scanned the next one's pages for table candidates at the same time. Every
-# pdfplumber open() therefore runs under this lock.
-_PDFPLUMBER_LOCK = threading.Lock()
+# pdfplumber open() therefore runs under this lock. Reentrant so the pre-filter
+# pass and the parse pass cannot deadlock against each other.
+_PDFPLUMBER_LOCK = threading.RLock()
 
 # Attempt to import parsing libraries
 try:
@@ -448,14 +449,12 @@ class DocumentParser:
         vlm_candidate_pages = []
         total_pages = 0
 
+        _pf_acquired = False
         try:
             pypdf_reader = pypdf.PdfReader(str(path))
             _PDFPLUMBER_LOCK.acquire()
-            try:
-                plumber_doc = pdfplumber.open(str(path))
-            except Exception:
-                _PDFPLUMBER_LOCK.release()
-                raise
+            _pf_acquired = True
+            plumber_doc = pdfplumber.open(str(path))
             total_pages = len(pypdf_reader.pages)
 
             for page_num in range(total_pages):
@@ -520,7 +519,7 @@ class DocumentParser:
         finally:
             # Released on every path: an exception between open and close would
             # otherwise leave the lock held and stall the next document's parse.
-            if _PDFPLUMBER_LOCK.locked():
+            if _pf_acquired:
                 _PDFPLUMBER_LOCK.release()
 
         # Dedicated OCR endpoint mode: when a separate OCR/vision endpoint is
@@ -608,9 +607,11 @@ class DocumentParser:
                 page_classes[pn] = "TEXT"
 
         parse_error = None
+        _acquired = False
         try:
             pypdf_reader = pypdf.PdfReader(str(path))
             _PDFPLUMBER_LOCK.acquire()
+            _acquired = True
             plumber_doc = pdfplumber.open(str(path))
             total_pages = len(pypdf_reader.pages)
             doc.metadata["num_pages"] = total_pages
@@ -828,7 +829,7 @@ class DocumentParser:
         finally:
             # Released on every path: an exception between open and close would
             # otherwise leave the lock held and stall the next document's parse.
-            if _PDFPLUMBER_LOCK.locked():
+            if _acquired:
                 _PDFPLUMBER_LOCK.release()
 
         if parse_error is not None:
