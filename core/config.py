@@ -196,7 +196,12 @@ CONTEXT_CONFIG = {
     # (--ctx-size / --parallel), not --ctx-size itself.
     # Consumers read this key directly — there is no per-call-site default, so
     # changing the value here changes every path (config.py is the single source).
-    "synthesis_context_budget": 35500,
+    # Raised from 35500: retrieval routinely returned ~56K chars and truncated 37%
+    # of it away, which dropped whole table pages (e.g. a quarterly-breakdown
+    # table whose row was cut) and made answers say "not found" for data that was
+    # in the corpus. The value stays under synthesis_safe_chars so the client-side
+    # guard never fires.
+    "synthesis_context_budget": 45000,
     # Map-Reduce trigger: context exceeding this goes through chunked extraction
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.

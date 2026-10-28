@@ -1632,19 +1632,60 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         heading_chunks = self._chunk_by_structure(text, max_chunk_size=chunk_size)
         if heading_chunks and len(heading_chunks) > 1:
             return heading_chunks
+        return self._chunk_on_line_boundaries(text, chunk_size, overlap)
 
+    def _chunk_on_line_boundaries(self, text: str, chunk_size: int,
+                                  overlap: int = 100) -> list[str]:
+        """Split on line boundaries so a table is never cut mid-row.
+
+        Cutting at a fixed character offset lands inside financial tables and
+        separates a label from its values. In the annual-report benchmark that
+        put "经营活动产生的现金流量净额 ... -62.86%" outside the chunk carrying
+        its own header, so retrieval could not match it at all: 57% of chunks
+        ended mid-table. Lines are accumulated until the next line would
+        overflow; a single line larger than chunk_size is split by characters
+        as a last resort because it cannot be kept whole.
+        """
+        lines = text.split("\n")
         chunks = []
-        start = 0
-        text_length = len(text)
-        while start < text_length:
-            end = min(start + chunk_size, text_length)
-            chunks.append(text[start:end])
-            start = end
-            if start >= text_length:
-                break
-            start = max(0, start - overlap)
-            if start >= end:
-                break
+        current = []
+        current_len = 0
+
+        def _flush():
+            nonlocal current, current_len
+            if current:
+                chunk = "\n".join(current).strip()
+                if chunk:
+                    chunks.append(chunk)
+                current, current_len = [], 0
+
+        for line in lines:
+            line_len = len(line) + 1
+            if line_len > chunk_size:
+                # Unbreakable single line: emit what we have, then split it.
+                _flush()
+                for start in range(0, len(line), chunk_size):
+                    piece = line[start:start + chunk_size].strip()
+                    if piece:
+                        chunks.append(piece)
+                continue
+            if current_len + line_len > chunk_size:
+                _flush()
+            current.append(line)
+            current_len += line_len
+        _flush()
+
+        # Overlap: prepend the tail of the previous chunk so a fact split across
+        # a boundary still appears whole in at least one chunk.
+        if overlap > 0 and len(chunks) > 1:
+            overlapped = [chunks[0]]
+            for i in range(1, len(chunks)):
+                prev_tail = chunks[i - 1][-overlap:]
+                if "\n" in prev_tail:
+                    prev_tail = prev_tail.split("\n", 1)[1]
+                overlapped.append((prev_tail + "\n" + chunks[i]).strip()
+                                 if prev_tail else chunks[i])
+            chunks = overlapped
         return chunks
 
     def _chunk_by_structure(self, text: str, max_chunk_size: int = 2000) -> list[str]:
