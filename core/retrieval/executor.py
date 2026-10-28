@@ -819,12 +819,21 @@ class RetrievalExecutor:
                 return 0
             q_lower = q.lower()
             tokens = []
+            # A run of CJK characters is split into bigrams as well as kept whole.
+            # Chinese queries arrive unsegmented - "分季度主要财务指标中公司第
+            # 四季度营业收入是多少" is one run - so a whole-run token never
+            # matches a chapter titled "分季度主要财务指标". Bigrams let the
+            # distinctive part of the run find its chapter.
             for m in re.finditer(r'[\u4e00-\u9fff]{2,}', q_lower):
-                tokens.append(m.group())
+                run = m.group()
+                tokens.append(run)
+                if len(run) > 2:
+                    tokens.extend(run[i:i + 2] for i in range(len(run) - 1))
             for m in re.finditer(r'[A-Za-z0-9]{2,}', q_lower):
                 token = m.group()
                 if not re.match(r'^\d+$', token):
                     tokens.append(token)
+            tokens = list(dict.fromkeys(tokens))
             text = f"{ch.get('title', '')} {ch.get('keywords', '')} {ch.get('summary', '')} {ch.get('entities', '')}".lower()
             hit = 0
             for t in tokens:
