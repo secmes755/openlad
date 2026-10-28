@@ -221,23 +221,37 @@ def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
 
 
 def _looks_like_wide_table(text: str) -> bool:
-    """True when plain extraction left several rows of bare numbers.
+    """True when plain extraction left several flattened data rows.
 
     A wide financial table flattened to text looks like
     ``归属于母公司股东的营运利润 96,975 14,952 25,796 (11,899) 121,862``:
     the row label survives but the column headers do not line up with the
     values, so a text-only reader cannot say which segment each number
-    belongs to. Pages with several such rows go to the vision model instead.
+    belongs to. The shape that identifies it is a text label followed by a run
+    of numbers. Counting numbers alone is too loose - prose with a few figures
+    and tables whose headers survived both match, and sending those to the
+    vision model duplicates content already in the index.
     """
     if not text:
         return False
     cfg = settings.CHART_CONFIG
-    min_cells = cfg.get("table_row_min_numeric_cells", 3)
+    min_cells = cfg.get("table_row_min_numeric_cells", 4)
     min_rows = cfg.get("table_min_wide_rows_for_candidate", 3)
     numeric = re.compile(r'\(?-?[\d,]+(?:\.\d+)?\)?')
     wide = 0
     for line in text.split("\n"):
-        if sum(1 for cell in numeric.findall(line) if any(ch.isdigit() for ch in cell)) >= min_cells:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        cells = numeric.findall(stripped)
+        if len(cells) < min_cells:
+            continue
+        # The row must open with a label: drop the leading numbers and require
+        # real text before the first cell, otherwise this is a numeric column
+        # or a header the extractor already kept.
+        first_cell = stripped.find(cells[0])
+        label = stripped[:first_cell].strip()
+        if len(label) >= 2 and not label.replace(".", "").replace("-", "").isdigit():
             wide += 1
             if wide >= min_rows:
                 return True

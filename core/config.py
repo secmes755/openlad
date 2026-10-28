@@ -559,8 +559,12 @@ CHART_CONFIG = {
     # plain extraction: "归属于母公司股东的营运利润 96,975 14,952 25,796 ..."
     # names no column, so the values cannot be attributed to a business segment.
     # Such rows trip this detector and reach the vision model regardless of how
-    # much text the page holds. Counted as lines carrying >= 3 numeric cells.
-    "table_row_min_numeric_cells": 3,
+    # much text the page holds. A row counts when it starts with a text label
+    # and continues with >= 4 numeric cells - the shape of a flattened data row.
+    # Counting bare numeric cells instead qualified 110 of 370 pages in one
+    # annual report, flooding the index with duplicate transcriptions and
+    # starving retrieval of the plain-text pages.
+    "table_row_min_numeric_cells": 4,
     "table_min_wide_rows_for_candidate": 3,
     "vlm_image_description_enabled": os.environ.get("OPENLAD_IMAGE_DESCRIPTION", "0").strip().lower()
                                      in ("1", "on", "true"),
