@@ -208,6 +208,30 @@ def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
     return "\n".join(lines[:first]).rstrip() + "\n"
 
 
+def _looks_like_wide_table(text: str) -> bool:
+    """True when plain extraction left several rows of bare numbers.
+
+    A wide financial table flattened to text looks like
+    ``归属于母公司股东的营运利润 96,975 14,952 25,796 (11,899) 121,862``:
+    the row label survives but the column headers do not line up with the
+    values, so a text-only reader cannot say which segment each number
+    belongs to. Pages with several such rows go to the vision model instead.
+    """
+    if not text:
+        return False
+    cfg = settings.CHART_CONFIG
+    min_cells = cfg.get("table_row_min_numeric_cells", 3)
+    min_rows = cfg.get("table_min_wide_rows_for_candidate", 3)
+    numeric = re.compile(r'\(?-?[\d,]+(?:\.\d+)?\)?')
+    wide = 0
+    for line in text.split("\n"):
+        if sum(1 for cell in numeric.findall(line) if any(ch.isdigit() for ch in cell)) >= min_cells:
+            wide += 1
+            if wide >= min_rows:
+                return True
+    return False
+
+
 def _clean_ocr_transcription(text: str) -> str:
     """Apply degeneration cleanup to an OCR page transcription."""
     cleaned, _ = clean_ocr_transcription_detailed(text)
@@ -476,6 +500,14 @@ class DocumentParser:
                 vlm_min_text = settings.CHART_CONFIG.get("vlm_min_text_len_for_candidate", 1000)
 
                 if not has_images:
+                    # A table can survive plain extraction only as misaligned
+                    # columns, and such pages often carry no embedded image at
+                    # all (vector rules and alignment, not pictures). Send them
+                    # to the vision model too, otherwise the values reach the
+                    # model without the column names they belong to.
+                    if text_len and _looks_like_wide_table(text):
+                        vlm_candidate_pages.append(pdf_page_num)
+                        continue
                     # No images -> definitely not a visual candidate.
                     # If the page is also empty text, mark it as BLANK so downstream
                     # chunking and retrieval can skip it without any VLM work.
@@ -486,7 +518,11 @@ class DocumentParser:
                     continue
 
                 if text_len > vlm_min_text:
-                    # Lots of text -> images are likely decorative/icons, skip VLM
+                    # Lots of text -> images are likely decorative/icons. Unless
+                    # the text is a table whose columns plain extraction flattened.
+                    if _looks_like_wide_table(text):
+                        vlm_candidate_pages.append(pdf_page_num)
+                        continue
                     page_classes[pdf_page_num] = "TEXT"
                     continue
 
@@ -1106,7 +1142,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 prompt = (
                     "Transcribe ALL text content from this document page image "
                     "exactly as it appears. Preserve structure: tables as "
-                    "markup, headings, lists, figure labels and captions. "
+                    "markdown tables with the header row repeated on every "
+                    "table, headings, lists, figure labels and captions. "
+                    "A table row must carry its column headers on the same "
+                    "table: never emit a row of bare numbers without the "
+                    "header cells that name what each number measures. "
                     "Output only the transcribed content, no commentary. "
                     "When every visible word has been transcribed, stop "
                     "immediately — never add explanations, interpretations, "
