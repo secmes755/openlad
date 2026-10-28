@@ -4,6 +4,7 @@ Fully generalized, no industry-specific content
 """
 import logging
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,13 @@ from .preprocessing.pdf_watermark import (
 )
 
 logger = logging.getLogger(__name__)
+
+# pdfplumber parses through pdfminer, which is not thread safe: two documents
+# parsed at once segfault inside extract_text instead of raising. The crash
+# surfaced while the ingest worker ran vision transcription on one document and
+# scanned the next one's pages for table candidates at the same time. Every
+# pdfplumber open() therefore runs under this lock.
+_PDFPLUMBER_LOCK = threading.Lock()
 
 # Attempt to import parsing libraries
 try:
@@ -442,7 +450,12 @@ class DocumentParser:
 
         try:
             pypdf_reader = pypdf.PdfReader(str(path))
-            plumber_doc = pdfplumber.open(str(path))
+            _PDFPLUMBER_LOCK.acquire()
+            try:
+                plumber_doc = pdfplumber.open(str(path))
+            except Exception:
+                _PDFPLUMBER_LOCK.release()
+                raise
             total_pages = len(pypdf_reader.pages)
 
             for page_num in range(total_pages):
@@ -504,6 +517,11 @@ class DocumentParser:
                     page_classes[pn] = "TEXT"
             except Exception:
                 pass
+        finally:
+            # Released on every path: an exception between open and close would
+            # otherwise leave the lock held and stall the next document's parse.
+            if _PDFPLUMBER_LOCK.locked():
+                _PDFPLUMBER_LOCK.release()
 
         # Dedicated OCR endpoint mode: when a separate OCR/vision endpoint is
         # configured, candidate pages (images + minimal text) are transcribed
@@ -589,8 +607,10 @@ class DocumentParser:
             if pn not in page_classes:
                 page_classes[pn] = "TEXT"
 
+        parse_error = None
         try:
             pypdf_reader = pypdf.PdfReader(str(path))
+            _PDFPLUMBER_LOCK.acquire()
             plumber_doc = pdfplumber.open(str(path))
             total_pages = len(pypdf_reader.pages)
             doc.metadata["num_pages"] = total_pages
@@ -804,6 +824,15 @@ class DocumentParser:
 
         except Exception as e:
             logger.error(f"PDF parsing failed {path}: {e}")
+            parse_error = e
+        finally:
+            # Released on every path: an exception between open and close would
+            # otherwise leave the lock held and stall the next document's parse.
+            if _PDFPLUMBER_LOCK.locked():
+                _PDFPLUMBER_LOCK.release()
+
+        if parse_error is not None:
+            e = parse_error
             if not doc.pages:
                 # pdfplumber + pypdf failed entirely.
                 # Fallback: extract text page-by-page with pymupdf (MuPDF),
