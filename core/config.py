@@ -556,9 +556,15 @@ CHART_CONFIG = {
     # Such rows trip this detector and reach the vision model regardless of how
     # much text the page holds. A row counts when it starts with a text label
     # and continues with >= 4 numeric cells - the shape of a flattened data row.
-    # Counting bare numeric cells instead qualified 110 of 370 pages in one
-    # annual report, flooding the index with duplicate transcriptions and
-    # starving retrieval of the plain-text pages.
+    #
+    # OFF by default. It fixes the pages it targets (a transcribed table keeps
+    # its headers) but every such page gains a second copy of its content, and
+    # the synthesis budget then truncates: 15 extra pages per report pushed the
+    # benchmark from 27/30 to 21/30 because pages that used to answer questions
+    # stopped being retrieved. Turn on once retrieval has room for the extra
+    # content, or when a specific document is known to need it.
+    "table_to_vision_enabled": os.environ.get("OPENLAD_TABLE_VISION", "0").strip().lower()
+                               in ("1", "on", "true"),
     "table_row_min_numeric_cells": 4,
     "table_min_wide_rows_for_candidate": 3,
     "vlm_image_description_enabled": os.environ.get("OPENLAD_IMAGE_DESCRIPTION", "0").strip().lower()

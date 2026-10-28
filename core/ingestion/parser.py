@@ -232,6 +232,8 @@ def _looks_like_wide_table(text: str) -> bool:
     if not text:
         return False
     cfg = settings.CHART_CONFIG
+    if not cfg.get("table_to_vision_enabled", False):
+        return False
     min_cells = cfg.get("table_row_min_numeric_cells", 4)
     min_rows = cfg.get("table_min_wide_rows_for_candidate", 3)
     numeric = re.compile(r'\(?-?[\d,]+(?:\.\d+)?\)?')
