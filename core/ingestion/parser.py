@@ -460,7 +460,7 @@ class DocumentParser:
             "import warnings,sys; warnings.filterwarnings('ignore')\n"
             "import pdfplumber\n"
             "with pdfplumber.open(sys.argv[1]) as pdf:\n"
-            "    for i in range(min(3, len(pdf.pages))):\n"
+            "    for i in range(len(pdf.pages)):\n"
             "        pdf.pages[i].extract_text()\n"
             "print('OK')\n"
         )
