@@ -750,8 +750,24 @@ class TenantMetadataDB:
                         if cid not in seen_chunk_ids:
                             seen_chunk_ids.add(cid)
                             match_count = r["match_count"]
-                            # Matching multiple keywords gets a higher base score
-                            base_score = 0.1 + min(match_count * 0.05, 0.3)
+                            # Scale with how much of the query the chunk matched.
+                            # The old cap at 0.3 flattened every chunk that hit six
+                            # or more bigrams onto 0.4, so a page containing the
+                            # exact section the query named scored the same as any
+                            # other page sharing a handful of bigrams and ordering
+                            # fell back to insertion order.
+                            #
+                            # Coverage alone still ties: a large chunk can contain
+                            # every bigram in passing. Density - matches per 1000
+                            # characters - separates a page that is about the topic
+                            # from a page that mentions it once, so the two are
+                            # combined with the density term kept small enough not
+                            # to outrank genuine coverage.
+                            token_total = max(len(bigram_tokens), 1)
+                            coverage = min(match_count / token_total, 1.0)
+                            chunk_chars = max(len(r["chunk_text"] or ""), 1)
+                            density = min(match_count / (chunk_chars / 1000.0) / 20.0, 1.0)
+                            base_score = 0.1 + coverage * 0.75 + density * 0.15
                             all_results.append({
                                 "chunk_id": cid, "doc_id": r["doc_id"], "page_id": r["page_id"],
                                 "page_num": r["page_num"], "section_title": r["section_title"],

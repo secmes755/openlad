@@ -239,24 +239,32 @@ class HierarchicalRetriever:
             base_score = stats["score_sum"] + stats["chunks"] * 0.2
 
             # Keyword hit bonus
+            #
+            # Bonuses are scaled by the length of the matched keyword so that a
+            # long distinctive phrase ("分季度主要财务指标") outweighs a short
+            # generic one ("营业收入"). A flat bonus per keyword let a page that
+            # merely repeats the subject outrank the page whose section heading
+            # is the thing being asked for.
             keyword_bonus = 0
             text_lower = raw_text.lower()
             title_lower = section_title.lower()
             for kw in query_keywords:
                 kw_lower = kw.lower()
+                weight = min(len(kw_lower) / 6.0, 2.0)
                 if kw_lower in title_lower:
-                    keyword_bonus += 0.5
+                    keyword_bonus += 0.5 * weight
                 if kw_lower in text_lower:
-                    keyword_bonus += 0.3
+                    keyword_bonus += 0.3 * weight
 
             # FIX: Exact phrase match bonus (full keyword match, not just prefix)
             exact_phrase_bonus = 0
             for kw in query_keywords:
                 kw_lower = kw.lower()
+                weight = min(len(kw_lower) / 6.0, 2.0)
                 # Extra bonus for multiple occurrences
                 count = text_lower.count(kw_lower)
                 if count >= 1:
-                    exact_phrase_bonus += min(count * 0.5, 2.0)  # capped at 2.0
+                    exact_phrase_bonus += min(count * 0.5 * weight, 2.0)  # capped at 2.0
 
             # Title containing core query keyword gets extra bonus
             title_match = any(kw in title_lower for kw in query_keywords)
