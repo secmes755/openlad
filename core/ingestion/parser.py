@@ -1001,18 +1001,23 @@ class DocumentParser:
         """
         try:
             import fitz  # pymupdf
-            doc = fitz.open(path)
-            page_texts = []
-            for i in range(doc.page_count):
-                try:
-                    t = doc[i].get_text()
-                except Exception:
-                    t = ""
-                # Keep one entry per page, blank included: dropping empty pages
-                # shifts every later page number, and page-level citations and
-                # structure indexing then point at the wrong page.
-                page_texts.append(t or "")
-            doc.close()
+            # MuPDF keeps global state and is not safe to drive from two threads:
+            # the ingest worker parses on a background thread while other
+            # requests keep touching the same interpreter. Serialising here is
+            # cheap next to the extraction itself.
+            with _PDFPLUMBER_LOCK:
+                doc = fitz.open(path)
+                page_texts = []
+                for i in range(doc.page_count):
+                    try:
+                        t = doc[i].get_text()
+                    except Exception:
+                        t = ""
+                    # Keep one entry per page, blank included: dropping empty pages
+                    # shifts every later page number, and page-level citations and
+                    # structure indexing then point at the wrong page.
+                    page_texts.append(t or "")
+                doc.close()
             return page_texts
         except Exception as e:
             logger.warning(f"[PARSER] pymupdf fallback also failed: {e}")
