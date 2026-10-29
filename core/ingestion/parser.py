@@ -4,6 +4,7 @@ Fully generalized, no industry-specific content
 """
 import logging
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,14 @@ from .preprocessing.pdf_watermark import (
 )
 
 logger = logging.getLogger(__name__)
+
+# pdfplumber parses through pdfminer, which is not thread safe: two documents
+# parsed at once segfault inside extract_text instead of raising. The crash
+# surfaced while the ingest worker ran vision transcription on one document and
+# scanned the next one's pages for table candidates at the same time. Every
+# pdfplumber open() therefore runs under this lock. Reentrant so the pre-filter
+# pass and the parse pass cannot deadlock against each other.
+_PDFPLUMBER_LOCK = threading.RLock()
 
 # Attempt to import parsing libraries
 try:
@@ -206,6 +215,46 @@ def _trim_numbered_pseudo_repeats(text: str, min_repeat_lines: int = 4,
         else:
             break
     return "\n".join(lines[:first]).rstrip() + "\n"
+
+
+def _looks_like_wide_table(text: str) -> bool:
+    """True when plain extraction left several flattened data rows.
+
+    A wide financial table flattened to text looks like
+    ``归属于母公司股东的营运利润 96,975 14,952 25,796 (11,899) 121,862``:
+    the row label survives but the column headers do not line up with the
+    values, so a text-only reader cannot say which segment each number
+    belongs to. The shape that identifies it is a text label followed by a run
+    of numbers. Counting numbers alone is too loose - prose with a few figures
+    and tables whose headers survived both match, and sending those to the
+    vision model duplicates content already in the index.
+    """
+    if not text:
+        return False
+    cfg = settings.CHART_CONFIG
+    if not cfg.get("table_to_vision_enabled", False):
+        return False
+    min_cells = cfg.get("table_row_min_numeric_cells", 4)
+    min_rows = cfg.get("table_min_wide_rows_for_candidate", 3)
+    numeric = re.compile(r'\(?-?[\d,]+(?:\.\d+)?\)?')
+    wide = 0
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        cells = numeric.findall(stripped)
+        if len(cells) < min_cells:
+            continue
+        # The row must open with a label: drop the leading numbers and require
+        # real text before the first cell, otherwise this is a numeric column
+        # or a header the extractor already kept.
+        first_cell = stripped.find(cells[0])
+        label = stripped[:first_cell].strip()
+        if len(label) >= 2 and not label.replace(".", "").replace("-", "").isdigit():
+            wide += 1
+            if wide >= min_rows:
+                return True
+    return False
 
 
 def _clean_ocr_transcription(text: str) -> str:
@@ -440,8 +489,11 @@ class DocumentParser:
         vlm_candidate_pages = []
         total_pages = 0
 
+        _pf_acquired = False
         try:
             pypdf_reader = pypdf.PdfReader(str(path))
+            _PDFPLUMBER_LOCK.acquire()
+            _pf_acquired = True
             plumber_doc = pdfplumber.open(str(path))
             total_pages = len(pypdf_reader.pages)
 
@@ -476,6 +528,14 @@ class DocumentParser:
                 vlm_min_text = settings.CHART_CONFIG.get("vlm_min_text_len_for_candidate", 1000)
 
                 if not has_images:
+                    # A table can survive plain extraction only as misaligned
+                    # columns, and such pages often carry no embedded image at
+                    # all (vector rules and alignment, not pictures). Send them
+                    # to the vision model too, otherwise the values reach the
+                    # model without the column names they belong to.
+                    if text_len and _looks_like_wide_table(text):
+                        vlm_candidate_pages.append(pdf_page_num)
+                        continue
                     # No images -> definitely not a visual candidate.
                     # If the page is also empty text, mark it as BLANK so downstream
                     # chunking and retrieval can skip it without any VLM work.
@@ -486,7 +546,11 @@ class DocumentParser:
                     continue
 
                 if text_len > vlm_min_text:
-                    # Lots of text -> images are likely decorative/icons, skip VLM
+                    # Lots of text -> images are likely decorative/icons. Unless
+                    # the text is a table whose columns plain extraction flattened.
+                    if _looks_like_wide_table(text):
+                        vlm_candidate_pages.append(pdf_page_num)
+                        continue
                     page_classes[pdf_page_num] = "TEXT"
                     continue
 
@@ -504,6 +568,11 @@ class DocumentParser:
                     page_classes[pn] = "TEXT"
             except Exception:
                 pass
+        finally:
+            # Released on every path: an exception between open and close would
+            # otherwise leave the lock held and stall the next document's parse.
+            if _pf_acquired:
+                _PDFPLUMBER_LOCK.release()
 
         # Dedicated OCR endpoint mode: when a separate OCR/vision endpoint is
         # configured, candidate pages (images + minimal text) are transcribed
@@ -589,8 +658,12 @@ class DocumentParser:
             if pn not in page_classes:
                 page_classes[pn] = "TEXT"
 
+        parse_error = None
+        _acquired = False
         try:
             pypdf_reader = pypdf.PdfReader(str(path))
+            _PDFPLUMBER_LOCK.acquire()
+            _acquired = True
             plumber_doc = pdfplumber.open(str(path))
             total_pages = len(pypdf_reader.pages)
             doc.metadata["num_pages"] = total_pages
@@ -804,6 +877,15 @@ class DocumentParser:
 
         except Exception as e:
             logger.error(f"PDF parsing failed {path}: {e}")
+            parse_error = e
+        finally:
+            # Released on every path: an exception between open and close would
+            # otherwise leave the lock held and stall the next document's parse.
+            if _acquired:
+                _PDFPLUMBER_LOCK.release()
+
+        if parse_error is not None:
+            e = parse_error
             if not doc.pages:
                 # pdfplumber + pypdf failed entirely.
                 # Fallback: extract text page-by-page with pymupdf (MuPDF),
@@ -1106,7 +1188,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                 prompt = (
                     "Transcribe ALL text content from this document page image "
                     "exactly as it appears. Preserve structure: tables as "
-                    "markup, headings, lists, figure labels and captions. "
+                    "markdown tables with the header row repeated on every "
+                    "table, headings, lists, figure labels and captions. "
+                    "A table row must carry its column headers on the same "
+                    "table: never emit a row of bare numbers without the "
+                    "header cells that name what each number measures. "
                     "Output only the transcribed content, no commentary. "
                     "When every visible word has been transcribed, stop "
                     "immediately — never add explanations, interpretations, "
@@ -1632,19 +1718,60 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         heading_chunks = self._chunk_by_structure(text, max_chunk_size=chunk_size)
         if heading_chunks and len(heading_chunks) > 1:
             return heading_chunks
+        return self._chunk_on_line_boundaries(text, chunk_size, overlap)
 
+    def _chunk_on_line_boundaries(self, text: str, chunk_size: int,
+                                  overlap: int = 100) -> list[str]:
+        """Split on line boundaries so a table is never cut mid-row.
+
+        Cutting at a fixed character offset lands inside financial tables and
+        separates a label from its values. In the annual-report benchmark that
+        put "经营活动产生的现金流量净额 ... -62.86%" outside the chunk carrying
+        its own header, so retrieval could not match it at all: 57% of chunks
+        ended mid-table. Lines are accumulated until the next line would
+        overflow; a single line larger than chunk_size is split by characters
+        as a last resort because it cannot be kept whole.
+        """
+        lines = text.split("\n")
         chunks = []
-        start = 0
-        text_length = len(text)
-        while start < text_length:
-            end = min(start + chunk_size, text_length)
-            chunks.append(text[start:end])
-            start = end
-            if start >= text_length:
-                break
-            start = max(0, start - overlap)
-            if start >= end:
-                break
+        current = []
+        current_len = 0
+
+        def _flush():
+            nonlocal current, current_len
+            if current:
+                chunk = "\n".join(current).strip()
+                if chunk:
+                    chunks.append(chunk)
+                current, current_len = [], 0
+
+        for line in lines:
+            line_len = len(line) + 1
+            if line_len > chunk_size:
+                # Unbreakable single line: emit what we have, then split it.
+                _flush()
+                for start in range(0, len(line), chunk_size):
+                    piece = line[start:start + chunk_size].strip()
+                    if piece:
+                        chunks.append(piece)
+                continue
+            if current_len + line_len > chunk_size:
+                _flush()
+            current.append(line)
+            current_len += line_len
+        _flush()
+
+        # Overlap: prepend the tail of the previous chunk so a fact split across
+        # a boundary still appears whole in at least one chunk.
+        if overlap > 0 and len(chunks) > 1:
+            overlapped = [chunks[0]]
+            for i in range(1, len(chunks)):
+                prev_tail = chunks[i - 1][-overlap:]
+                if "\n" in prev_tail:
+                    prev_tail = prev_tail.split("\n", 1)[1]
+                overlapped.append((prev_tail + "\n" + chunks[i]).strip()
+                                 if prev_tail else chunks[i])
+            chunks = overlapped
         return chunks
 
     def _chunk_by_structure(self, text: str, max_chunk_size: int = 2000) -> list[str]:

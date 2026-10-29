@@ -196,7 +196,10 @@ CONTEXT_CONFIG = {
     # (--ctx-size / --parallel), not --ctx-size itself.
     # Consumers read this key directly — there is no per-call-site default, so
     # changing the value here changes every path (config.py is the single source).
-    "synthesis_context_budget": 35500,
+    # Retrieval routinely returns 55-59K chars and this budget truncated 36-40%
+    # of it, dropping candidate pages that held the answer. 45000 stays under
+    # synthesis_safe_chars (45875) so the client-side guard never fires.
+    "synthesis_context_budget": 45000,
     # Map-Reduce trigger: context exceeding this goes through chunked extraction
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.
@@ -549,6 +552,24 @@ CHART_CONFIG = {
     "append_to_raw_text": True,
     # Page classification / image description guards
     "vlm_min_text_len_for_candidate": 1000,  # pages with more text are not VLM candidates
+    # Text length alone is a poor test for tables. A page of a financial table
+    # can carry plenty of characters and still lose the column alignment on
+    # plain extraction: "归属于母公司股东的营运利润 96,975 14,952 25,796 ..."
+    # names no column, so the values cannot be attributed to a business segment.
+    # Such rows trip this detector and reach the vision model regardless of how
+    # much text the page holds. A row counts when it starts with a text label
+    # and continues with >= 4 numeric cells - the shape of a flattened data row.
+    #
+    # OFF by default. It fixes the pages it targets (a transcribed table keeps
+    # its headers) but every such page gains a second copy of its content, and
+    # the synthesis budget then truncates: 15 extra pages per report pushed the
+    # benchmark from 27/30 to 21/30 because pages that used to answer questions
+    # stopped being retrieved. Turn on once retrieval has room for the extra
+    # content, or when a specific document is known to need it.
+    "table_to_vision_enabled": os.environ.get("OPENLAD_TABLE_VISION", "0").strip().lower()
+                               in ("1", "on", "true"),
+    "table_row_min_numeric_cells": 4,
+    "table_min_wide_rows_for_candidate": 3,
     "vlm_image_description_enabled": os.environ.get("OPENLAD_IMAGE_DESCRIPTION", "0").strip().lower()
                                      in ("1", "on", "true"),
     "vlm_image_description_max_tokens": 1024,
