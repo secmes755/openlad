@@ -5,6 +5,7 @@ Creates and manages independent database connections (MetadataDB + VectorDB) per
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 import threading
 from collections.abc import Generator
@@ -18,6 +19,13 @@ logger = logging.getLogger(__name__)
 # Covers the vast majority of common Chinese characters; used to distinguish continuous Chinese character strings from English/digits/symbols
 CJK_START = '\u4e00'  # U+4E00 (CJK start)
 CJK_END = '\u9fff'
+
+# A dotted numeral is one reference, not its separate digits: "3.4.5" means
+# clause 3.4.5, and "6.5" means six point five. The query sanitiser strips
+# every non-word character, so without protection these become "3 4 5" and
+# the individual digits are dropped by the minimum-token-length filter.
+CLAUSE_NUMBER_RE = re.compile(r'\d+(?:\.\d+)+')
+
 
 
 def _fts5_quote(token: str) -> str:
@@ -616,10 +624,27 @@ class TenantMetadataDB:
         This enables "L2 structure index → FTS within chapter range" workflow.
         """
         import re
-        clean_query = re.sub(rf'[^\w\s{CJK_START}-{CJK_END}]', ' ', query)
+        # Hold dotted numbers aside while sanitising. The sanitiser replaces
+        # every non-word character with a space, so "3.4.5" would arrive as the
+        # three single-character tokens 3, 4, 5 and be dropped by the
+        # minimum-length filter below, leaving the channel empty for any
+        # N.N.N clause reference. Restoring the original text afterwards lets
+        # the number reach FTS intact as a phrase.
+        held_numbers: dict[str, str] = {}
+
+        def _hold_number(match: "re.Match[str]") -> str:
+            key = f"CLAUSEHOLD{len(held_numbers)}K"
+            held_numbers[key] = match.group(0)
+            return key
+
+        protected_query = CLAUSE_NUMBER_RE.sub(_hold_number, query)
+
+        clean_query = re.sub(rf'[^\w\s{CJK_START}-{CJK_END}]', ' ', protected_query)
         clean_query = re.sub(r'\s+', ' ', clean_query).strip()
         if not clean_query:
             return []
+        for key, value in held_numbers.items():
+            clean_query = clean_query.replace(key, value)
         cjk_range = f"{CJK_START}-{CJK_END}"
         clean_query = re.sub(rf'([{cjk_range}])([A-Za-z0-9])', r'\1 \2', clean_query)
         clean_query = re.sub(rf'([A-Za-z0-9])([{cjk_range}])', r'\1 \2', clean_query)
