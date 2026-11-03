@@ -5,9 +5,7 @@ format_constraints:
   - Preserve original units and formats exactly (V / mA / MHz / MPa / 万元 / 亿元 / %). 保留原始单位与格式。
   - Keep citation markers from the context when referencing page numbers. 引用页码时保留上下文中的引用标记。
 
-depth_constraints:
-  - "When the question asks for a change, growth rate, share, ratio or margin, compute that figure from the figures you found and state it. Do not reply with the two raw values alone. Show the arithmetic in one line, e.g. (61522-92463)/92463 = -33.46%."
-  - "When two years are present, the newer is the current period and the older is the comparison base; a fall from the older to the newer is a decrease and must be reported with a minus sign."
+depth_constraints: []
 
 prohibited_behaviors:
   - Do not fabricate values, document titles, or page numbers. 禁止编造数值、文档名或页码。

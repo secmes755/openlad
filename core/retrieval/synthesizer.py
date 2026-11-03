@@ -13,14 +13,9 @@ from .truncation import is_truncated, mark_truncated
 
 logger = logging.getLogger(__name__)
 
-# A question phrased this way has a rate as its answer. The prompt asks for the
-# computed figure, but at temperature 0 the model picks its highest-probability
-# continuation, which for a table lookup is to restate the rows it just read.
-_RATE_QUESTION_RE = re.compile(
-    r"百分之多少|百分比|同比|环比|增长率|增幅|降幅|下降了|增长了|上升了|占比|比例|"
-    r"毛利率|净利率|收益率|占比是|rate|percentage|growth",
-    re.IGNORECASE,
-)
+# The words that mark a question as asking for a rate are content, not pipeline:
+# they live in the prompt pack (``derived_rate_patterns``). Core only runs the
+# check-and-retry, and stays silent when the pack declares no patterns.
 
 
 class AnswerSynthesizer:
@@ -162,7 +157,7 @@ class AnswerSynthesizer:
                     return {"answer": fallback, "sources": sources, "structured": False, "confidence": "low"}
                 answer = self._post_process_answer(raw_answer)
                 answer = self._enforce_derived_figure(
-                    answer, original_query or query)
+                    answer, original_query or query, industry_pack)
 
             self_check_passed = False
             if self._should_self_check(industry_pack):
@@ -203,35 +198,10 @@ Retrieved detailed content (may contain supplementary information related to sch
 Retrieved detailed content:
 {context}"""
 
-        prompt += """
-
-Answer rules:
-- If the user asks a global question like what information is in the knowledge base, what documents are available, or to list all content: answer based on the 【Knowledge Base Catalog】, grouping by **document category**, with table columns as "Document Category / Document Name / Main Content"
-- If the user asks about schematic routing connections, pin relationships, or where a certain signal connects to: prioritize the 【Schematic Structured Data】 for precise answers
-- **Core rule: It is strictly forbidden to answer based on your own knowledge, memory, or external information. You must answer strictly based on the 【Retrieved Detailed Content】 only**
-- **Read all paragraphs carefully, not just those where the title matches. The answer may be hidden in any paragraph, table, or annotation in the main text.**
-- For specific data queries: answer only based on the retrieved detailed content. Every specific value, model number, or parameter in the answer must have a clear source found in the retrieved document content
-- **Critical judgment: If the retrieved document content genuinely does not contain the specific information the user is querying (e.g., the user asks about a specific attribute but the document mentions nothing about that attribute or any related concept), this is not a problem with your capability but an issue of incomplete knowledge base data. In this case, objectively state: "Based on the documents in the current knowledge base, no relevant information was found." Do not attempt to reason, guess, or fabricate**
-- Reasonable semantic inference based on document content is allowed (such as synonym substitution, concept inclusion), but inference based on assumptions beyond the document content is strictly forbidden
-- **Evidence hierarchy: explicit declarations take precedence over naming conventions.** Do not infer versions, feature support, or performance levels from numbers appearing in identifiers, labels, or file names unless the document explicitly declares that connection. Numbers in identifiers are often internal numbering, not version indicators.
-- If the data in the document is a range value (e.g., "32-128"), you must present the range as-is; do not arbitrarily pick a fixed value
-- **When the question asks for a change, growth rate, share, ratio, or margin, compute that figure from the document's numbers and state it together with the arithmetic. Listing the two raw values and stopping does not answer the question. When two periods are given, the earlier one is the base: a fall from the earlier to the later figure is a decrease and carries a minus sign.**
-- **All tables (including data tables, comparison tables, parameter lists, allocation tables, etc.) MUST use standard Markdown table format (| Col1 | Col2 |). ASCII Art table format (+---+ borders) is strictly forbidden.**
-- **When the user asks to draw diagrams, topologies, architecture diagrams, relationship diagrams, or to represent with diagrams: prefer Markdown tables or indented text lists to show hierarchy, connections, mappings, and allocation relationships. If code blocks are needed, simple flowcharts can be drawn with plain text (|, -, >), but tables must still use Markdown format.**
-- **When the user asks for comparison, contrast, differences, distinctions, or explicitly requests table output: MUST use a Markdown table for side-by-side comparison, one dimension per row, one product per column. Describing two products' information in separate paragraphs without a comparison table is strictly forbidden.**
-- **Only answer what the user explicitly asked. Do not list additional non-qualifying items as contrast or supplementary notes.**
-- **Never introduce a constraint the user did not state.** If the question names no time window, scope, standard, or comparator, answer from the entire retrieved content; do not silently narrow it (for example, reading "new product" as "released this year", or replying "not within the time range the user asked about" when the user specified no such range). If a narrowing is genuinely required by the document itself, state it explicitly and justify it from the document content.
-- **Content excluded only by a constraint you introduced yourself is NOT "no relevant information found".** You may state "no relevant information was found" only when the entire retrieved content genuinely lacks the queried information.
-- **Must completely list all qualifying items found in the retrieved results. Do not omit or self-filter by importance.**
-
-Please answer the user's question directly, prioritizing conclusive data.
-**Important: Output the final answer directly. It is strictly forbidden to output any non-final content such as thinking process, self-correction, drafts, internal notes, etc. The answer must be clean and directly presentable to the user.**
-**Important: The answer must be fully expanded, not overly brief. When the user asks about a feature/module/interface, do not just answer "yes/no" or list names briefly; you must also detail all key performance parameters, supported standards/protocols, performance metrics (speed, capacity, throughput, etc.), and key features found in the document.**
-For example: if the user asks whether a capability exists, the answer should include the concrete parameters and supported modes declared in the document, not just a bare confirmation.
-**Important: If the retrieved document content genuinely does not contain the specific information the user is querying, objectively state "Based on the documents in the current knowledge base, no relevant information was found." This is an issue of incomplete knowledge base data, not your capability. Fabrication, guessing, or mixing in your own knowledge is strictly forbidden.**
-- **Subject consistency rule: When the user's question explicitly refers to a single subject (a specific company, product, person, project, or other entity), all factual data in the answer must come from the document(s) corresponding to that subject. If the retrieved content contains data from other subjects, do NOT present it as belonging to the queried subject — exclude it, or clearly mark which subject each value belongs to.**
-- **Note: Cross-document synthesis (such as multi-product comparison tables) does NOT constitute fabrication — placing data recorded in different documents into a single table is expected behavior, as long as the data comes from the actual content of each document and the subject of each value is clear.**
-"""
+        # Answer rules are not defined here: core assembles the sections and
+        # the resolved prompt pack supplies the policy. A rule written into this
+        # string applies to every industry and cannot be overridden by a pack.
+        prompt += "\n\nAnswer the user's question directly."
         prompt += self._get_language_instruction(original_query or query)
         return prompt
 
@@ -730,17 +700,32 @@ Output JSON:
         else:
             return "low"
 
-    def _enforce_derived_figure(self, answer: str, query: str) -> str:
+    @staticmethod
+    def _derived_rate_patterns(industry_pack) -> re.Pattern | None:
+        """Compile the pack's rate-question words; None when it declares none."""
+        retrieval = getattr(industry_pack, "retrieval", None) if industry_pack else None
+        if retrieval is None:
+            return None
+        prompts = getattr(retrieval, "prompts", None)
+        if prompts is None:
+            getter = getattr(retrieval, "get_retrieval_prompts", None)
+            prompts = getter() if callable(getter) else {}
+        words = prompts.get("derived_rate_patterns") if isinstance(prompts, dict) else None
+        if not words:
+            return None
+        return re.compile("|".join(re.escape(str(w)) for w in words), re.IGNORECASE)
+
+    def _enforce_derived_figure(self, answer: str, query: str, industry_pack=None) -> str:
         """Ask once more when a rate was requested but the answer gives raw rows.
 
-        The prompt already asks for the computed figure. At temperature 0 the
-        model reliably picks its highest-probability continuation, and for a
-        table lookup that means restating the two figures it just read: cash flow
-        61,522,204,989.35 against 92,463,692,168.43, and no -33.46%. One
-        corrective turn that names what is missing fixes that; raising the
-        temperature would trade this for run-to-run noise across every case.
+        The prompt asks for the computed figure. At temperature 0 the model
+        reliably picks its highest-probability continuation, and for a table
+        lookup that means restating the two figures it just read without the
+        rate. One corrective turn that names what is missing fixes that; raising
+        the temperature would trade it for run-to-run variance on every question.
         """
-        if not answer or not _RATE_QUESTION_RE.search(query):
+        patterns = self._derived_rate_patterns(industry_pack)
+        if not patterns or not answer or not patterns.search(query):
             return answer
         if "%" in answer or "％" in answer:
             return answer
