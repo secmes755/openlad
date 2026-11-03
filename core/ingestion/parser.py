@@ -65,6 +65,12 @@ except ImportError:
     HAS_PDF2IMAGE = False
 
 try:
+    import pypdfium2  # noqa: F401 - availability probe; render fallback
+    HAS_PYPDFIUM2 = True
+except ImportError:
+    HAS_PYPDFIUM2 = False
+
+try:
     import pypdf
     HAS_PYPDF = True
 except ImportError:
@@ -962,6 +968,55 @@ class DocumentParser:
             return "TEXT"
 
 
+    def _render_with_pdfium(self, pdf_path: str, page_numbers, dpi: int) -> dict[int, Any]:
+        """Render pages with pypdfium2, which needs no external binary.
+
+        pdf2image shells out to poppler's pdftoppm. On a machine without
+        poppler every render fails and every source page silently loses its
+        image, so the browser's Source view has nothing to show. pypdfium2
+        ships its own renderer, so it works with nothing installed.
+
+        Page numbers here are 1-based, matching pdf2image's first_page and the
+        numbering stored in doc_pages. pypdfium2 indexes from 0. Passing
+        ``page_numbers=None`` renders the whole document.
+
+        Always call get_page(i); never index the document. A tight loop over
+        ``pdf[i]`` returned the same page repeatedly and produced a whole
+        document of identical images.
+        """
+        rendered: dict[int, Any] = {}
+        if not HAS_PYPDFIUM2:
+            return rendered
+        try:
+            import pypdfium2 as pdfium
+        except ImportError:
+            return rendered
+        scale = dpi / 72.0  # pypdfium2 renders at 72 dpi unless scaled
+        try:
+            pdf = pdfium.PdfDocument(pdf_path)
+        except Exception as e:
+            logger.warning(f"pypdfium2 could not open {pdf_path}: {e}")
+            return rendered
+        try:
+            page_count = len(pdf)
+            wanted = range(1, page_count + 1) if page_numbers is None else page_numbers
+            for page_num in wanted:
+                idx = page_num - 1
+                if idx < 0 or idx >= page_count:
+                    continue
+                try:
+                    page = pdf.get_page(idx)
+                    try:
+                        bitmap = page.render(scale=scale)
+                        rendered[page_num] = bitmap.to_pil()
+                    finally:
+                        page.close()
+                except Exception as e:
+                    logger.warning(f"pypdfium2 render failed p{page_num}: {e}")
+        finally:
+            pdf.close()
+        return rendered
+
     def _render_single_page(self, pdf_path: str, page_num: int, dpi: int = 150):
         """Render a single PDF page as PIL Image via pdf2image"""
         if HAS_PDF2IMAGE:
@@ -976,7 +1031,8 @@ class DocumentParser:
             except Exception as e:
                 logger.warning(f"pdf2image single page render failed p{page_num}: {e}")
 
-        return None
+        fallback = self._render_with_pdfium(pdf_path, [page_num], dpi)
+        return fallback.get(page_num)
 
     def _render_pdf_pages(self, pdf_path: str, dpi: int = 100,
                           pages: list | None = None) -> dict[int, Any]:
@@ -989,12 +1045,12 @@ class DocumentParser:
         ingestion worker). ``pages=None`` renders the whole document.
         """
         page_images: dict[int, Any] = {}
-        if not HAS_PDF2IMAGE:
-            return page_images
-        try:
-            from pdf2image import convert_from_path
-        except ImportError:
-            return page_images
+        convert_from_path = None
+        if HAS_PDF2IMAGE:
+            try:
+                from pdf2image import convert_from_path
+            except ImportError:
+                convert_from_path = None
         if pages is None:
             runs = [(None, None)]  # whole document
         else:
@@ -1010,36 +1066,51 @@ class DocumentParser:
                     runs.append((start, prev))
                     start = prev = pn
             runs.append((start, prev))
-        for first, last in runs:
-            try:
-                kwargs: dict[str, Any] = {"dpi": dpi}
-                if first is not None:
-                    kwargs["first_page"] = first
-                    kwargs["last_page"] = last
-                images = convert_from_path(pdf_path, **kwargs)
-                base = first if first is not None else 1
-                for i, img in enumerate(images):
-                    page_images[base + i] = img
-            except Exception as e:
-                # A multi-page run failing wholesale must not silently lose
-                # its healthy pages: retry page-by-page so only the truly
-                # broken pages are dropped.
-                if first is None or last is None or first == last:
-                    logger.warning(f"pdf2image failed (pages {first}-{last}): {e}")
-                    continue
-                logger.warning(
-                    f"pdf2image run {first}-{last} failed ({e}); retrying per page"
-                )
-                for pn in range(first, last + 1):
-                    try:
-                        imgs = convert_from_path(
-                            pdf_path, dpi=dpi, first_page=pn, last_page=pn
-                        )
-                        if imgs:
-                            page_images[pn] = imgs[0]
-                    except Exception as e2:
-                        logger.warning(f"pdf2image failed (page {pn}): {e2}")
-        logger.info(f"pdf2image rendered {len(page_images)} pages")
+        if convert_from_path is not None:
+            for first, last in runs:
+                try:
+                    kwargs: dict[str, Any] = {"dpi": dpi}
+                    if first is not None:
+                        kwargs["first_page"] = first
+                        kwargs["last_page"] = last
+                    images = convert_from_path(pdf_path, **kwargs)
+                    base = first if first is not None else 1
+                    for i, img in enumerate(images):
+                        page_images[base + i] = img
+                except Exception as e:
+                    # A multi-page run failing wholesale must not silently lose
+                    # its healthy pages: retry page-by-page so only the truly
+                    # broken pages are dropped.
+                    if first is None or last is None or first == last:
+                        logger.warning(f"pdf2image failed (pages {first}-{last}): {e}")
+                        continue
+                    logger.warning(
+                        f"pdf2image run {first}-{last} failed ({e}); retrying per page"
+                    )
+                    for pn in range(first, last + 1):
+                        try:
+                            imgs = convert_from_path(
+                                pdf_path, dpi=dpi, first_page=pn, last_page=pn
+                            )
+                            if imgs:
+                                page_images[pn] = imgs[0]
+                        except Exception as e2:
+                            logger.warning(f"pdf2image failed (page {pn}): {e2}")
+
+        # Whatever pdf2image could not produce gets a pypdfium2 attempt: poppler
+        # missing on this machine, a page pdftoppm choked on, or pdf2image not
+        # installed at all. Without this those pages carry no image and the
+        # browser's Source view shows nothing.
+        if pages is None:
+            if not page_images:
+                page_images.update(self._render_with_pdfium(pdf_path, None, dpi))
+        else:
+            missing = [p for p in sorted(set(pages)) if p not in page_images]
+            if missing:
+                logger.info(f"pdf2image left {len(missing)} pages; retrying with pypdfium2")
+                page_images.update(self._render_with_pdfium(pdf_path, missing, dpi))
+
+        logger.info(f"rendered {len(page_images)} page images")
         return page_images
 
     def _analyze_pdf_page_with_vlm(self, page_image, page_num: int, page_text: str = "") -> str:

@@ -19,6 +19,9 @@ python-docx>=0.8.11
 Pillow>=10.0.0
 beautifulsoup4>=4.12.0
 pdf2image>=1.16.0
+# Page rendering fallback: pdf2image needs the poppler binaries installed,
+# pypdfium2 ships its own renderer. Apache-2.0/BSD-3-Clause, no AGPL.
+pypdfium2>=4.30.0
 
 # Image Processing
 numpy>=1.24.0

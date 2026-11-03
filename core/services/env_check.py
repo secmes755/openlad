@@ -34,6 +34,7 @@ REQUIRED_MODULES = {
     "PIL": "Pillow",
     "bs4": "beautifulsoup4",
     "pdf2image": "pdf2image",
+    "pypdfium2": "pypdfium2",
     "numpy": "numpy",
     "cv2": "opencv-python",
     "httpx": "httpx",
