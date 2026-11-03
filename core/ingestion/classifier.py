@@ -154,11 +154,6 @@ class DocumentClassifier:
                 l1 = result.get("category_level1", "")
                 l2 = result.get("category_level2", "")
                 l3 = result.get("category_level3", "")
-                # LLM may output old category names; dynamic mapping
-                if l1 == "Financial & Transaction":
-                    l1 = "Financial Reports"
-                if l2 in ("Annual Report", "Quarterly Report", "Semi-annual Report", "Audit Report", "Prospectus", "Financial Statements"):
-                    l1 = "Financial Reports"
                 return self._normalize_classification(
                     l1, l2, l3, result.get("confidence", 0.5))
         except Exception as e:
@@ -193,10 +188,6 @@ class DocumentClassifier:
                 l1 = result.get("category_level1", "")
                 l2 = result.get("category_level2", "")
                 l3 = result.get("category_level3", "")
-                if l1 == "Financial & Transaction":
-                    l1 = "Financial Reports"
-                if l2 in ("Annual Report", "Quarterly Report", "Semi-annual Report", "Audit Report", "Prospectus", "Financial Statements"):
-                    l1 = "Financial Reports"
                 return self._normalize_classification(
                     l1, l2, l3, result.get("confidence", 0.5))
         except Exception as e:

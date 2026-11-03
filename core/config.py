@@ -552,20 +552,19 @@ CHART_CONFIG = {
     "append_to_raw_text": True,
     # Page classification / image description guards
     "vlm_min_text_len_for_candidate": 1000,  # pages with more text are not VLM candidates
-    # Text length alone is a poor test for tables. A page of a financial table
-    # can carry plenty of characters and still lose the column alignment on
-    # plain extraction: "归属于母公司股东的营运利润 96,975 14,952 25,796 ..."
-    # names no column, so the values cannot be attributed to a business segment.
+    # Text length alone is a poor test for tables. A page of a table can carry
+    # plenty of characters and still lose the column alignment on plain
+    # extraction: "<row label> <n1> <n2> <n3> ..." names no column, so the
+    # values cannot be attributed to a row.
     # Such rows trip this detector and reach the vision model regardless of how
     # much text the page holds. A row counts when it starts with a text label
     # and continues with >= 4 numeric cells - the shape of a flattened data row.
     #
     # OFF by default. It fixes the pages it targets (a transcribed table keeps
-    # its headers) but every such page gains a second copy of its content, and
-    # the synthesis budget then truncates: 15 extra pages per report pushed the
-    # benchmark from 27/30 to 21/30 because pages that used to answer questions
-    # stopped being retrieved. Turn on once retrieval has room for the extra
-    # content, or when a specific document is known to need it.
+    # its headers) but every such page gains a second copy of its content, the
+    # index grows, and the synthesis budget then truncates pages that used to
+    # answer questions. Turn on once retrieval has room for the extra content,
+    # or when a specific document is known to need it.
     "table_to_vision_enabled": os.environ.get("OPENLAD_TABLE_VISION", "0").strip().lower()
                                in ("1", "on", "true"),
     "table_row_min_numeric_cells": 4,

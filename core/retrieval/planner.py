@@ -34,9 +34,9 @@ def _routing_category(doc: dict) -> str:
 # Report-epoch scoping (module-level, pure functions — unit-testable without
 # LLM or DB).
 #
-# A query like "中兴通讯2025年年度报告显示…较2024年下降了百分之多少" names ONE
-# document (the 2025 annual report); "2024年" is a comparison *period* whose
-# data lives in the comparative columns of that same report. The coarse filter
+# A query like "<entity><year> annual report ... versus <earlier year>" names
+# ONE document (the later report); the earlier year is a comparison *period*
+# whose data lives in the comparative columns of that same report. The coarse filter
 # has no notion of this distinction and routinely keeps both the 2025 and 2024
 # documents, so retrieval can build the answer from the wrong year's document.
 # These helpers extract the epochs the user explicitly pinned to a report

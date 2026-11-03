@@ -227,10 +227,9 @@ def _looks_like_wide_table(text: str) -> bool:
     """True when plain extraction left several flattened data rows.
 
     A wide financial table flattened to text looks like
-    ``归属于母公司股东的营运利润 96,975 14,952 25,796 (11,899) 121,862``:
-    the row label survives but the column headers do not line up with the
-    values, so a text-only reader cannot say which segment each number
-    belongs to. The shape that identifies it is a text label followed by a run
+    ``<row label> <n1> <n2> <n3> <n4>``: the row label survives but the column
+    headers do not line up with the values, so a text-only reader cannot say
+    which column each number belongs to. The shape that identifies it is a text label followed by a run
     of numbers. Counting numbers alone is too loose - prose with a few figures
     and tables whose headers survived both match, and sending those to the
     vision model duplicates content already in the index.
@@ -1795,11 +1794,10 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                                   overlap: int = 100) -> list[str]:
         """Split on line boundaries so a table is never cut mid-row.
 
-        Cutting at a fixed character offset lands inside financial tables and
-        separates a label from its values. In the annual-report benchmark that
-        put "经营活动产生的现金流量净额 ... -62.86%" outside the chunk carrying
-        its own header, so retrieval could not match it at all: 57% of chunks
-        ended mid-table. Lines are accumulated until the next line would
+        Cutting at a fixed character offset lands inside tables and separates a
+        label from its values, so the chunk that holds the figures no longer
+        holds the header that names them and retrieval cannot match it. Lines are
+        accumulated until the next line would
         overflow; a single line larger than chunk_size is split by characters
         as a last resort because it cannot be kept whole.
         """
