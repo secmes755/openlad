@@ -162,7 +162,7 @@ class AnswerSynthesizer:
                     return {"answer": fallback, "sources": sources, "structured": False, "confidence": "low"}
                 answer = self._post_process_answer(raw_answer)
                 answer = self._enforce_derived_figure(
-                    answer, original_query or query, prompt)
+                    answer, original_query or query)
 
             self_check_passed = False
             if self._should_self_check(industry_pack):
@@ -730,7 +730,7 @@ Output JSON:
         else:
             return "low"
 
-    def _enforce_derived_figure(self, answer: str, query: str, prompt: str) -> str:
+    def _enforce_derived_figure(self, answer: str, query: str) -> str:
         """Ask once more when a rate was requested but the answer gives raw rows.
 
         The prompt already asks for the computed figure. At temperature 0 the
@@ -746,16 +746,20 @@ Output JSON:
             return answer
         if not re.search(r"\d", answer):
             return answer
-        directive = (
-            "\n\nThe question asks for a rate, and your answer restated figures "
-            "without giving one. Compute the rate the question asks for from the "
-            "figures in the retrieved content. Show the arithmetic on one line "
-            "(e.g. (61522-92463)/92463 = -33.46%) and then the answer. If the "
-            "content already prints the rate, quote it instead of computing."
-        )
+        # The retry carries only the question and the figures already stated, not
+        # the retrieved context again: resending 45K characters doubles the
+        # prefill of every rate question and pushed some past the client timeout.
+        retry_prompt = f"""The question asks for a rate, and an earlier answer restated figures without giving one.
+
+Question: {query}
+
+Figures already stated in the answer:
+{answer[:1200]}
+
+Compute the rate the question asks for from exactly those figures. Show the arithmetic on one line, then the answer. Keep any page or section references that appeared above. Do not introduce a figure that is not in the text above."""
         try:
             retry = self.model_client.generate(
-                prompt + directive, temperature=0, max_tokens=2048)
+                retry_prompt, temperature=0, max_tokens=1024)
             retry = (retry or "").strip()
             if retry and not self._is_garbled(retry) and ("%" in retry or "％" in retry):
                 logger.info("[SYNTHESIZER] derived-figure retry produced a rate")
