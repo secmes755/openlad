@@ -1349,7 +1349,7 @@ class DocumentIndexBuilder:
             page_structure = {"level": current_level, "path": current_path,
                               "is_table": False, "table_caption": ""}
 
-            for line in lines:
+            for line_idx, line in enumerate(lines):
                 line = line.strip()
                 if not line:
                     continue
@@ -1443,6 +1443,43 @@ class DocumentIndexBuilder:
                         chapter_titles[int(num)] = title
                     page_structure.update({"level": level, "path": current_path, "title": title})
                     break
+
+                # Standards put appendices outside the numbered clause tree
+                # ("Annex A" .. "Annex T"). Without a branch here those pages
+                # got no structure anchor, so a question about an annex matched
+                # the table of contents instead of the annex body.
+                #
+                # "Annex H" alone is not enough evidence: interface tables list
+                # several annexes in one cell ("Annex M / Annex N"). A real
+                # heading is followed by its (normative) or (informative)
+                # marker, inline or on one of the next two lines.
+                annex_match = re.match(r'^Annex\s+([A-Z])\b\s*(?:\(([^)]*)\))?\s*(.*)$',
+                                       line, re.IGNORECASE)
+                if annex_match:
+                    annex_letter = annex_match.group(1).upper()
+                    inline_marker = (annex_match.group(2) or "").strip().lower()
+                    annex_title = (annex_match.group(3) or "").strip()
+                    annex_marker = inline_marker
+                    for follow in lines[line_idx + 1:line_idx + 3]:
+                        follow = follow.strip()
+                        if not follow:
+                            continue
+                        bare = follow.strip("()（） ").lower()
+                        if bare in ("normative", "informative"):
+                            annex_marker = annex_marker or bare
+                            continue
+                        if not annex_title:
+                            annex_title = follow
+                    if "normative" not in annex_marker and "informative" not in annex_marker:
+                        continue
+                    path = f"Annex {annex_letter}"
+                    current_path = path
+                    current_level = 1
+                    section_start_pages[path] = page_num
+                    page_structure.update({"level": 1, "path": path,
+                                           "title": annex_title or path})
+                    break
+
 
                 table_match = re.search(r'[\[【（](?:表格|Table|表)\s*\d+[\]】）]', line)
                 if table_match:
