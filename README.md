@@ -80,8 +80,11 @@ cd /tmp/llama.cpp && cmake -B build && cmake --build build -j$(nproc)
 sudo cp build/bin/llama-server /usr/local/bin/
 
 mkdir -p ~/models
-# LLM: Qwen3.5-9B Q5_K_M (~5.4 GB)
-huggingface-cli download Qwen/Qwen3.5-9B-GGUF qwen3.5-9b-q5_k_m.gguf \
+# Query model: Qwen3.6-35B-A3B Q2_K_XL (~12 GB). A 30B-class MoE with about 3B
+# active parameters, so it decodes at the speed of a small model while fitting
+# a 16 GB card. Smaller models drive the query planner poorly: they loop on
+# document listing and never reach the page content.
+huggingface-cli download Qwen/Qwen3.6-35B-A3B-GGUF qwen3.6-35b-a3b-q2_k_xl.gguf \
     --local-dir ~/models
 # Embedding: Qwen3-Embedding-0.6B Q8_0 (~0.6 GB)
 huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
@@ -93,11 +96,10 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 ```bash
 # LLM (port 8080)
 llama-server \
-    --model ~/models/qwen3.5-9b-q5_k_m.gguf \
-    --host 127.0.0.1 --port 8080 --alias qwen3.5-9b \
-    --n-gpu-layers 999 --ctx-size 262144 --parallel 2 \
-    --batch-size 2048 --reasoning off \
-    --cache-type-k q4_0 --cache-type-v q4_0 --cache-ram 2048 -n -1
+    --model ~/models/qwen3.6-35b-a3b-q2_k_xl.gguf \
+    --host 127.0.0.1 --port 8080 --alias qwen3.6-35b-a3b \
+    --n-gpu-layers 999 --ctx-size 32768 --parallel 1 \
+    --cache-type-k q8_0 --cache-type-v q8_0 --fit off --jinja
 
 # Embedding (port 8081)
 llama-server \

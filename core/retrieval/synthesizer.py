@@ -13,6 +13,15 @@ from .truncation import is_truncated, mark_truncated
 
 logger = logging.getLogger(__name__)
 
+# A question phrased this way has a rate as its answer. The prompt asks for the
+# computed figure, but at temperature 0 the model picks its highest-probability
+# continuation, which for a table lookup is to restate the rows it just read.
+_RATE_QUESTION_RE = re.compile(
+    r"百分之多少|百分比|同比|环比|增长率|增幅|降幅|下降了|增长了|上升了|占比|比例|"
+    r"毛利率|净利率|收益率|占比是|rate|percentage|growth",
+    re.IGNORECASE,
+)
+
 
 class AnswerSynthesizer:
     def __init__(self):
@@ -152,6 +161,8 @@ class AnswerSynthesizer:
                     fallback = self._build_fallback_answer(query, context, sources)
                     return {"answer": fallback, "sources": sources, "structured": False, "confidence": "low"}
                 answer = self._post_process_answer(raw_answer)
+                answer = self._enforce_derived_figure(
+                    answer, original_query or query, prompt)
 
             self_check_passed = False
             if self._should_self_check(industry_pack):
@@ -718,6 +729,40 @@ Output JSON:
             return "low"
         else:
             return "low"
+
+    def _enforce_derived_figure(self, answer: str, query: str, prompt: str) -> str:
+        """Ask once more when a rate was requested but the answer gives raw rows.
+
+        The prompt already asks for the computed figure. At temperature 0 the
+        model reliably picks its highest-probability continuation, and for a
+        table lookup that means restating the two figures it just read: cash flow
+        61,522,204,989.35 against 92,463,692,168.43, and no -33.46%. One
+        corrective turn that names what is missing fixes that; raising the
+        temperature would trade this for run-to-run noise across every case.
+        """
+        if not answer or not _RATE_QUESTION_RE.search(query):
+            return answer
+        if "%" in answer or "％" in answer:
+            return answer
+        if not re.search(r"\d", answer):
+            return answer
+        directive = (
+            "\n\nThe question asks for a rate, and your answer restated figures "
+            "without giving one. Compute the rate the question asks for from the "
+            "figures in the retrieved content. Show the arithmetic on one line "
+            "(e.g. (61522-92463)/92463 = -33.46%) and then the answer. If the "
+            "content already prints the rate, quote it instead of computing."
+        )
+        try:
+            retry = self.model_client.generate(
+                prompt + directive, temperature=0, max_tokens=2048)
+            retry = (retry or "").strip()
+            if retry and not self._is_garbled(retry) and ("%" in retry or "％" in retry):
+                logger.info("[SYNTHESIZER] derived-figure retry produced a rate")
+                return self._post_process_answer(retry)
+        except Exception as e:
+            logger.warning(f"[SYNTHESIZER] derived-figure retry failed: {e}")
+        return answer
 
     def _post_process_answer(self, text: str) -> str:
         """
