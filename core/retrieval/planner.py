@@ -296,7 +296,7 @@ Filtering requirements:
 
 Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":"","time_range":{{"start":"YYYY-MM-DD","end":"YYYY-MM-DD","label":"time range description"}}}}"""
         try:
-            result = self.model_client.generate_json(prompt, temperature=0.1, max_tokens=2048)
+            result = self.model_client.generate_json(prompt, temperature=0.0, max_tokens=2048)
             short_ids = result.get("candidate_short_ids", [])
             time_range = result.get("time_range")
             if time_range and time_range.get("start"):
@@ -473,7 +473,7 @@ Output JSON:
   "time_range":{{"start":"YYYY-MM-DD","end":"YYYY-MM-DD","label":"time range description"}}
 }}"""
         try:
-            result = self.model_client.generate_json(prompt, temperature=0.1, max_tokens=2048)
+            result = self.model_client.generate_json(prompt, temperature=0.0, max_tokens=2048)
             return self._validate_plan(result, query)
         except Exception as e:
             logger.error(f"[PHASE-1] Fine planning failed: {e}")
@@ -592,7 +592,10 @@ User's latest question: {query}
 
 Rewritten query:"""
         try:
-            result = self.model_client.generate(prompt, temperature=0.1, max_tokens=1024)
+            # temperature 0: the rewrite decides which pages are retrieved, so a
+            # stochastic rewrite made the same question return different answers
+            # on repeated runs. Planning has one right answer, not a spread.
+            result = self.model_client.generate(prompt, temperature=0.0, max_tokens=1024)
             rewritten = result.strip().strip('"').strip("'")
             if rewritten and len(rewritten) > 0 and rewritten != query:
                 return rewritten

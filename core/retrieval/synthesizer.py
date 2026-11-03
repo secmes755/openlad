@@ -204,6 +204,7 @@ Answer rules:
 - Reasonable semantic inference based on document content is allowed (such as synonym substitution, concept inclusion), but inference based on assumptions beyond the document content is strictly forbidden
 - **Evidence hierarchy: explicit declarations take precedence over naming conventions.** Do not infer versions, feature support, or performance levels from numbers appearing in identifiers, labels, or file names unless the document explicitly declares that connection. Numbers in identifiers are often internal numbering, not version indicators.
 - If the data in the document is a range value (e.g., "32-128"), you must present the range as-is; do not arbitrarily pick a fixed value
+- **When the question asks for a change, growth rate, share, ratio, or margin, compute that figure from the document's numbers and state it together with the arithmetic. Listing the two raw values and stopping does not answer the question. When two periods are given, the earlier one is the base: a fall from the earlier to the later figure is a decrease and carries a minus sign.**
 - **All tables (including data tables, comparison tables, parameter lists, allocation tables, etc.) MUST use standard Markdown table format (| Col1 | Col2 |). ASCII Art table format (+---+ borders) is strictly forbidden.**
 - **When the user asks to draw diagrams, topologies, architecture diagrams, relationship diagrams, or to represent with diagrams: prefer Markdown tables or indented text lists to show hierarchy, connections, mappings, and allocation relationships. If code blocks are needed, simple flowcharts can be drawn with plain text (|, -, >), but tables must still use Markdown format.**
 - **When the user asks for comparison, contrast, differences, distinctions, or explicitly requests table output: MUST use a Markdown table for side-by-side comparison, one dimension per row, one product per column. Describing two products' information in separate paragraphs without a comparison table is strictly forbidden.**
@@ -335,7 +336,7 @@ Determine whether the specific conclusions in the answer are supported by origin
 Output only JSON."""
         try:
             result, json_error = self.model_client.generate_json_strict(
-                check_prompt, temperature=0.1, max_tokens=2048)
+                check_prompt, temperature=0, max_tokens=2048)
             # An unparsable reply returns {} just like a genuine "{}" answer.
             # The error is returned alongside the data so the two are
             # distinguishable by the call's own result — reading a shared
@@ -577,7 +578,7 @@ Output JSON:
 """
         try:
             # FIX: Use larger max_tokens to avoid JSON truncation
-            data = self.model_client.generate_json(json_prompt, temperature=0.1, max_tokens=8192)
+            data = self.model_client.generate_json(json_prompt, temperature=0, max_tokens=8192)
             if data and data.get("rows"):
                 return self._render_json_table(data)
             logger.warning(f"[SYNTHESIZER] JSON table data incomplete: {data.keys() if data else 'empty'}")
@@ -918,7 +919,7 @@ Extraction result:"""
             try:
                 cfg = settings.CONTEXT_CONFIG
                 map_max_tokens = cfg.get("synthesis_max_tokens", 4096)
-                result = self.model_client.generate(map_prompt, temperature=0.1, max_tokens=map_max_tokens)
+                result = self.model_client.generate(map_prompt, temperature=0, max_tokens=map_max_tokens)
                 result = result.strip()
                 if result and result != "None" and len(result) > 10:
                     extracted_parts.append(result)
@@ -958,7 +959,7 @@ Organized result:"""
                 try:
                     cfg = settings.CONTEXT_CONFIG
                     reduce_max_tokens = cfg.get("synthesis_max_tokens", 4096)
-                    reduced = self.model_client.generate(reduce_prompt, temperature=0.1, max_tokens=reduce_max_tokens)
+                    reduced = self.model_client.generate(reduce_prompt, temperature=0, max_tokens=reduce_max_tokens)
                     reduced = reduced.strip()
                     if reduced and len(reduced) > 50:
                         reduce_parts.append(reduced)
@@ -984,7 +985,7 @@ Organized result:"""
             try:
                 cfg = settings.CONTEXT_CONFIG
                 reduce_max_tokens = cfg.get("synthesis_max_tokens", 4096)
-                reduced = self.model_client.generate(reduce_prompt, temperature=0.1, max_tokens=reduce_max_tokens)
+                reduced = self.model_client.generate(reduce_prompt, temperature=0, max_tokens=reduce_max_tokens)
                 reduced = reduced.strip()
                 if reduced and len(reduced) > 50:
                     logger.info(f"[MAP-REDUCE] After Reduce: {len(reduced)} chars")

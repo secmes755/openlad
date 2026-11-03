@@ -89,7 +89,7 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         from ..models.client import get_model_client
         model_client = get_model_client()
         try:
-            result = model_client.generate_json(prompt, system_prompt=system_prompt, max_tokens=256, temperature=0.1)
+            result = model_client.generate_json(prompt, system_prompt=system_prompt, max_tokens=256, temperature=0.0)
             if result and result.get("type") in ("deep_research", "traditional"):
                 return result["type"]
         except Exception as e:

@@ -888,7 +888,7 @@ Output only JSON, no explanation."""
         try:
             cfg = settings.CONTEXT_CONFIG
             chapter_select_max_tokens = cfg.get("chapter_select_max_tokens", 1024)
-            result = model_client.generate_json(prompt, max_tokens=chapter_select_max_tokens, temperature=0.1)
+            result = model_client.generate_json(prompt, max_tokens=chapter_select_max_tokens, temperature=0)
             selected_indices = result.get("relevant_chapters", []) if result else []
         except Exception as e:
             logger.warning(f"[CHAPTER-RETRIEVE] LLM chapter selection failed: {e}")
