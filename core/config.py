@@ -109,6 +109,13 @@ EMBEDDING_MODEL_NAME = os.environ.get("OPENLAD_EMB_MODEL", "")  # User must conf
 CHART_VLM_BASE_URL = os.environ.get("OPENLAD_CHART_VLM_URL", LLM_BASE_URL)
 CHART_VLM_MODEL_NAME = os.environ.get("OPENLAD_CHART_VLM_MODEL", LLM_MODEL_NAME)
 
+# Read timeout for a single model request. A working call finishes in tens of
+# seconds; the former 300s ceiling meant a stalled request held a worker for
+# five minutes before the client even began retrying, and three retries could
+# occupy it for fifteen. Fail fast and let the retry handler do its job.
+LLM_REQUEST_TIMEOUT = int(os.environ.get("OPENLAD_LLM_TIMEOUT", "120"))
+EMBEDDING_REQUEST_TIMEOUT = int(os.environ.get("OPENLAD_EMB_TIMEOUT", "120"))
+
 # =============================================================================
 # API Service Configuration
 # =============================================================================
@@ -719,6 +726,8 @@ class Settings:
     EMBEDDING_MODEL_NAME = EMBEDDING_MODEL_NAME
     CHART_VLM_BASE_URL = CHART_VLM_BASE_URL
     CHART_VLM_MODEL_NAME = CHART_VLM_MODEL_NAME
+    LLM_REQUEST_TIMEOUT = LLM_REQUEST_TIMEOUT
+    EMBEDDING_REQUEST_TIMEOUT = EMBEDDING_REQUEST_TIMEOUT
 
     API_HOST = API_HOST
     API_PORT = API_PORT

@@ -390,10 +390,28 @@ class ModelClient:
         target_url = (base_url or self.llm_base_url) + "/chat/completions"
         req_headers = self._auth_headers(api_key if api_key is not None else self.llm_api_key)
         max_retries = 3
+        timeout = settings.LLM_REQUEST_TIMEOUT
+        # llama.cpp turns response_format into a grammar that constrains every
+        # token. That decoder can abort a request outright ("unexpected empty
+        # grammar stack"), and the call then returns no answer at all. The
+        # prompt already asks for JSON and the parser below tolerates fenced or
+        # wrapped output, so a grammar rejection is retried without the grammar
+        # rather than losing the call. One strip only: a second failure is a
+        # real failure and belongs to the retry handler.
+        grammar_stripped = False
         for attempt in range(max_retries):
             try:
-                response = self.session.post(target_url, json=payload, timeout=300,
+                response = self.session.post(target_url, json=payload, timeout=timeout,
                                              headers=req_headers)
+                if (json_mode and not grammar_stripped
+                        and response.status_code >= 500
+                        and "grammar" in response.text[:500].lower()):
+                    grammar_stripped = True
+                    payload.pop("response_format", None)
+                    logger.warning(
+                        "[MODEL] JSON grammar rejected the request "
+                        f"({response.text[:120]!r}); retrying without response_format")
+                    continue
                 # Handle "context size exceeded" errors — truncate and retry
                 if response.status_code == 400:
                     error_text = response.text[:500]
@@ -443,6 +461,14 @@ class ModelClient:
                                    f"model may have exhausted tokens during thinking. Returning empty.")
                 return ChatResult(text=content, finish_reason=finish_reason)
             except Exception as e:
+                if (json_mode and not grammar_stripped
+                        and "grammar" in str(e).lower()):
+                    grammar_stripped = True
+                    payload.pop("response_format", None)
+                    logger.warning(
+                        f"[MODEL] JSON grammar failed the request ({e}); "
+                        f"retrying without response_format")
+                    continue
                 if attempt < max_retries - 1:
                     wait = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
                     logger.warning(f"LLM call failed (attempt {attempt + 1}/{max_retries}): {e}, retrying in {wait}s...")
@@ -649,7 +675,7 @@ class ModelClient:
             response = self.session.post(
                 f"{self.embedding_base_url}/embeddings",
                 json={"model": self.embedding_model, "input": truncated},
-                timeout=300,
+                timeout=settings.EMBEDDING_REQUEST_TIMEOUT,
                 headers=self._auth_headers(self.embedding_api_key),
             )
             response.raise_for_status()
