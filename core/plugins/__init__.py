@@ -206,12 +206,15 @@ class RetrievalPlugin(ABC):
 
     def get_entity_stopwords(self) -> list[str]:
         """Vocabulary too generic in this industry's documents to identify
-        a document in a query (e.g. "营业收入" in annual reports). The
-        planner's entity-coverage check filters these out of extracted
-        query entities so they cannot force-merge unrelated documents into
-        the doc_filter. Core keeps its own domain-neutral question/meta
-        words; these pack words are additive. Default: []."""
+        a document in a query. The planner's entity-coverage check filters
+        these out. Default: [].  Industry packs supply their own words."""
         return []
+
+    def get_report_epoch_pattern(self) -> str:
+        """Regex marking a year that names a document epoch rather than a
+        comparison period (default: empty, which disables epoch pruning).
+        Which nouns bind a year to a report is vocabulary, so packs own it."""
+        return ""
 
     def get_spec_extraction_config(self) -> dict[str, Any]:
         """Industry vocabulary for the rule-based spec-fact extractor:
@@ -400,6 +403,20 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         # documents to identify a document (e.g. "营业收入" in annual
         # reports). Merged into the planner's entity filter.
         return self.config.rules.get("entity_stopwords", []) or []
+
+    def get_report_epoch_pattern(self) -> str:
+        # Regex from rules.yaml `report_epoch_pattern` (default empty). A year
+        # counts as a document epoch only when it is bound to one of these
+        # report nouns, so that "versus 2024" stays a comparison period while
+        # "the 2025 annual report" pins a document. Core prunes epochs; which
+        # nouns mark one is vocabulary and belongs here.
+        return self.config.rules.get("report_epoch_pattern", "") or ""
+
+    def get_title_derivation_config(self) -> dict[str, Any]:
+        # Vocabulary for the title extractor from rules.yaml `title_derivation`
+        # (default empty). The doc-type examples shown to the model are content,
+        # so a pack that names none gets a prompt without examples.
+        return self.config.rules.get("title_derivation", {}) or {}
 
     def get_spec_extraction_config(self) -> dict[str, Any]:
         # Extractor vocabulary from rules.yaml `spec_extraction`. Empty (or a

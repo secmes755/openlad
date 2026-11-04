@@ -29,6 +29,26 @@ def subject_in_text(subject: str, text: str) -> bool:
     return len(compact_s) >= 2 and compact_s in compact_t
 
 
+def _doc_type_examples() -> list[str]:
+    """Doc-type examples shown to the model, from the base pack.
+
+    Naming document types is vocabulary, so the examples come from
+    rules.yaml ``title_derivation`` rather than from core. A pack that names
+    none yields a prompt that simply asks for the document type.
+    """
+    try:
+        from ..plugins import get_plugin_registry
+        registry = get_plugin_registry()
+        pack = registry.get_generic() if hasattr(registry, "get_generic") else None
+        retrieval = getattr(pack, "retrieval", None) if pack else None
+        if not hasattr(retrieval, "get_title_derivation_config"):
+            return []
+        config = retrieval.get_title_derivation_config() or {}
+        return [str(x) for x in (config.get("doc_type_examples") or [])]
+    except Exception:
+        return []
+
+
 def generate_identifiable_title(model_client, filename: str, summary: str,
                                 classification: dict) -> str | None:
     """Generate an identifiable document title from L1 summary + filename.
@@ -39,9 +59,8 @@ def generate_identifiable_title(model_client, filename: str, summary: str,
     not appear in the source is dropped (anti-hallucination gate). Returns
     None when the LLM is unavailable or no field passes validation.
 
-    Works for any document type (annual report, employee handbook, medical
-    report, EIA plan, ...) because the summary is already LLM-generated from
-    full content and typically names the subject in its first sentence.
+    Works for any document type, because the summary is already LLM-generated
+    from full content and typically names the subject in its first sentence.
     """
     if not summary or len(summary.strip()) < 20:
         return None
@@ -50,6 +69,8 @@ def generate_identifiable_title(model_client, filename: str, summary: str,
         str(classification.get(k) or "") for k in
         ("category_level1", "category_level2", "category_level3")
     )
+    examples = _doc_type_examples()
+    doc_type_hint = f"（如 {'/'.join(examples)}）" if examples else ""
     prompt = f"""请根据文档文件名和文档内容摘要，提取该文档的标识信息。
 
 文件名: {filename}
@@ -59,7 +80,7 @@ def generate_identifiable_title(model_client, filename: str, summary: str,
 请提取以下三个字段：
 1. subject: 文档主要描述的主体（公司/组织/项目/个人名称，使用全称；无法确定填 null）
 2. year: 文档内容涉及的年份（4位数字；无法确定填 null）
-3. doc_type: 文档类型（如 年度报告/员工手册/体检报告/datasheet；无法确定填 null）
+3. doc_type: 文档类型{doc_type_hint}（无法确定填 null）
 
 只输出一个 JSON 对象，不要输出任何其他内容：
 {{"subject": "...", "year": null, "doc_type": "..."}}"""

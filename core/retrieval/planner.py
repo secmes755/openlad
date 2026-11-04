@@ -43,15 +43,31 @@ def _routing_category(doc: dict) -> str:
 # noun and prune candidate documents whose own epoch is a different one.
 # ---------------------------------------------------------------------------
 
-# A year directly attached to a report noun names a document epoch.
-# Covers: 2025年年度报告 / 2025年度报告 / 2025年报 / 2025年半年报 /
-# 2025财年报告 / 2025年第四季度报告 etc. A bare "2024年" with no report
-# noun (e.g. "较2024年下降") must NOT match.
-_REPORT_EPOCH_RE = re.compile(
-    r"((?:19|20)\d{2})\s*(?:年|财年)?\s*"
-    r"(?:年度报告|年报(?!告)|半年度报告|半年报|中期报告|第[一二三四1234]季度报告"
-    r"|季度报告|季报|财报|报告(?!期))"
-)
+# Which report nouns bind a year to a document epoch is vocabulary, so the
+# pattern comes from the base pack (rules.yaml `report_epoch_pattern`) rather
+# than from core. Pack declares none -> epoch pruning is off.
+_REPORT_EPOCH_RE_CACHE: re.Pattern | None = None
+_REPORT_EPOCH_RE_LOADED = False
+
+
+def _report_epoch_re() -> re.Pattern | None:
+    global _REPORT_EPOCH_RE_CACHE, _REPORT_EPOCH_RE_LOADED
+    if not _REPORT_EPOCH_RE_LOADED:
+        _REPORT_EPOCH_RE_LOADED = True
+        try:
+            from ..plugins import get_plugin_registry
+            registry = get_plugin_registry()
+            pack = (registry.get_generic() if hasattr(registry, "get_generic")
+                    else None)
+            retrieval = getattr(pack, "retrieval", None) if pack else None
+            pattern = (retrieval.get_report_epoch_pattern()
+                       if hasattr(retrieval, "get_report_epoch_pattern") else "")
+            if pattern:
+                _REPORT_EPOCH_RE_CACHE = re.compile(pattern)
+        except Exception as e:
+            logger.warning(f"[PLANNER] pack report-epoch pattern unavailable "
+                           f"(epoch pruning disabled): {e}")
+    return _REPORT_EPOCH_RE_CACHE
 # Candidate year inside a title/filename.
 _DOC_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 # UUID prefix uploaded filenames carry ("<uuid>_原名.pdf"); hex digits can
@@ -65,7 +81,10 @@ def query_report_epochs(query: str) -> set[str]:
     """Epochs the query explicitly pins to a report noun (may be empty)."""
     if not query:
         return set()
-    return set(_REPORT_EPOCH_RE.findall(query))
+    pattern = _report_epoch_re()
+    if pattern is None:
+        return set()
+    return set(pattern.findall(query))
 
 
 def doc_report_epoch(doc: dict | None) -> str | None:
