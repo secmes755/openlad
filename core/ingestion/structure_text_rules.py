@@ -40,8 +40,8 @@ def numeric_title_is_heading(num_prefix: str, title: str) -> bool:
       e. title contains a sentence boundary (". The" / ". Data") — a body
          text fragment, not a heading.
 
-    CJK titles are always accepted — the Chinese appendix convention
-    "40、营业收入和营业成本" must keep working unchanged.
+    CJK titles are always accepted: the numbered-CJK-heading convention
+    ("<number>、<label>") must keep working unchanged.
     """
     if not title:
         return False

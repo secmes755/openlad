@@ -400,8 +400,8 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
     def get_entity_stopwords(self) -> list[str]:
         # Query-side entity stopwords from rules.yaml `entity_stopwords`
         # (default empty): vocabulary too generic in this industry's
-        # documents to identify a document (e.g. "营业收入" in annual
-        # reports). Merged into the planner's entity filter.
+        # documents to identify a document (a term every heading in this
+        # industry carries). Merged into the planner's entity filter.
         return self.config.rules.get("entity_stopwords", []) or []
 
     def get_report_epoch_pattern(self) -> str:

@@ -209,7 +209,7 @@ Available retrieval tools:
         time_range = coarse_result[1] if isinstance(coarse_result, tuple) and len(coarse_result) > 1 else {}
 
         # Report-epoch scoping: when the query pins a year to a report noun
-        # ("2025年年度报告"), drop same-entity documents of other epochs — a
+        # ("<year> <report noun>"), drop same-entity documents of other epochs — a
         # comparison period ("较2024年") lives in the named report's own
         # comparative columns, not in the other year's document.
         candidate_ids = scope_candidates_by_report_epoch(
@@ -332,7 +332,7 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
     # Domain-neutral Chinese question/meta words that are never document
     # entities in ANY field ("多少", "是什么", "情况"...). Filtering these
     # prevents generic query noise from force-merging unrelated documents
-    # into the doc_filter. Industry-specific generics ("营业收入" in annual
+    # into the doc_filter. Industry-specific generics (a term that recurs in
     # reports, "公司" in corporate filings) do NOT belong here — they are
     # injected by industry packs via RetrievalPlugin.get_entity_stopwords()
     # and merged in _all_entity_stopwords().

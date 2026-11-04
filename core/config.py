@@ -155,9 +155,9 @@ GRID_RECONSTRUCTION_ENABLED = int(os.environ.get("OPENLAD_GRID_RECONSTRUCTION_EN
 # store extracted text verbatim.
 CJK_SPACE_NORMALIZATION_ENABLED = int(os.environ.get("OPENLAD_CJK_SPACE_NORMALIZATION_ENABLED", "1"))
 # Scope retrieval candidates to the report epoch the user explicitly named
-# (e.g. "2025年年度报告" keeps only epoch-2025 documents). A bare comparison
-# period like "较2024年下降" does NOT name a document — comparative columns
-# live inside the named report. Documents with no parseable epoch are never
+# (e.g. "<year> annual report" keeps only documents of that epoch). A bare
+# comparison period does NOT name a document — comparative columns live inside
+# the named report. Documents with no parseable epoch are never
 # pruned, and pruning that would empty the candidate set is refused.
 # Disable with 0 to restore pre-scoping behaviour.
 REPORT_EPOCH_SCOPING_ENABLED = int(os.environ.get("OPENLAD_REPORT_EPOCH_SCOPING_ENABLED", "1"))

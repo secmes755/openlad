@@ -1388,11 +1388,10 @@ class DocumentIndexBuilder:
                     page_structure.update({"level": level, "path": path, "title": title})
                     break
 
-                # Chinese financial reports number appendix items as
-                # "40、营业收入和营业成本" (digits + ideographic comma), which
-                # the ASCII-space rule below never matched — the whole appendix
-                # collapsed into one coarse chapter and note-level sections
-                # (e.g. the revenue breakdown table) became unaddressable.
+                # CJK documents number items as "<number>、<label>" (digit
+                # followed by an ideographic comma), which the ASCII-space rule
+                # below never matched — the whole appendix collapsed into one
+                # coarse chapter and its subsections became unaddressable.
                 num_heading_match = re.match(r'^(\d+(?:\.\d+)*)[\s、．.]{1,3}(.+)', line)
                 if num_heading_match and len(num_heading_match.group(1)) <= 8:
                     path = num_heading_match.group(1)
