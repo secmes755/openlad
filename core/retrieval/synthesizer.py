@@ -202,17 +202,15 @@ Retrieved detailed content:
         # the resolved prompt pack supplies the policy. A rule written into this
         # string applies to every industry and cannot be overridden by a pack.
         prompt += "\n\nAnswer the user's question directly."
-        prompt += self._get_language_instruction(original_query or query)
+        prompt += "\n\n" + self._get_language_instruction(original_query or query)
         return prompt
-
 
     @staticmethod
     def _get_language_instruction(query: str) -> str:
-        """Detect query language and return matching output instruction."""
-        cn_chars = len(re.findall(r'[\u4e00-\u9fff]', query))
-        if cn_chars > 0:
-            return "你是中文助手，所有回答必须使用中文。"
-        return "You are an English assistant. All answers must be in English."
+        """Use one contract for every language instead of a CJK/Latin split."""
+        return ("Respond entirely in the same language as the user's question. "
+                "Never switch to another language, even when the retrieved content "
+                "or these instructions use a different language.")
 
     def _build_industry_addon(self, industry_pack, query: str = "") -> str:
         """Extract constraints from industry pack, append to end of legacy prompt"""
@@ -741,7 +739,9 @@ Question: {query}
 Figures already stated in the answer:
 {answer[:1200]}
 
-Compute the rate the question asks for from exactly those figures. Show the arithmetic on one line, then the answer. Keep any page or section references that appeared above. Do not introduce a figure that is not in the text above."""
+Compute the rate the question asks for from exactly those figures. Show the arithmetic on one line, then the answer. Keep any page or section references that appeared above. Do not introduce a figure that is not in the text above.
+
+{self._get_language_instruction(query)}"""
         try:
             retry = self.model_client.generate(
                 retry_prompt, temperature=0, max_tokens=1024)
