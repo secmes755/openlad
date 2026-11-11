@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Generic rules explicitly distinguish evidence silence from negative facts.** The
+  generic answer rules now distinguish "not described" from an explicit
+  "unsupported" statement, reject treating a feature list as exhaustive, and
+  prohibit supplementing the document with general product-class knowledge.
+  Explicit negative evidence and partial/indirect evidence retain their normal
+  meaning.
+
+- **Answer language no longer relies on a Chinese-versus-English split.** One
+  language-neutral instruction covers mixed and other-language queries, with an
+  explicit no-language-switch constraint. The derived-rate corrective turn uses
+  the same instruction, and the main prompt separates the two directives.
+
 - **An unreadable page image no longer aborts the whole document.** Image
   correction wrapped its work in ``try/except`` and fell back to
   ``Image.open``, but a file that could not be read at all failed the fallback
