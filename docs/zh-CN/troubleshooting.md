@@ -83,8 +83,9 @@ curl http://127.0.0.1:8081/v1/models   # embedding
 ```bash
 curl http://127.0.0.1:8080/health        # 进程是否响应？
 # 发一条短补全并计时——与你正常的 token/s 对比
+# 将 model 替换为当前入库/查询配置实际使用的 alias
 curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" \
-    -d '{"model":"qwen3.5-9b","messages":[{"role":"user","content":"ping"}],"max_tokens":16}'
+    -d '{"model":"qwen3.6-35b-a3b","messages":[{"role":"user","content":"ping"}],"max_tokens":16}'
 ```
 
 修复：重启 llama-server（任何 NVIDIA 驱动/库更新后，重启**所有** GPU

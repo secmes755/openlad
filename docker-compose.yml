@@ -29,7 +29,7 @@ services:
     environment:
       OPENLAD_LLM_URL: "${OPENLAD_LLM_URL:-http://127.0.0.1:8080/v1}"
       OPENLAD_EMB_URL: "${OPENLAD_EMB_URL:-http://127.0.0.1:8081/v1}"
-      OPENLAD_LLM_MODEL: "${OPENLAD_LLM_MODEL:-qwen3.5-9b}"
+      OPENLAD_LLM_MODEL: "${OPENLAD_LLM_MODEL:-qwen3.6-35b-a3b}"
       OPENLAD_EMB_MODEL: "${OPENLAD_EMB_MODEL:-qwen3-embedding-0.6b}"
       OPENLAD_DATA_DIR: /app/data
       OPENLAD_ADMIN_PASSWORD: "${OPENLAD_ADMIN_PASSWORD:?set OPENLAD_ADMIN_PASSWORD in .env}"

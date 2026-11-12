@@ -73,7 +73,7 @@ echo "== T2: run + health (JSON status == ok) =="
 docker run -d --name "$NAME" --network host \
   -e OPENLAD_LLM_URL="$LLM_URL" \
   -e OPENLAD_EMB_URL="$EMB_URL" \
-  -e OPENLAD_LLM_MODEL="${OPENLAD_LLM_MODEL:-qwen3.5-9b}" \
+  -e OPENLAD_LLM_MODEL="${OPENLAD_LLM_MODEL:-qwen3.6-35b-a3b}" \
   -e OPENLAD_EMB_MODEL="${OPENLAD_EMB_MODEL:-qwen3-embedding-0.6b}" \
   -e OPENLAD_DATA_DIR=/app/data \
   -e OPENLAD_ADMIN_PASSWORD="$ADMIN_PASS" \

@@ -26,7 +26,7 @@ Browser (LAN) ─── http://<host>:11296/ ───┐
               │  LLM Service  │    │  Embedding Service  │
               │  llama-server │    │  llama-server       │
               │  :8080        │    │  :8081              │
-              │  Qwen3.5-9B   │    │  Qwen3-Emb-0.6B     │
+              │ 9B / 35B-A3B │    │  Qwen3-Emb-0.6B     │
               └───────────────┘    └─────────────────────┘
 ```
 

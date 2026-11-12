@@ -21,7 +21,7 @@ python -m core.services.system_probe
 | GPU VRAM | Model | Weight quant | KV cache | LLM context | Expected capability |
 |---|---|---|---|---|---|
 | ≥ 24 GB | 9B | Q5_K_M | Q4 | 262144 | Full capability |
-| 16 GB **(recommended)** | 9B | Q5_K_M | Q4 | 131072 | Full capability |
+| 16 GB **(recommended)** | 9B | Q5_K_M | Q4 | 131072 | Default resident profile; optional staged 35B querying |
 | 12 GB | 9B | Q5_K_M | Q4 | 65536 | Usable; large documents context-limited |
 | 8 GB | 4B | Q4_K_M | Q4 | 32768 | Limited (see note below) |
 | CPU-only | 9B / 4B | Q4_K_M | Q8 | 16384 – 65536 | Functional but slow; evaluation only |
@@ -34,8 +34,9 @@ recommended values in your start script, e.g. `LLM_CTX_SIZE=131072` with
 > **Note on 8 GB VRAM**: theoretically usable with the 4B model, but the
 > small model's capability limits surface in practice — long-document
 > handling can be unstable and complex questions are understood less
-> reliably. **16 GB VRAM with the 9B model is strongly recommended** for a
-> complete and stable experience.
+> reliably. **16 GB VRAM with the 9B model is the default recommendation** for
+> a simple, stable, always-on setup. If query quality matters more and model
+> switching by work phase is acceptable, use the optional 35B query profile below.
 
 ---
 
@@ -58,6 +59,10 @@ Download the reference models (HuggingFace):
 
 ```bash
 mkdir -p ~/models
+# 35B query profile (switched with the 9B ingestion profile by work phase)
+huggingface-cli download Qwen/Qwen3.6-35B-A3B-GGUF qwen3.6-35b-a3b-q2_k_xl.gguf \
+    --local-dir ~/models
+# 9B resident / ingestion profile
 huggingface-cli download Qwen/Qwen3.5-9B-GGUF qwen3.5-9b-q5_k_m.gguf \
     --local-dir ~/models
 huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
@@ -112,6 +117,43 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 > A cached prompt state costs roughly 28 KB of host RAM per prompt token, so the
 > 8192 MiB default holds ~300k prompt tokens.
 
+### Optional: staged two-model profile for 16 GB GPUs
+
+The always-on 9B + Embedding + OCR combination remains the simplest deployment.
+If query comprehension and calculation quality matter more, and ingestion and
+querying can run in separate phases, use these mutually exclusive profiles on the
+same 16 GB GPU:
+
+| Phase | Models and services | Intended work |
+|---|---|---|
+| Query | 35B-A3B MoE (for example, a Qwen3.6-35B-A3B Q2_K_XL GGUF) + Embedding | Retrieval, calculation and answer synthesis |
+| Ingest | 9B (Qwen3.5 Q5_K_M) + Embedding + optional OCR | Parsing, classification, entities and indexing |
+
+Start the 35B query server with these conservative settings:
+
+| Flag | Value | Reason |
+|---|---|---|
+| `--n-gpu-layers` | `999` | Put all layers on the GPU; verify in the startup log that no layers fall back to CPU |
+| `--ctx-size` | `32768` | Leave VRAM for weights, KV cache and Embedding |
+| `--parallel` | `1` | One slot; OpenLAD queues concurrent queries instead of synthesizing them in parallel |
+| `--cache-type-k` / `--cache-type-v` | `q8_0` | Preserve KV precision within the limited memory budget |
+| `--cache-ram` | `2048` | Bound the host-side prompt cache |
+| `--reasoning` | `off` | Use non-thinking mode |
+
+**Resource limits:** the 35B query profile nearly fills a 16 GB GPU. Stop OCR and
+do not run OCR-dependent ingestion in this phase. Its 32K context is also shorter
+than the default 9B profile, so long chapters may be truncated. This trades
+long-context and concurrency headroom for a more capable query model. It is not an
+accuracy guarantee: validate against your own documents and inspect `degraded`
+ingest warnings.
+
+**Switching profiles:** drain active requests, stop the old LLM (and OCR when no
+longer needed), then start the other phase's llama-server configuration. Keep
+`OPENLAD_LLM_MODEL` or the admin model alias consistent with the actual server;
+restart the API when necessary to apply an environment override. Changing the
+model alias alone does not load or unload GGUF weights, and queries are
+unavailable during the switch.
+
 ### Using Ollama instead
 
 ```bash
@@ -133,7 +175,9 @@ Scanned or image-only pages are transcribed by a dedicated OCR endpoint —
 any OpenAI-compatible vision model advertised via `OPENLAD_OCR_URL` /
 `OPENLAD_OCR_MODEL`. A compact page-OCR VLM keeps the GPU footprint small;
 e.g. OvisOCR2 (Apache-2.0, 0.8B) scores well on document parsing while
-fitting alongside the LLM and embedding models on a 16 GB GPU:
+fitting alongside the LLM and embedding models in the default 9B resident
+profile on a 16 GB GPU. Stop OCR before entering the 35B query profile, and
+start it again after switching back to the 9B ingestion profile:
 
 ```bash
 # Download OvisOCR2 + its mmproj from a GGUF mirror, then:

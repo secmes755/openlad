@@ -76,8 +76,10 @@ cd /tmp/llama.cpp && cmake -B build && cmake --build build -j$(nproc)
 sudo cp build/bin/llama-server /usr/local/bin/
 
 mkdir -p ~/models
-# LLM：Qwen3.5-9B Q5_K_M（约 5.4 GB）
-huggingface-cli download Qwen/Qwen3.5-9B-GGUF qwen3.5-9b-q5_k_m.gguf \
+# 查询配置：Qwen3.6-35B-A3B Q2_K_XL（约 12 GB）。MoE 每次约激活 3B 参数，
+# 使用单查询槽位，可与 Embedding 一起放入 16 GB 显卡。
+# 处理扫描件时，按部署指南切换到 9B + OCR 入库配置。
+huggingface-cli download Qwen/Qwen3.6-35B-A3B-GGUF qwen3.6-35b-a3b-q2_k_xl.gguf \
     --local-dir ~/models
 # Embedding：Qwen3-Embedding-0.6B Q8_0（约 0.6 GB）
 huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
@@ -89,11 +91,11 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 ```bash
 # LLM（端口 8080）
 llama-server \
-    --model ~/models/qwen3.5-9b-q5_k_m.gguf \
-    --host 127.0.0.1 --port 8080 --alias qwen3.5-9b \
-    --n-gpu-layers 999 --ctx-size 262144 --parallel 2 \
-    --batch-size 2048 --reasoning off \
-    --cache-type-k q4_0 --cache-type-v q4_0 --cache-ram 2048 -n -1
+    --model ~/models/qwen3.6-35b-a3b-q2_k_xl.gguf \
+    --host 127.0.0.1 --port 8080 --alias qwen3.6-35b-a3b \
+    --n-gpu-layers 999 --ctx-size 32768 --parallel 1 \
+    --cache-type-k q8_0 --cache-type-v q8_0 --reasoning off \
+    --cache-ram 2048 --fit off --jinja
 
 # Embedding（端口 8081）
 llama-server \
@@ -103,8 +105,9 @@ llama-server \
     --embeddings --pooling mean --batch-size 2048 --cache-ram 0
 ```
 
-> `--reasoning off` **至关重要** —— Qwen3.5 的思考模式会破坏结构化输出。
-> 各参数含义与不同显存下的调法见[部署指南](docs/zh-CN/deployment.md#推荐-llama-server-参数)。
+> 结构化规划应保持非思考模式。此快速开始进入 35B 查询配置：单槽、32K
+> 上下文、不并行运行 OCR。更简单的 9B 常驻配置，以及分阶段的 9B + OCR
+> 入库配置见[部署指南](docs/zh-CN/deployment.md#16-gb-分阶段双模型配置可选)。
 
 ### 4. 启动 OpenLAD
 
@@ -166,7 +169,7 @@ docker compose up -d --build
 
 | 指南 | 内容 |
 |---|---|
-| [部署与硬件](docs/zh-CN/deployment.md)（[English](docs/deployment.md)） | 硬件配置查表、模型后端（llama.cpp / Ollama / OCR 端点）、推荐 llama-server 参数、Docker 细节 |
+| [部署与硬件](docs/zh-CN/deployment.md)（[English](docs/deployment.md)） | 硬件查表、模型后端、9B 入库 / 35B 查询分阶段配置、llama-server 参数、Docker |
 | [配置参考](docs/zh-CN/configuration.md)（[English](docs/configuration.md)） | 全部 `OPENLAD_*` 环境变量、Embedding batch-size 配对规则、并发策略 |
 | [API 快速上手](docs/zh-CN/api-quickstart.md)（[English](docs/api-quickstart.md)） | 用 curl 完成 登录 → 上传 → 提问；多文档对比 |
 | [架构](docs/zh-CN/architecture.md)（[English](docs/architecture.md)） | 系统结构图、检索流水线、行业包分层 |
