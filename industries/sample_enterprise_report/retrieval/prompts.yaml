@@ -1,0 +1,5 @@
+# Enterprise-report increments layered over the generic base prompt.
+derived_rate_patterns:
+  - 毛利率
+  - 净利率
+  - 收益率

@@ -5,7 +5,11 @@ Does not hardcode classification taxonomy; dynamically loaded from industry plug
 import logging
 
 from ..models import get_model_client
-from ..plugins import get_plugin_registry
+from ..plugins import (
+    get_generic_ingestion_prompts,
+    get_generic_ingestion_rules,
+    get_plugin_registry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +18,10 @@ logger = logging.getLogger(__name__)
 # these fields (`category_level1 or industry_package_id or "general"` in the
 # retrieval planner, `resolve_plugin_for_categories` for the extraction pack),
 # so a placeholder string would be treated as a real category and would shadow
-# the industry the caller declared on upload.
-UNKNOWN_LABELS = {
-    "other", "unknown", "unclassified", "uncategorized", "none", "null", "n/a", "na",
-    "其他", "其它", "未知", "未分类", "无",
-}
+# the industry the caller declared on upload. The actual word list is pack data.
+def _unknown_labels() -> set[str]:
+    labels = get_generic_ingestion_rules().get("unknown_labels", [])
+    return {str(label).lower() for label in labels if str(label).strip()}
 
 
 class DocumentClassifier:
@@ -121,66 +124,18 @@ class DocumentClassifier:
 
         # Generic classifier (auto mode or when no industry plugin specified)
         taxonomy_text = self._build_taxonomy_prompt()
-        system_prompt = (
-            "你是一个文档分类助手。请根据文档信息提取分类，输出 ONLY JSON。"
-            "三级分类尽量包含产品型号或公司名。"
-            "若文档不属于任何候选类别，三个层级都返回空字符串，"
-            "并把 confidence 设为 0.0-0.4，不要硬套最接近的类别。"
-            "格式: {\"category_level1\": \"...\", \"category_level2\": \"...\", \"category_level3\": \"...\", \"confidence\": 0.0}"
-        )
-        prompt = f"""{taxonomy_text}
-
-根据以下文档信息确定分类：
-
-文档信息:
-- 文件名: {filename}
-- 标题: {title}
-- 内容样本:
-{content_sample[:3000]}
-
-要求:
-1. 一级分类: 若适用，从上述分类中选择一个；不适用则返回空字符串
-2. 二级分类: 若适用，从选定一级下的子分类中选择一个；不适用则返回空字符串
-3. 三级分类: 尽量包含产品型号或公司名称（从文件名和文本中提取实际出现的名称）
-4. 置信度: 0.0-1.0（无法归类时给 0.0-0.4）
-
-输出 ONLY JSON:
-{{"category_level1": "...", "category_level2": "...", "category_level3": "...", "confidence": 0.0}}
-"""
-
-        try:
-            result = self.model_client.generate_json(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=1024)
-            if result and isinstance(result, dict):
-                l1 = result.get("category_level1", "")
-                l2 = result.get("category_level2", "")
-                l3 = result.get("category_level3", "")
-                return self._normalize_classification(
-                    l1, l2, l3, result.get("confidence", 0.5))
-        except Exception as e:
-            logger.error(f"Document classification failed: {e}")
-
-        # Step 2: fallback to generic classification (if applicable)
-        taxonomy_text = self._build_taxonomy_prompt()
-
-        prompt = f"""{taxonomy_text}
-
-根据以下文档信息确定分类：
-
-文档信息:
-- 文件名: {filename}
-- 标题: {title}
-- 内容样本:
-{content_sample[:3000]}
-
-要求:
-1. 一级分类: 若适用，从上述分类中选择一个；不适用则返回空字符串
-2. 二级分类: 若适用，从选定一级下的子分类中选择一个；不适用则返回空字符串
-3. 三级分类: 尽量包含产品型号或公司名称（从文件名和文本中提取实际出现的名称）
-4. 置信度: 0.0-1.0（无法归类时给 0.0-0.4）
-
-输出 ONLY JSON:
-{{"category_level1": "...", "category_level2": "...", "category_level3": "...", "confidence": 0.0}}
-"""
+        prompts = get_generic_ingestion_prompts()
+        system_prompt = prompts.get("classify_system", "")
+        classify_user = prompts.get("classify_user", "")
+        if classify_user:
+            prompt = f"{taxonomy_text}\n\n" + classify_user.format(
+                filename=filename, title=title,
+                content_sample=content_sample[:3000])
+        else:
+            prompt = f"{taxonomy_text}\n\nFilename: {filename}\nTitle: {title}\n" \
+                     f"Content sample:\n{content_sample[:3000]}\n\n" \
+                     'Return JSON: {"category_level1": "...", "category_level2": "...", ' \
+                     '"category_level3": "...", "confidence": 0.0}'
 
         try:
             result = self.model_client.generate_json(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=1024)
@@ -227,6 +182,6 @@ class DocumentClassifier:
     def _clean_label(value) -> str | None:
         """Return a usable label, or None when the model said 'not classifiable'."""
         text = str(value).strip() if value is not None else ""
-        if not text or text.lower() in UNKNOWN_LABELS:
+        if not text or text.lower() in _unknown_labels():
             return None
         return text

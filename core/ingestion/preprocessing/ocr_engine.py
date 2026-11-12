@@ -306,12 +306,15 @@ class TextQualityChecker:
         self.min_dictionary_hit_rate = self.config.get("min_dictionary_hit_rate", 0.3)
         self.enable_ocr_fallback = self.config.get("enable_ocr_fallback", True)
 
-        # Common Chinese word list (generic, not industry-specific)
-        self._cn_common_words = set([
-            "的", "是", "在", "和", "了", "与", "有", "被", "为", "以",
-            "及", "对", "或", "将", "从", "到", "也", "而", "其", "之",
-            "中", "上", "下", "内", "外", "时", "后", "前", "间",
-        ])
+        # Common function words come from the pack; core carries no language
+        # dictionary. Missing rules simply disable this signal.
+        from ...plugins import get_generic_ingestion_rules
+        word_lists = get_generic_ingestion_rules().get("quality_common_words", {}) or {}
+        self._common_words = {
+            str(word)
+            for words in word_lists.values() if isinstance(words, list)
+            for word in words if str(word).strip()
+        }
 
 
     def check(self, text: str) -> dict[str, Any]:
@@ -503,7 +506,7 @@ class TextQualityChecker:
                 return min(len(en_words) / 10, 1.0)
             return 0.0
 
-        hits = sum(1 for w in words if w in self._cn_common_words)
+        hits = sum(1 for w in words if w in self._common_words)
 
         return min(hits / len(words), 1.0) if words else 0.0
 

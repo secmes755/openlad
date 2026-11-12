@@ -542,7 +542,7 @@ Output as JSON:
 
         pages_text = "\n\n".join(content_parts)
 
-        prompt = f"""Based on the following document content, extract technical parameters and specification information relevant to the question.
+        prompt = f"""Based on the following document content, extract every statement relevant to the question.
 
 User question: {query}
 
@@ -551,17 +551,16 @@ Document: {doc_title}
 Document content:
 {pages_text}
 
-Please extract all technical parameters, performance metrics, supported standards/protocols, etc. from this document that are relevant to the question.
-If the document truly does not contain relevant information, please reply only with "No relevant information found".
-You are consulting the documentation for {doc_title}. Please only extract information from this document; the query may involve multiple entities, but you only need to cover the portions covered by this document.
-**Do not introduce any constraint the user did not state (time window, scope, standard, comparator): if the question has no time limit, extract from the entire document content without narrowing it yourself. Reply "No relevant information found" only when this document genuinely lacks the queried information — content you excluded because of a constraint you invented yourself does not count as "not found".**
-请用中文回答。"""
+Preserve exact values, units, conditions, scope and relationships. Use only this document; when other subjects appear in the question, cover only the portions supported by this document.
+If the document genuinely lacks relevant information, reply only with "No relevant information found".
+Do not introduce constraints absent from the question. Content excluded by an invented constraint is not evidence that the document lacks the answer.
+Respond entirely in the same language as the user's question. Never switch language because the document or these instructions use a different language."""
 
         answer = self.model_client.generate(prompt, max_tokens=2000, temperature=0)
 
         # Determine: as long as the answer doesn't explicitly say "not found" and has sufficient length, consider it as having an answer
         min_len = settings.AGENTIC_CONFIG.get('answer_min_length', 100)
-        has_answer = "No relevant information found" not in answer and "未找到相关信息" not in answer and len(answer) > min_len
+        has_answer = "No relevant information found" not in answer and len(answer) > min_len
 
         from ..ingestion.page_images import document_supports_page_images
         return {
@@ -703,6 +702,8 @@ Output as JSON:
 
         # Step 3: Merge results + original question → final answer
         if not all_results:
+            from ..plugins import render_pack_message
+            no_result = render_pack_message('no_result', query)
             return {
                 "query": query,
                 "context": "",
@@ -710,7 +711,7 @@ Output as JSON:
                 "total_results": 0,
                 "total_chars": 0,
                 "strategy": "agentic_retrieve",
-                "answer": "根据当前知识库中的文档，未找到相关信息。"
+                "answer": no_result
             }
 
         # Build merge prompt
@@ -727,17 +728,15 @@ Results from each document:
 {individual_answers}
 
 Answering rules:
-1. Synthesize the above information to provide a complete and accurate answer
-2. For comparison questions, present parameter comparisons using a table
-3. Cite information sources (document names)
-4. For each product, only answer based on information actually provided in that product's documentation. If a product's documentation mentions a parameter (e.g., H.264 encoding frame rate), you may quote it faithfully; if the documentation makes no mention of a parameter or feature at all (e.g., the doc only mentions H.264 and never H.265), do NOT infer that the product also supports it just because another product does
-5. **Comparison table iron rule: If a product truly has no data or explicitly does not support a given dimension, that cell MUST be marked as "Not mentioned" or "Not supported". Never fabricate data from other products to fill the table for completeness**
-6. **Key judgment: If the retrieved document content truly lacks the specific information the user is looking for, objectively state "Based on the document content in the current knowledge base, no relevant information was found." This is a data completeness issue in the knowledge base, not a limitation of your capability. Never fabricate, guess, or mix in your own knowledge.**
-**Note: Cross-document synthesis is NOT fabrication — putting parameters documented separately in different documents into a single comparison table is expected behavior, as long as the data comes from the actual content of each document.**
-7. Do not simply declare "insufficient information" just because a document doesn't directly list a certain parameter — if the document contains indirectly relevant parameters (e.g., image processing capability, maximum resolution), these can serve as supplementary references, but you must clearly state in the answer that they are indirect inferences
-8. **Never introduce a constraint the user did not state (time window, scope, standard, comparator). If the question has no time limit, synthesize from all per-document results without narrowing them yourself. "No relevant information found" applies only when all retrieved content genuinely lacks the queried information — results excluded because of a constraint you invented yourself do not count as "not found".**
-
-请用中文回答。"""
+1. Synthesize a complete, accurate answer and cite source document names.
+2. For comparison questions, use a Markdown table.
+3. Keep every value attached to its actual subject and document. Never fill a gap with another subject's data.
+4. When a subject genuinely lacks a dimension, state that it is not mentioned; do not fabricate a value or infer a capability from another subject.
+5. If all retrieved content genuinely lacks the answer, state that no relevant information was found. Do not guess or use external knowledge.
+6. Cross-document synthesis is valid when every value remains traceable to its own source.
+7. Label indirect evidence as indirect; do not turn silence into an explicit negative claim.
+8. Never introduce constraints absent from the user's question.
+Respond entirely in the same language as the user's question. Never switch language because the document or these instructions use a different language."""
 
         answer = self.model_client.generate(summary_prompt, max_tokens=settings.AGENTIC_CONFIG.get('summary_max_tokens', 4000), temperature=0)
 

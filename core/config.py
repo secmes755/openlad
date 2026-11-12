@@ -397,25 +397,10 @@ CONTEXT_CONFIG = {
         "OPENLAD_SPEC_FACTS_APPENDIX", "1") == "1",
     "spec_facts_evidence_max": 5,             # max excerpt lines appended
     "rewrite_collapse_guard": True,         # planner rewrite dropping a query entity -> frame synthesis with the original query
-    # Chinese query-term -> English keyword expansion for spec-fact lookup.
-    # This is a QUERY-UNDERSTANDING layer (synonym expansion), extensible via
-    # config; it never hardcodes any answer.
-    # LAYERING RULE: core keeps ONLY domain-neutral terms (quantity/version
-    # measure words). Industry vocabulary (gpu/uart/h.264/算力/主频/…) lives in
-    # industry packs (retrieval/rules.yaml -> spec_query_terms) and is merged in
-    # by the engine at query time via RetrievalPlugin.get_spec_query_terms().
-    "spec_query_terms": {
-        "数量": ["count", "number"],
-        "多少个": ["count", "number"],
-        "版本": ["version", "protocol", "support"],
-    },
-    # ── Page type detection keywords (for layout analyzer) ──
-    # Generic document structure keywords used to detect cover/TOC pages
-    # These are cross-language and not specific to any industry
-    "page_type_detection": {
-        "cover_indicators": ["cover", "目录"],
-        "toc_indicators": ["contents", "目录", "table of contents", "章节"],
-    },
+    # Query-term vocabulary is pack data. Core merges the active pack's
+    # spec_query_terms during assertion lookup; an empty core table is required
+    # so language or domain terminology cannot leak into unrelated tenants.
+    "spec_query_terms": {},
 }
 
 # Planner configuration

@@ -456,7 +456,9 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         total_results = retrieval_result.get("total_results", 0)
         total_chars = retrieval_result.get("total_chars", 0)
         if total_results == 0 or total_chars < 50:
-            answer = "No relevant information found in the knowledge base."
+            from ..plugins import render_pack_message
+            answer = render_pack_message('no_result', query_text) or (
+                "No relevant information found in the knowledge base.")
             elapsed_ms = int((time.time() - start_time) * 1000)
             # NOTE: query audit logging happens in the API route layer
             # (routes/query.py), which always runs after engine.query returns.
