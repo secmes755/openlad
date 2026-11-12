@@ -69,6 +69,10 @@ def restore_merged_cells(frame, regions: list[MergedRegion]) -> int:
     the declared rectangle. Returns the number of cells actually filled.
     """
     filled = 0
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise RuntimeError('pandas is required for merged-cell restoration') from exc
     for row_low, col_low, row_high, col_high, source_anchor in regions:
         if min(row_low, col_low, row_high, col_high) < 0:
             raise ValueError('Merged region bounds must be non-negative')
@@ -77,7 +81,7 @@ def restore_merged_cells(frame, regions: list[MergedRegion]) -> int:
         # pandas may drop trailing all-empty rows/columns before merge metadata
         # is applied. Recreate only the declared rectangle's missing axes.
         for col in range(len(frame.columns), col_high + 1):
-            frame[col] = ''
+            frame[col] = pd.Series('', index=frame.index, dtype=object)
         for row in range(len(frame.index), row_high + 1):
             frame.loc[row, :] = ''
         if row_low >= len(frame.index) or col_low >= len(frame.columns):
