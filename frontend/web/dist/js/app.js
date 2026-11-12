@@ -7,6 +7,8 @@ let isLoading = false;
 let currentIndustry = 'auto';
 let availableIndustries = [];
 let sessionMessages = [];
+let sessionEpoch = 0;
+let sessionLoadPending = false;
 
 async function checkAuth() {
     const tenantId = localStorage.getItem('tenant_id');
@@ -293,8 +295,9 @@ function renderSessionList(sessions) {
 }
 
 function createNewSession() {
-    // Lazy creation: only reset local state here; the session row is created
-    // by the auto-create branch in sendMessage() on the first message
+    // Invalidate any session load or query that is still in flight.
+    sessionEpoch++;
+    sessionLoadPending = false;
     currentSessionId = null;
     showWelcome();
     window.history.replaceState({}, '', '/');
@@ -303,20 +306,32 @@ function createNewSession() {
 
 async function switchSession(sessionId) {
     if (sessionId === currentSessionId) return;
+    const loadVersion = ++sessionEpoch;
     currentSessionId = sessionId;
+    sessionLoadPending = true;
+    showWelcome();
     window.history.replaceState({}, '', `?session=${sessionId}`);
-    await loadSessions();
-    await loadMessages(sessionId);
+    try {
+        await loadSessions();
+        if (loadVersion !== sessionEpoch) return;
+        await loadMessages(sessionId, loadVersion);
+    } finally {
+        if (loadVersion === sessionEpoch) sessionLoadPending = false;
+    }
 }
 
-async function loadMessages(sessionId) {
+async function loadMessages(sessionId, loadVersion) {
+    const isCurrent = () => loadVersion === sessionEpoch && sessionId === currentSessionId;
+    if (!isCurrent()) return;
     try {
         const res = await apiFetch(`/chat/sessions/${sessionId}/messages`);
+        if (!isCurrent()) return;
         if (!res.ok) {
             showWelcome();
             return;
         }
         const data = await res.json();
+        if (!isCurrent()) return;
         const msgs = data.messages || [];
         sessionMessages = msgs;
 
@@ -338,9 +353,10 @@ async function loadMessages(sessionId) {
             }
             appendMessageToDOM(msg.role, msg.content, sources, null, null, msg.created_at);
         });
-        
+
         scrollToBottom();
     } catch (e) {
+        if (!isCurrent()) return;
         console.error('Load messages failed:', e);
         showWelcome();
     }
@@ -350,7 +366,9 @@ async function deleteSession(sessionId) {
     if (!await uiConfirm(__('chat.confirmDelete'), { danger: true })) return;
     try {
         await apiFetch(`/chat/sessions/${sessionId}`, { method: 'DELETE' });
-        if (currentSessionId === sessionId) {
+        if (sessionId === currentSessionId) {
+            sessionEpoch++;
+            sessionLoadPending = false;
             currentSessionId = null;
             showWelcome();
             window.history.replaceState({}, '', '/');
@@ -375,15 +393,12 @@ function autoResize(textarea) {
     textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
 }
 
-function sendExample(text) {
-    document.getElementById('messageInput').value = text;
-    sendMessage();
-}
-
 async function sendMessage() {
     const input = document.getElementById('messageInput');
     const text = input.value.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || sessionLoadPending) return;
+    const sendEpoch = sessionEpoch;
+    let requestSessionId = currentSessionId;
 
     // Hide welcome page, show message area
     document.getElementById('welcomeScreen').style.display = 'none';
@@ -402,28 +417,33 @@ async function sendMessage() {
 
     try {
         // If no current session, create one first
-        if (!currentSessionId) {
+        if (!requestSessionId) {
             const sessionRes = await apiFetch('/chat/sessions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title: __('app.newChat'), industry: currentIndustry })
             });
             const sessionData = await sessionRes.json();
+            if (sendEpoch !== sessionEpoch) return;
             if (sessionData.id) {
-                currentSessionId = sessionData.id;
-                window.history.replaceState({}, '', `?session=${sessionData.id}`);
+                requestSessionId = sessionData.id;
+                currentSessionId = requestSessionId;
+                window.history.replaceState({}, '', `?session=${requestSessionId}`);
                 await loadSessions();
+                if (sendEpoch !== sessionEpoch) return;
             }
         }
 
         const chatHistoryForRequest = sessionMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
         const payload = {
             query: text,
-            session_id: currentSessionId,
+            session_id: requestSessionId,
             industry: currentIndustry,
             chat_history: chatHistoryForRequest
         };
-        const data = await runQuery(payload, loadingId);
+        const isCurrentQuery = () => sendEpoch === sessionEpoch;
+        const data = await runQuery(payload, loadingId, isCurrentQuery);
+        if (!isCurrentQuery()) return;
 
         // Remove loading state
         removeLoadingMessage(loadingId);
@@ -438,6 +458,7 @@ async function sendMessage() {
         sessionMessages.push({ role: 'assistant', content: data.answer });
 
     } catch (e) {
+        if (sendEpoch !== sessionEpoch) return;
         removeLoadingMessage(loadingId);
         appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${e.message}`);
     } finally {
@@ -452,17 +473,18 @@ async function sendMessage() {
 // pipeline advancing (planning → retrieving → generating). Falls back to
 // the plain /query endpoint when the stream is unavailable (old backend,
 // proxy buffering), so functionality never depends on streaming working.
-async function runQuery(payload, loadingId) {
+async function runQuery(payload, loadingId, isCurrent) {
     try {
-        return await runQueryStream(payload, loadingId);
+        return await runQueryStream(payload, loadingId, isCurrent);
     } catch (e) {
+        if (!isCurrent()) return null;
         if (e && e.handled) return null;  // error already rendered in the chat
         console.warn('[query] stream failed, falling back to /query:', e);
-        return await runQueryLegacy(payload);
+        return await runQueryLegacy(payload, isCurrent);
     }
 }
 
-async function runQueryStream(payload, loadingId) {
+async function runQueryStream(payload, loadingId, isCurrent) {
     const res = await fetch(`${API_BASE}/query/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -477,7 +499,7 @@ async function runQueryStream(payload, loadingId) {
     if (!res.ok) {
         if (res.status === 404) throw new Error('stream endpoint missing');  // legacy fallback
         const detail = await readErrorDetail(res);
-        appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
+        if (isCurrent()) appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
         const err = new Error(detail);
         err.handled = true;
         throw err;
@@ -501,7 +523,7 @@ async function runQueryStream(payload, loadingId) {
             if (ev.stage === 'result') {
                 result = ev.result;
             } else if (ev.stage === 'error') {
-                appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${ev.detail || ''}`);
+                if (isCurrent()) appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${ev.detail || ''}`);
                 const err = new Error(ev.detail || 'stream error');
                 err.handled = true;
                 throw err;
@@ -514,7 +536,7 @@ async function runQueryStream(payload, loadingId) {
     return result;
 }
 
-async function runQueryLegacy(payload) {
+async function runQueryLegacy(payload, isCurrent) {
     try {
         const res = await apiFetch('/query', {
             method: 'POST',
@@ -523,13 +545,13 @@ async function runQueryLegacy(payload) {
         });
         if (!res.ok) {
             const detail = await readErrorDetail(res);
-            appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
+            if (isCurrent()) appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${detail}`);
             return null;
         }
         return await res.json();
     } catch (e) {
         if (e && e.handled) return null;  // 401: login modal already shown
-        appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${e.message}`);
+        if (isCurrent()) appendMessageToDOM('assistant', `❌ ${__('chat.error')}: ${e.message}`);
         return null;
     }
 }
