@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Automatic query expansion is scoped to the detected pack.** Decomposed
+  sub-queries no longer inherit vocabulary from every installed pack; an
+  unmatched or invalid pack produces no expansion.
+
+- **Single-document chapter recall preserves direct page evidence.** Compact
+  full-text excerpts are merged ahead of broad chapter content, deduplicated by
+  document/page and prioritized before the final context budget is applied.
+
 - **Generic rules explicitly distinguish evidence silence from negative facts.** The
   generic answer rules now distinguish "not described" from an explicit
   "unsupported" statement, reject treating a feature list as exhaustive, and

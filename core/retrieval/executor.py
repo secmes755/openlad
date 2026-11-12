@@ -45,34 +45,28 @@ class RetrievalExecutor:
             self.max_chars = int(env_max)
             logger.info(f"[PHASE-2] Environment variable overrides context quota: {self.max_chars}")
 
-    def _get_query_expansion_keywords(self, industry_hint: str = None) -> list[str]:
-        """Load query expansion keywords from industry packs.
+    def _get_query_expansion_keywords(self, industry_hint: str = None,
+                                      query: str = "") -> list[str]:
+        """Load expansion vocabulary from the selected or detected pack.
 
-        If industry_hint is not specified, iterate all industry packs to collect.
-
-        industry_hint is REQUEST-scoped and therefore passed in explicitly:
-        this executor is cached per tenant (QueryEngine._get_components) and
-        shared by concurrent requests, so request parameters must never be
-        stored on self.
+        ``auto`` means detect the pack for this query, not union every installed
+        pack. A global union contaminates unrelated queries and becomes worse as
+        more packs are installed. No detection means no expansion.
         """
         try:
             from ..plugins import get_plugin_registry
             registry = get_plugin_registry()
-            # If industry hint is specified, prioritize loading the corresponding industry pack
+            plugin = None
             if industry_hint and industry_hint != "auto":
                 plugin = registry.get_plugin(industry_hint)
                 if not plugin:
                     plugin = registry.get_plugin_by_category(industry_hint)
-                if plugin and hasattr(plugin.retrieval, 'get_query_expansion_keywords'):
-                    return plugin.retrieval.get_query_expansion_keywords()
-            # Otherwise iterate all industry packs, merge expansion keywords
-            all_kws = []
-            for pack_id in registry.list_plugins() if hasattr(registry, 'list_plugins') else []:
-                plugin = registry.get_plugin(pack_id)
-                if plugin and hasattr(plugin.retrieval, 'get_query_expansion_keywords'):
-                    kws = plugin.retrieval.get_query_expansion_keywords()
-                    all_kws.extend(kws)
-            return list(dict.fromkeys(all_kws))  # Deduplicate while preserving order
+            elif query:
+                plugin = registry.detect_plugin_for_text(query)
+            retrieval = getattr(plugin, "retrieval", None)
+            if retrieval and hasattr(retrieval, "get_query_expansion_keywords"):
+                return retrieval.get_query_expansion_keywords()
+            return []
         except Exception as e:
             # Returning [] here silently strips the pack's query vocabulary, which
             # only shows up as worse recall with nothing to point at.
@@ -228,7 +222,9 @@ class RetrievalExecutor:
                 # FIX: If industry pack has query expansion keywords configured, enhance overly simple sub-queries
                 original_sub_q = sub_q
                 if len(sub_q.split()) <= 3:
-                    expansion_kws = self._get_query_expansion_keywords(industry_hint)
+                    expansion_kws = self._get_query_expansion_keywords(
+                        industry_hint, query=original_sub_q
+                    )
                     if expansion_kws:
                         expanded = f"{sub_q} {' '.join(expansion_kws)}"
                         logger.info(f"[PHASE-2] Step {i} sub-query {sub_i} expanded: '{original_sub_q}' -> '{expanded}'")
@@ -686,6 +682,21 @@ class RetrievalExecutor:
                 f"docs={len(docs_touched)}")
         return results
 
+    @staticmethod
+    def _merge_chapter_with_fts(chapter_results: list[SearchResult],
+                                fts_results: list[SearchResult],
+                                direct_score: float = 0.0) -> list[SearchResult]:
+        """Put direct page evidence before broad chapter context, without duplicates."""
+        remaining = {(r.doc_id, r.page_num): r for r in chapter_results}
+        merged = []
+        for fts_result in fts_results:
+            key = (fts_result.doc_id, fts_result.page_num)
+            evidence = remaining.pop(key, fts_result)
+            evidence.score = max(evidence.score, direct_score)
+            merged.append(evidence)
+        merged.extend(remaining.values())
+        return merged
+
     def _single_retrieve(self, query: str, doc_filter: list[str],
                          max_context_quota: int = None, original_query: str = None,
                          industry_hint: str = None) -> list[SearchResult]:
@@ -706,7 +717,23 @@ class RetrievalExecutor:
             chapter_results = self._chapter_retrieve(query, doc_id_filter[0], chapter_quota)
             if chapter_results:
                 logger.info(f"[SINGLE-RETRIEVE] Structure index coarse recall: query '{query}' -> recalled {len(chapter_results)} pages, total chars {sum(len(r.content) for r in chapter_results)}")
-                return self._apply_rare_token_rescue(chapter_results, query, {doc_id_filter[0]})
+                # Chapter delivery supplies context but its budget can otherwise
+                # remove the exact page. Keep the best direct page hits in front.
+                direct_results = self._fallback_to_fts(query, doc_id_filter[0])
+                direct_tokens = self.retriever._tokenize_query(query.lower())
+                for direct in direct_results:
+                    excerpt, _ = self._build_exact_match_excerpt(
+                        direct.content, direct_tokens,
+                        cfg["exact_match_window_chars"],
+                        cfg["exact_match_max_windows"],
+                    )
+                    if excerpt:
+                        direct.content = excerpt
+                combined = self._merge_chapter_with_fts(
+                    chapter_results, direct_results,
+                    direct_score=cfg["chapter_direct_evidence_score"],
+                )
+                return self._apply_rare_token_rescue(combined, query, {doc_id_filter[0]})
 
         # FIX: Clean query, strip intent words to make embedding/FTS retrieval more precise
         search_query = self._clean_query_for_retrieval(query)

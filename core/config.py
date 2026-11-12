@@ -324,6 +324,10 @@ CONTEXT_CONFIG = {
     # Score assigned to pages appended/boosted by exact rare-token matches. Keeps
     # them at the top content-cap tier and ahead of merger budget pressure.
     "rare_token_rescue_score": 45.0,
+    # Direct FTS page hits accompanying chapter recall outrank ordinary chapter
+    # pages (10.0), but remain below rare-identifier rescue. This prevents the
+    # broad chapter context from pushing the exact evidence out of the merger.
+    "chapter_direct_evidence_score": 20.0,
     # ── Hybrid vector recall v2 (conservative) ──
     # Historical constraint: early experiments showed raw vector recall was LESS
     # accurate than FTS for exact-lookup, so vector was demoted to a fallback-only
