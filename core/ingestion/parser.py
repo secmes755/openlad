@@ -1497,17 +1497,24 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                         sheet_name, header=None, dtype=object, keep_default_na=False,
                     )
                     try:
-                        from .spreadsheet_merged import (
-                            read_merged_regions,
-                            restore_merged_cells,
-                        )
-                        restore_merged_cells(
-                            frame, read_merged_regions(path, sheet_name),
-                        )
+                        from .spreadsheet_merged import read_merged_regions
+                        regions = read_merged_regions(path, sheet_name)
                     except Exception as exc:
                         doc.metadata.setdefault('parse_warnings', []).append(
                             f"Sheet {sheet_name!r}: merged-cell metadata unavailable: {exc}"
                         )
+                    else:
+                        try:
+                            from .spreadsheet_merged import restore_merged_cells
+                            restored = frame.copy(deep=True)
+                            restore_merged_cells(restored, regions)
+                        except Exception as exc:
+                            doc.metadata.setdefault('parse_warnings', []).append(
+                                f"Sheet {sheet_name!r}: merged-cell restore failed; "
+                                f"original values preserved: {exc}"
+                            )
+                        else:
+                            frame = restored
                     rows = list(frame.itertuples(index=False, name=None))
                     sheet_text = self._rows_to_page_text(
                         rows, f"=== Sheet: {sheet_name} ===",

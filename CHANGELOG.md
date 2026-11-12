@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.xls` merge rectangles restore their anchor value only inside the rectangle,
   including rows or columns dropped as empty by pandas. Existing values and
   cells outside the merge remain unchanged; metadata failures preserve the
-  parsed sheet with an explicit warning.
+  parsed sheet with an explicit warning. Restoration is atomic, and a dedicated
+  CI job runs the real XLSX/XLS tests instead of silently skipping them.
 
 - **Delimited documents retain their actual content.** Excel workbooks no longer
   use the first row as synthetic column names or turn literal `N/A` values into

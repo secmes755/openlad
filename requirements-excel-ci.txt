@@ -1,0 +1,6 @@
+# Focused real-spreadsheet tests; keeps the default unit job lightweight.
+-r requirements-ci.txt
+pandas
+openpyxl
+xlrd>=2.0.1
+xlwt>=1.3.0

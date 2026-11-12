@@ -37,3 +37,15 @@ jobs:
         run: pip install -r requirements-ci.txt
       - name: Run unit checks
         run: pytest -q
+
+  excel:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install spreadsheet test dependencies
+        run: pip install -r requirements-excel-ci.txt
+      - name: Run real XLSX/XLS parser checks
+        run: pytest -q tests/test_excel_merged_cells.py tests/test_delimited_ingestion.py tests/test_parse_failure_visibility.py

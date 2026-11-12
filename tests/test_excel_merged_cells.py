@@ -72,3 +72,54 @@ def test_merge_metadata_failure_preserves_the_sheet_and_warns(tmp_path, monkeypa
     assert 'content' in document.pages[0].raw_text
     assert any('merged-cell metadata unavailable' in w
                for w in document.metadata.get('parse_warnings', []))
+
+
+def test_restore_preserves_nonempty_cells_and_does_not_escape_the_region():
+    pd = pytest.importorskip('pandas')
+    from core.ingestion.spreadsheet_merged import restore_merged_cells
+
+    frame = pd.DataFrame([
+        ['anchor', 'keep', 'outside'],
+        ['', float('nan'), ''],
+        ['', '', ''],
+    ])
+    filled = restore_merged_cells(frame, [(0, 0, 1, 1, 'anchor')])
+
+    assert filled == 2
+    assert frame.iat[0, 1] == 'keep'
+    assert frame.iat[1, 0] == 'anchor'
+    assert frame.iat[1, 1] == 'anchor'
+    assert frame.iat[0, 2] == 'outside'
+    assert frame.iloc[2].eq('').all()
+
+    empty = pd.DataFrame([['', ''], ['', '']])
+    assert restore_merged_cells(empty, [(0, 0, 1, 1, '')]) == 0
+    assert empty.eq('').all().all()
+
+
+def test_restore_failure_is_atomic_and_has_a_distinct_warning(tmp_path, monkeypatch):
+    openpyxl = pytest.importorskip('openpyxl')
+    pytest.importorskip('pandas')
+    workbook = openpyxl.Workbook()
+    workbook.active.merge_cells('A1:B1')
+    workbook.active['A1'] = 'N/A'
+    path = tmp_path / 'atomic.xlsx'
+    workbook.save(path)
+    workbook.close()
+
+    def fail_after_partial_write(frame, regions):
+        frame.iat[0, 0] = 'corrupted'
+        raise ValueError('synthetic restore failure')
+
+    monkeypatch.setattr(
+        'core.ingestion.spreadsheet_merged.restore_merged_cells',
+        fail_after_partial_write,
+    )
+    document = DocumentParser().parse(str(path))
+    text = document.pages[0].raw_text
+    warnings = document.metadata.get('parse_warnings', [])
+
+    assert 'N/A' in text
+    assert 'corrupted' not in text
+    assert any('merged-cell restore failed' in w for w in warnings)
+    assert not any('metadata unavailable' in w for w in warnings)
