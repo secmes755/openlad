@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   solely because it is shorter than 20 characters; adjacent fragments can still
   be merged by the existing chunk-size logic.
 
+- **Agentic citations resolve to real, unique pages.** Vector-only hits now get
+  their page numbers from metadata, sources include the document filename, and
+  hybrid retrieval and final citations merge by page rather than duplicating a
+  page across FTS and vector chunks.
+
 ## [0.5.0] - 2026-11-12
 
 ### Fixed

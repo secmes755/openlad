@@ -301,6 +301,26 @@ Output as JSON:
         )
         return results
 
+    def _attach_page_nums(self, results: list) -> None:
+        """Resolve vector page ids to citation page numbers in one query."""
+        missing = [r for r in results
+                   if r.get('page_num') is None and r.get('page_id') is not None]
+        if not missing:
+            return
+        ids = sorted({int(r['page_id']) for r in missing})
+        try:
+            with self.metadata_db.get_connection() as conn:
+                placeholders = ','.join('?' * len(ids))
+                rows = conn.execute(
+                    f"SELECT id, page_num FROM doc_pages WHERE id IN ({placeholders})",
+                    ids,
+                ).fetchall()
+            by_id = {row['id']: row['page_num'] for row in rows}
+            for result in missing:
+                result['page_num'] = by_id.get(int(result['page_id']))
+        except Exception as exc:
+            logger.warning(f"[AGENTIC] page-number lookup failed: {exc}")
+
     def _semantic_search(self, query: str, doc_id: str = None, top_k: int = 10) -> list:
         """Semantic search - returns chunk with full text"""
         query_emb = np.array(self.model_client.embed(query))
@@ -317,6 +337,7 @@ Output as JSON:
 
         results.sort(key=lambda x: x[0], reverse=True)
         top = results[:top_k]
+        self._attach_page_nums([chunk for _score, chunk in top])
         self.trace.record(
             "vector",
             scoped_to_doc=bool(doc_id),
@@ -359,23 +380,28 @@ Output as JSON:
         if vector_fallback:
             vec_results = self._semantic_search(query, doc_id, top_k=top_k)
 
-            # Merge results
-            combined = {}
-            for r in fts_results:
-                combined[r['page_id']] = r
-
+            # Merge by page, not by chunk: citations are page-level. Keep the
+            # strongest vector chunk as supplementary text without duplicating
+            # an FTS hit for the same page.
+            combined = {r['page_id']: dict(r) for r in fts_results}
             for score, chunk in vec_results:
                 page_id = chunk['page_id']
                 chunk_idx = chunk.get('chunk_idx', 0)
-                key = f"{page_id}_{chunk_idx}"
-                if key not in combined:
-                    combined[key] = {
-                        'page_id': page_id,
-                        'chunk_idx': chunk_idx,
-                        'score': score * settings.AGENTIC_CONFIG.get('vector_score_scale', 10.0),
-                        'source': 'vector',
-                        'chunk_text': chunk.get('chunk_text', '')
-                    }
+                scaled_score = score * settings.AGENTIC_CONFIG.get('vector_score_scale', 10.0)
+                if page_id in combined:
+                    existing = combined[page_id]
+                    if not existing.get('chunk_text'):
+                        existing['chunk_text'] = chunk.get('chunk_text', '')
+                    existing['vector_score'] = max(existing.get('vector_score', 0.0), scaled_score)
+                    continue
+                combined[page_id] = {
+                    'page_id': page_id,
+                    'page_num': chunk.get('page_num'),
+                    'chunk_idx': chunk_idx,
+                    'score': scaled_score,
+                    'source': 'vector',
+                    'chunk_text': chunk.get('chunk_text', '')
+                }
 
             results = sorted(combined.values(), key=lambda x: x['score'], reverse=True)
             self.trace.record(
@@ -413,6 +439,34 @@ Output as JSON:
 
         return pages
 
+
+    def _doc_filename(self, doc_id: str) -> str:
+        try:
+            doc = self.metadata_db.get_document(doc_id)
+        except Exception as exc:
+            logger.warning(f"[AGENTIC] filename lookup failed for document: {exc}")
+            return ''
+        return (doc or {}).get('filename') or ''
+
+    @staticmethod
+    def _merge_sources(sources: list) -> list:
+        """Aggregate citation pages independently of retrieval chunk identity."""
+        merged = {}
+        for source in sources:
+            doc_id = source.get('doc_id')
+            if not doc_id:
+                continue
+            entry = merged.setdefault(doc_id, {
+                **source,
+                'pages': set(),
+            })
+            entry['pages'].update(source.get('pages') or [])
+            if not entry.get('filename') and source.get('filename'):
+                entry['filename'] = source['filename']
+        return [
+            {**entry, 'pages': sorted(entry['pages'])}
+            for entry in merged.values()
+        ]
 
     def _query_single_document(self, query: str, doc_id: str, doc_title: str) -> dict:
         """
@@ -516,6 +570,7 @@ You are consulting the documentation for {doc_title}. Please only extract inform
             "sources": [{
                 "doc_id": doc_id,
                 "title": doc_title,
+                "filename": self._doc_filename(doc_id),
                 "pages": [p['page_num'] for p in pages]
             }]
         }
@@ -683,12 +738,13 @@ Answering rules:
         answer = self.model_client.generate(summary_prompt, max_tokens=settings.AGENTIC_CONFIG.get('summary_max_tokens', 4000), temperature=0)
 
         context = individual_answers
+        sources = self._merge_sources(all_sources)
 
         return {
             "query": query,
             "context": context,
-            "sources": all_sources,
-            "total_results": sum(len(s.get("pages", [])) for s in all_sources),
+            "sources": sources,
+            "total_results": sum(len(s.get("pages", [])) for s in sources),
             "total_chars": len(context),
             "strategy": "agentic_retrieve",
             "answer": answer,
