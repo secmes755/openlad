@@ -10,4 +10,4 @@ as ``"1.0.0"`` in four places across the API layer while the project was in fact
 releasing 0.4.x, so ``/health`` misreported the running release entirely.
 """
 
-__version__ = "0.4.8"
+__version__ = "0.5.0"
