@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic no longer carries enterprise-report or schematic vocabulary; those
   moved to the sample enterprise and semiconductor packs. Unused hardcoded
   prompt builder removed.
+- **Ingestion grammar is pack data.** Numbered-heading numerals and outline
+  levels, bracketed table captions, chart caption markers, and Word heading
+  style markers are read from the generic ingestion pack. Chapter and document
+  summaries now follow the content language instead of always answering in one
+  language. An undeclared rule disables its feature rather than matching every
+  line; report-epoch and table-caption equivalence was verified against the
+  previous implementation.
 
 ### Fixed
 
