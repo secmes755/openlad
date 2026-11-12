@@ -871,6 +871,10 @@ function dedupeSources(sources) {
         if (existing) {
             existing._pages = [...new Set([...existing._pages, ...pages])].sort((a, b) => a - b);
             existing.degraded = existing.degraded || s.degraded;
+            if (s.has_page_image === true) existing.has_page_image = true;
+            else if (s.has_page_image === false && existing.has_page_image !== true) {
+                existing.has_page_image = false;
+            }
             if (s.ingest_warnings) {
                 existing._warnings = [...new Set([...existing._warnings, ...s.ingest_warnings])];
             }
@@ -923,10 +927,10 @@ function appendMessageToDOM(role, content, sources, debugInfo, citationMap, crea
             const badge = s.degraded ? ' <i class="fas fa-exclamation-triangle source-degraded"></i>' : '';
             const tip = `${escapeHtml(s.filename)}${escapeHtml(pagesStr)}${escapeHtml(warnTip)}`;
             const label = escapeHtml(s.title || s.filename);
-            if (s.doc_id && pages.length) {
+            if (s.doc_id && pages.length && s.has_page_image !== false) {
                 return `<a href="#" class="source-link" data-doc-id="${escapeHtml(s.doc_id)}" data-page="${pages[0]}" data-pages="${pages.join(',')}" title="${tip}">${label}</a>${badge}`;
             }
-            return `<a href="#" class="source-link" title="${tip}">${label}</a>${badge}`;
+            return `<span class="source-link" title="${tip}">${label}</span>${badge}`;
         }).join('');
 
         // V4: Collect all charts and page images

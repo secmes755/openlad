@@ -563,6 +563,7 @@ You are consulting the documentation for {doc_title}. Please only extract inform
         min_len = settings.AGENTIC_CONFIG.get('answer_min_length', 100)
         has_answer = "No relevant information found" not in answer and "未找到相关信息" not in answer and len(answer) > min_len
 
+        from ..ingestion.page_images import document_supports_page_images
         return {
             "has_answer": has_answer,
             "answer": answer,
@@ -571,6 +572,9 @@ You are consulting the documentation for {doc_title}. Please only extract inform
                 "doc_id": doc_id,
                 "title": doc_title,
                 "filename": self._doc_filename(doc_id),
+                "has_page_image": document_supports_page_images(
+                    self.metadata_db.get_document(doc_id)
+                ),
                 "pages": [p['page_num'] for p in pages]
             }]
         }

@@ -1,6 +1,7 @@
 """
 OpenLAD API Service Entry Point
 """
+import asyncio
 import logging
 import os
 import re
@@ -229,11 +230,32 @@ async def admin_page():
 # isolation. The filename whitelist (basename charset) blocks path traversal.
 # ---------------------------------------------------------------------------
 _IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:png|jpg|jpeg|webp)$", re.IGNORECASE)
+_PAGE_IMAGE_RE = re.compile(r'^(?P<doc_id>[A-Za-z0-9._-]+)_p(?P<page>\d+)\.png$', re.IGNORECASE)
+
+
+async def _repair_tenant_page_image(tenant_id: str, filename: str, image_path) -> bool:
+    from ..db.tenant_db import get_tenant_metadata_db
+    from ..ingestion.page_images import document_supports_page_images, ensure_page_image
+
+    match = _PAGE_IMAGE_RE.fullmatch(filename)
+    if not match:
+        return False
+    document = get_tenant_metadata_db(tenant_id).get_document(match.group('doc_id'))
+    if document is None or not document_supports_page_images(document):
+        return False
+    source_path = document.get('original_path')
+    if not isinstance(source_path, str):
+        return False
+    return await asyncio.to_thread(
+        ensure_page_image, source_path,
+        int(match.group('page')), image_path,
+    )
 
 
 @app.get("/images/{filename}")
 async def tenant_image(filename: str):
     # Lazy import: module-level imports sit above load_dotenv() by design
+    from ..ingestion.page_images import is_placeholder_image
     from ..tenant.context import get_tenant_context
     ctx = get_tenant_context()
     if not ctx:
@@ -241,7 +263,10 @@ async def tenant_image(filename: str):
     if not _IMAGE_FILENAME_RE.match(filename):
         raise HTTPException(status_code=400, detail="Invalid image filename")
     image_path = settings.get_tenant_data_dir(ctx.tenant_id) / "images" / filename
-    if not image_path.is_file():
+    if image_path.is_file() and not is_placeholder_image(image_path):
+        return FileResponse(image_path, headers={"Cache-Control": "private, max-age=3600"})
+    await _repair_tenant_page_image(ctx.tenant_id, filename, image_path)
+    if not image_path.is_file() or is_placeholder_image(image_path):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path, headers={"Cache-Control": "private, max-age=3600"})
 

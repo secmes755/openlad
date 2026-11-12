@@ -113,3 +113,50 @@ def test_unknown_extension_rejected(seeds):
     r = client.get("/images/docA_p1.svg",
                    headers={"Authorization": f"Bearer {seeds['key_main']}"})
     assert r.status_code == 400
+
+
+def test_missing_pdf_page_is_repaired_lazily(seeds, monkeypatch, tmp_path):
+    source = tmp_path / 'source.pdf'
+    source.write_bytes(b'synthetic')
+    monkeypatch.setattr(
+        'core.db.tenant_db.get_tenant_metadata_db',
+        lambda tenant_id: type('DB', (), {
+            'get_document': lambda self, doc_id: {'original_path': str(source)},
+        })(),
+    )
+
+    def repair(path, page_num, target):
+        assert page_num == 2
+        Path(target).write_bytes(_PNG_1PX)
+        return True
+
+    monkeypatch.setattr('core.ingestion.page_images.ensure_page_image', repair)
+    response = client.get(
+        '/images/lazyDoc_p2.png',
+        headers={'Authorization': f"Bearer {seeds['key_main']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == _PNG_1PX
+
+
+def test_non_pdf_page_is_not_rendered_or_served(seeds, monkeypatch, tmp_path):
+    source = tmp_path / 'source.xlsx'
+    source.write_bytes(b'synthetic')
+    monkeypatch.setattr(
+        'core.db.tenant_db.get_tenant_metadata_db',
+        lambda tenant_id: type('DB', (), {
+            'get_document': lambda self, doc_id: {'original_path': str(source)},
+        })(),
+    )
+    monkeypatch.setattr(
+        'core.ingestion.page_images.ensure_page_image',
+        lambda *args: pytest.fail('non-PDF rendering must not be attempted'),
+    )
+
+    response = client.get(
+        '/images/workbook_p1.png',
+        headers={'Authorization': f"Bearer {seeds['key_main']}"},
+    )
+
+    assert response.status_code == 404

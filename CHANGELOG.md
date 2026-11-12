@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hybrid retrieval and final citations merge by page rather than duplicating a
   page across FTS and vector chunks.
 
+- **Page images are repaired on demand.** Missing or legacy placeholder images
+  for PDF sources are rendered lazily with a process-safe pdfium lock and an
+  atomic cache write. Non-PDF sources are marked as text-only and no longer show
+  a page-image action; missing sources and failed renders return not-found
+  instead of a blank image.
+
 ## [0.5.0] - 2026-11-12
 
 ### Fixed
