@@ -89,3 +89,43 @@ caption_patterns:
 title_punctuation: ['，', '。', '；', '：', '.', ',', ';', ':']
 
 footnote_markers: ['*', '※', '①', '[']
+
+# Numeral words accepted in a numbered heading ("第X章"), mapped to integers.
+# Declared per language so core carries no single-language numeral table.
+heading_numerals:
+  一: 1
+  二: 2
+  三: 3
+  四: 4
+  五: 5
+  六: 6
+  七: 7
+  八: 8
+  九: 9
+  十: 10
+
+# Heading unit -> outline depth. Units absent here fall back to the pack's
+# default_heading_level.
+heading_levels:
+  编: 1
+  部: 1
+  篇: 1
+  章: 2
+  节: 3
+default_heading_level: 2
+
+# Bracketed table captions, e.g. "[Table 3] Pin list" or "（表 2）参数".
+table_caption_pattern: '(?i)[\[【（]\s*(?:表格|table|表)\s*\d+\s*[\]】）]\s*(.+)'
+table_marker_pattern: '(?i)[\[【（]\s*(?:表格|table|表)\s*\d+\s*[\]】）]'
+
+heading_style_markers: ['heading', '标题']
+
+table_caption_keywords: ['表格', 'table', '表']
+
+# Markers a vision model may emit to mean "this region is not a chart".
+non_chart_markers: ['NON_CHART_CONTENT', '非图表内容']
+
+# Labels models use when naming the chart type on its own line.
+chart_type_labels: ['Type:', '类型：', '类型:']
+
+

@@ -79,6 +79,15 @@ class ChartAnalyzer:
         # Region detection parameters
         self.min_region_area = self.config.get("min_region_area", 15000)   # Minimum region area, skip if too small
         self.max_regions_per_page = self.config.get("max_regions_per_page", 4)  # Max regions to analyze per page
+        # Caption/model-output vocabulary is pack data (see ingestion rules).
+        from ...plugins import get_generic_ingestion_rules
+        rules = get_generic_ingestion_rules()
+        self._table_caption_keywords = tuple(
+            str(k).lower() for k in (rules.get("table_caption_keywords") or []))
+        self._non_chart_markers = tuple(
+            str(m) for m in (rules.get("non_chart_markers") or []))
+        self._chart_type_labels = tuple(
+            str(m) for m in (rules.get("chart_type_labels") or []))
         self.min_region_wh = self.config.get("min_region_wh", 120)        # Minimum region width/height
         self.text_dilate_size = self.config.get("text_dilate_size", 25)   # Text dilation radius
         self.margin_ignore = self.config.get("margin_ignore", 15)         # Margin to ignore (pixels)
@@ -224,8 +233,9 @@ class ChartAnalyzer:
             cap_bbox = cap.bbox
             cap_text = str(cap.content) if cap.content else ""
 
-            # Determine whether it's a figure or table (not hard-coded, just for classification)
-            is_table = any(kw in cap_text.lower() for kw in ["表", "table"])
+            # Classify figure vs table from pack-declared caption keywords.
+            is_table = any(kw in cap_text.lower()
+                           for kw in self._table_caption_keywords)
             region_type = "table_image" if is_table else "chart"
 
             # Search above the caption for chart region (charts are usually above captions)
@@ -562,8 +572,8 @@ Data:
         chart = ChartDescription()
         chart.caption = region.get("caption", "")
 
-        # Check if it's non-chart content
-        if "NON_CHART_CONTENT" in response or "非图表内容" in response:
+        # Check if it's non-chart content (markers come from the pack)
+        if any(marker in response for marker in self._non_chart_markers):
             chart.description = "Non-chart content"
             chart.core_insight = "Non-chart content"
             chart.chart_type = "non_chart"
@@ -573,8 +583,12 @@ Data:
         lines = response.strip().split('\n')
         chart.chart_type = region.get("type", "unknown")
         for line in lines[:5]:
-            if line.startswith("Type:") or line.startswith("类型：") or line.startswith("类型:"):
-                chart.chart_type = line.split(":", 1)[1].strip() if ":" in line else line.split("：", 1)[1].strip()
+            label = next((marker for marker in self._chart_type_labels
+                          if line.startswith(marker)), None)
+            if label:
+                rest = line[len(label):].lstrip(":：").strip()
+                if rest:
+                    chart.chart_type = rest
                 break
 
         # Directly store the full response as description (raw extracted content)

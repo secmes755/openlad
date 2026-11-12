@@ -1082,7 +1082,7 @@ class PluginRegistry:
         industry vocabulary/rules into unrelated queries.
         """
         for pid, plugin in self._plugins.items():
-            if pid == "generic" or "通用" in plugin.manifest.name:
+            if pid == "generic":
                 return plugin
         return None
 

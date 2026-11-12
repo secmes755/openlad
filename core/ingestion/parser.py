@@ -1886,7 +1886,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
             text = para.text.strip()
             if text:
                 style = para.style.name if para.style else ''
-                if 'Heading' in style or 'heading' in style or '标题' in style:
+                from ..plugins import get_generic_ingestion_rules
+                markers = (get_generic_ingestion_rules()
+                           .get("heading_style_markers") or [])
+                style_lower = style.lower()
+                if any(str(m).lower() in style_lower for m in markers):
                     level = 1
                     for c in style:
                         if c.isdigit():
