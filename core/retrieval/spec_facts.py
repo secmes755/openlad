@@ -61,6 +61,8 @@ def _merged_spec_terms(plan: dict | None, industry_hint: str | None,
             # entity patterns match the query (category routing is modal and
             # cannot scope packs per query).
             plugin = registry.detect_plugin_for_text(query_text)
+        if hasattr(registry, "compose_with_base"):
+            plugin = registry.compose_with_base(plugin)
         if plugin is not None:
             pack_terms = plugin.retrieval.get_spec_query_terms() or {}
             if pack_terms:
@@ -238,7 +240,7 @@ def format_spec_facts(facts: list[dict]) -> str:
     if not facts:
         return ""
     presentation = settings.CONTEXT_CONFIG.get("spec_facts_presentation", "source_first")
-    lines = ["【权威规格事实 / Authoritative Spec Facts】(extracted from original page text, verbatim-verified)"]
+    lines = ["[Authoritative Document Facts] (verbatim-verified against original page text)"]
     order: list[str] = []
     by_entity: dict[str, list[dict]] = {}
     for f in facts:
@@ -254,7 +256,7 @@ def format_spec_facts(facts: list[dict]) -> str:
             if presentation == "value_first" or not src:
                 lines.append(
                     f"  - {f.get('attribute','')}: {f.get('value','')}"
-                    f"  (page {f.get('page_num','?')}; 原文: \"{src[:120]}\")")
+                    f"  (page {f.get('page_num','?')}; source: \"{src[:120]}\")")
             else:
                 lines.append(
                     f"  - \"{src}\""
@@ -287,7 +289,6 @@ def build_evidence_appendix(facts: list[dict], doc_titles: dict | None = None,
         return ""
     if not settings.CONTEXT_CONFIG.get("spec_facts_evidence_appendix", True):
         return ""
-    zh = bool(re.search(r'[\u4e00-\u9fff]', query_text or ""))
     max_show = int(settings.CONTEXT_CONFIG.get("spec_facts_evidence_max", 5) or 5)
     titles = doc_titles or {}
     seen: set = set()
@@ -303,15 +304,17 @@ def build_evidence_appendix(facts: list[dict], doc_titles: dict | None = None,
         title = titles.get(f.get("doc_id")) or ""
         page = f.get("page_num") or "?"
         excerpt = _trim_verbatim(src)
-        if zh:
-            loc = f"《{title}》第 {page} 页" if title else f"第 {page} 页"
-            items.append(f"- {loc}：\"{excerpt}\"")
-        else:
-            loc = f"{title}, p.{page}" if title else f"p.{page}"
-            items.append(f"- {loc}: \"{excerpt}\"")
+        from ..plugins import render_pack_message
+        message_id = 'source_citation' if title else 'source_citation_no_title'
+        loc = render_pack_message(message_id, query_text,
+                                  title=title, page=page) or (
+            f"{title}, p.{page}" if title else f"p.{page}")
+        items.append(f"- {loc}: \"{excerpt}\"")
         if len(items) >= max_show:
             break
     if not items:
         return ""
-    header = "\n\n---\n依据原文：\n" if zh else "\n\n---\nSource excerpts:\n"
+    from ..plugins import render_pack_message
+    label = render_pack_message('source_excerpts_header', query_text)
+    header = f"\n\n---\n{label}\n" if label else "\n\n---\n"
     return header + "\n".join(items)

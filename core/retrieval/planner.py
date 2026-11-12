@@ -43,30 +43,36 @@ def _routing_category(doc: dict) -> str:
 # noun and prune candidate documents whose own epoch is a different one.
 # ---------------------------------------------------------------------------
 
-# Which report nouns bind a year to a document epoch is vocabulary, so the
-# pattern comes from the base pack (rules.yaml `report_epoch_pattern`) rather
-# than from core. Pack declares none -> epoch pruning is off.
-_REPORT_EPOCH_RE_CACHE: re.Pattern | None = None
+# Which report nouns bind a year to a document epoch is pack vocabulary.
+# Every declared pattern is considered; core supplies no report terminology.
+_REPORT_EPOCH_RE_CACHE: list[re.Pattern] = []
 _REPORT_EPOCH_RE_LOADED = False
 
 
-def _report_epoch_re() -> re.Pattern | None:
+def _report_epoch_res() -> list[re.Pattern]:
     global _REPORT_EPOCH_RE_CACHE, _REPORT_EPOCH_RE_LOADED
     if not _REPORT_EPOCH_RE_LOADED:
         _REPORT_EPOCH_RE_LOADED = True
+        patterns = []
         try:
             from ..plugins import get_plugin_registry
             registry = get_plugin_registry()
-            pack = (registry.get_generic() if hasattr(registry, "get_generic")
-                    else None)
-            retrieval = getattr(pack, "retrieval", None) if pack else None
-            pattern = (retrieval.get_report_epoch_pattern()
-                       if hasattr(retrieval, "get_report_epoch_pattern") else "")
-            if pattern:
-                _REPORT_EPOCH_RE_CACHE = re.compile(pattern)
+            pack_ids = (registry.list_plugins()
+                        if hasattr(registry, "list_plugins") else {})
+            for pack_id in pack_ids:
+                try:
+                    pack = registry.get_plugin(pack_id)
+                    retrieval = getattr(pack, "retrieval", None) if pack else None
+                    pattern = (retrieval.get_report_epoch_pattern()
+                               if hasattr(retrieval, "get_report_epoch_pattern") else "")
+                    if pattern:
+                        patterns.append(re.compile(pattern))
+                except Exception as e:
+                    logger.warning(f"[PLANNER] report-epoch pattern from "
+                                   f"{pack_id!r} disabled: {e}")
         except Exception as e:
-            logger.warning(f"[PLANNER] pack report-epoch pattern unavailable "
-                           f"(epoch pruning disabled): {e}")
+            logger.warning(f"[PLANNER] pack report-epoch patterns unavailable: {e}")
+        _REPORT_EPOCH_RE_CACHE = patterns
     return _REPORT_EPOCH_RE_CACHE
 # Candidate year inside a title/filename.
 _DOC_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
@@ -81,10 +87,13 @@ def query_report_epochs(query: str) -> set[str]:
     """Epochs the query explicitly pins to a report noun (may be empty)."""
     if not query:
         return set()
-    pattern = _report_epoch_re()
-    if pattern is None:
-        return set()
-    return set(pattern.findall(query))
+    epochs = set()
+    for pattern in _report_epoch_res():
+        for match in pattern.findall(query):
+            year = match[0] if isinstance(match, tuple) else match
+            if year:
+                epochs.add(year)
+    return epochs
 
 
 def doc_report_epoch(doc: dict | None) -> str | None:
@@ -329,36 +338,27 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             logger.error(f"[PHASE-1] Coarse filter failed: {e}")
             return [], {}
 
-    # Domain-neutral Chinese question/meta words that are never document
-    # entities in ANY field ("多少", "是什么", "情况"...). Filtering these
-    # prevents generic query noise from force-merging unrelated documents
-    # into the doc_filter. Industry-specific generics (a term that recurs in
-    # reports, "公司" in corporate filings) do NOT belong here — they are
-    # injected by industry packs via RetrievalPlugin.get_entity_stopwords()
-    # and merged in _all_entity_stopwords().
-    _CN_ENTITY_STOPWORDS = frozenset({
-        "多少", "什么", "如何", "是否", "哪些", "怎样", "为何", "原因",
-        "是多少", "是什么", "怎么样", "有哪些", "为什么", "什么原因",
-        "情况", "介绍", "信息", "内容", "问题", "答案", "主要", "业务",
-        "数据", "指标", "数值", "报告", "年度", "季度",
-    })
-
     @staticmethod
     def _all_entity_stopwords() -> frozenset:
-        """Core stopwords plus the union of all loaded packs'
-        `entity_stopwords` (executor-style: merge every pack, filter-side
-        union is always safe — a stopword only ever suppresses a spurious
-        entity). Cached; the pack set is fixed at process start."""
+        """Return the union of pack-declared entity stopwords.
+
+        Core owns the filtering mechanism, not vocabulary. Filter-side union
+        is safe across packs: a stopword only suppresses a spurious entity.
+        """
         if QueryPlanner._STOPWORDS_CACHE is None:
-            words = set(QueryPlanner._CN_ENTITY_STOPWORDS)
+            words = set()
             try:
                 from ..plugins import get_plugin_registry
                 registry = get_plugin_registry()
                 for pack_id in (registry.list_plugins()
                                 if hasattr(registry, "list_plugins") else []):
-                    plugin = registry.get_plugin(pack_id)
-                    if plugin and hasattr(plugin.retrieval, "get_entity_stopwords"):
-                        words.update(plugin.retrieval.get_entity_stopwords())
+                    try:
+                        plugin = registry.get_plugin(pack_id)
+                        if plugin and hasattr(plugin.retrieval, "get_entity_stopwords"):
+                            words.update(plugin.retrieval.get_entity_stopwords())
+                    except Exception as e:
+                        logger.warning(f"[PLANNER] entity stopwords from "
+                                       f"{pack_id!r} unavailable: {e}")
             except Exception as e:
                 logger.warning(f"[PLANNER] pack entity stopwords unavailable (non-fatal): {e}")
             QueryPlanner._STOPWORDS_CACHE = frozenset(words)
@@ -515,6 +515,20 @@ Output JSON:
             lines.append(f"- {doc['id']}: [{doc_type}] {title}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _is_no_result_reason(reason: str) -> bool:
+        try:
+            from ..plugins import get_plugin_registry
+            pack = get_plugin_registry().get_generic()
+            retrieval = getattr(pack, 'retrieval', None) if pack else None
+            get_rules = getattr(retrieval, 'get_retrieval_rules', None)
+            rules = get_rules() if callable(get_rules) else {}
+            markers = (rules.get('planner_no_result_markers', [])
+                       if isinstance(rules, dict) else [])
+            return any(str(marker).lower() in reason.lower() for marker in markers)
+        except Exception:
+            return False
+
     def _validate_plan(self, result: dict, query: str) -> dict:
         plan = {
             "analysis": result.get("analysis", ""),
@@ -526,7 +540,7 @@ Output JSON:
             "time_range": result.get("time_range") or {},
         }
         steps = result.get("steps", [])
-        if not steps and result.get("reasoning", "").find("知识库中没有") >= 0:
+        if not steps and self._is_no_result_reason(result.get("reasoning", "")):
             logger.info("[PHASE-1] Fine planning returned empty steps, preserving empty result")
         elif not steps:
             steps = [{"tool": "single_retrieve", "query": plan["rewritten_query"], "doc_filter": [], "purpose": "Direct retrieval"}]

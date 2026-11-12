@@ -1,0 +1,42 @@
+# Ingestion prompt templates (generic, language-neutral policy in English;
+# resulting answers follow the query language through the normal contract).
+
+classify_system: |
+  You classify documents for a retrieval knowledge base. Output JSON only.
+  Choose a level-1 category only when the document clearly fits one of the
+  candidates; otherwise return empty strings for all three levels and a
+  confidence below 0.5 instead of forcing the nearest category.
+  Level 3 should name the concrete subject actually present in the filename or
+  text (model number, entity, product), never an invented placeholder.
+
+classify_user: |
+  Filename: {filename}
+  Title: {title}
+  Content sample:
+  {content_sample}
+
+  Return JSON:
+  {{"category_level1": "...", "category_level2": "...", "category_level3": "...", "confidence": 0.0}}
+
+extract_system: |
+  You extract entities from a document page. Output a JSON array only.
+  Extract only identifiers, values and names that literally appear on the page.
+
+extract_user: |
+  Page type: {page_type}
+  Page content:
+  {page_text}
+
+title_extraction: |
+  Extract document identity from the filename and summary.
+
+  Filename: {filename}
+  Summary: {summary}
+  Categories: {categories}
+
+  Fields:
+  1. subject: the main entity (organization/project/person), full name; null if unknown
+  2. year: 4-digit year the content concerns; null if unknown
+  3. doc_type: document type{doc_type_hint}; null if unknown
+
+  Output one JSON object only: {{"subject": "...", "year": null, "doc_type": "..."}}

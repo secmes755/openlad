@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Core keeps mechanisms; packs own vocabulary.** Query-term expansion,
+  entity stopwords, report-epoch patterns, table-request markers,
+  no-result wording, citation formats and ingestion locale rules
+  (classification prompts, unknown labels, quality-check word lists,
+  caption/page-type indicators, title extraction) are now read from packs.
+  Core resolves them through the existing `get_retrieval_rules`,
+  `get_ingestion_prompts` and `get_parsing_rules` hooks plus one small message
+  renderer, and degrades to empty behaviour when a pack declares nothing.
+  Report-epoch, stopword and message rules are aggregated per pack, so one
+  malformed pack pattern disables only itself.
+- Generic no longer carries enterprise-report or schematic vocabulary; those
+  moved to the sample enterprise and semiconductor packs. Unused hardcoded
+  prompt builder removed.
+
 ### Fixed
 
 - **Excel merged cells retain their actual ownership.** Declared `.xlsx` and

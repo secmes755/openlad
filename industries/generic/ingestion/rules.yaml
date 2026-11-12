@@ -1,0 +1,91 @@
+# Ingestion rules (generic). Vocabulary that is language- or industry-specific
+# belongs to the corresponding vertical pack, never to core.
+
+# Values a model may return instead of an actual category. They collapse to NULL
+# so downstream routing cannot mistake a placeholder for a real category.
+unknown_labels:
+  - other
+  - unknown
+  - unclassified
+  - uncategorized
+  - none
+  - "null"
+  - n/a
+  - na
+  - 其他
+  - 其它
+  - 未知
+  - 未分类
+  - 无
+
+# High-frequency function words used only to detect garbled text. Language
+# lists are declared here so core carries no single-language dictionary.
+quality_common_words:
+  zh:
+    - 的
+    - 是
+    - 在
+    - 和
+    - 了
+    - 与
+    - 有
+    - 被
+    - 为
+    - 以
+    - 及
+    - 对
+    - 或
+    - 将
+    - 从
+    - 到
+    - 也
+    - 而
+    - 其
+    - 之
+    - 中
+    - 上
+    - 下
+    - 内
+    - 外
+    - 时
+    - 后
+    - 前
+    - 间
+  en:
+    - the
+    - of
+    - and
+    - to
+    - in
+    - is
+    - for
+    - with
+
+# Page/element detection patterns. Each entry is a regex matched against the
+# page's normalized text; core supplies the matching mechanism only.
+page_type_indicators:
+  cover:
+    - '(?i)^\s*cover\b'
+  toc:
+    - '(?i)table of contents'
+    - '(?i)\bcontents\b'
+    - '目录'
+    - '章节'
+  appendix:
+    - '(?i)^\s*appendix\b'
+  form_fields:
+    - '(?i)\b(email|phone|address)\b'
+
+caption_patterns:
+  - '(?i)^图\s*\d+'
+  - '(?i)^[图表]\s*[一-九〇\d]+'
+  - '(?i)^fig\.?\s*\d+'
+  - '(?i)^figure\s*\d+'
+  - '(?i)^表\s*\d+'
+  - '(?i)^table\s*\d+'
+
+# Characters that mark a sentence rather than a heading; a short block
+# containing one of these is body text, not a title.
+title_punctuation: ['，', '。', '；', '：', '.', ',', ';', ':']
+
+footnote_markers: ['*', '※', '①', '[']

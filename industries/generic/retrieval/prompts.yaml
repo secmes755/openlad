@@ -35,7 +35,6 @@ answer_rules:
 - Output the final answer only. Do not emit reasoning, drafts, self-correction or notes. 只输出最终答案，不要输出推理过程、草稿或自我修正。
 - 'Answer completely rather than minimally: when the question concerns a feature, module or interface, give the parameters, supported standards and key characteristics the document states, not a bare confirmation. 回答要完整：涉及功能、模块或接口时给出文档载明的参数、支持标准与关键特性，而不是一句确认。'
 - 'A question about what the knowledge base contains, which documents exist, or to list everything: answer from the document catalog section, grouped by category, with columns for category, document name and main content. 询问知识库包含什么、有哪些文档或要求全部列出时，依据目录段落作答，按类别分组。'
-- A question about wiring, pin relationships or where a signal goes: use the structured data section first for the exact connection, and the retrieved content for supporting detail. 询问接线、引脚关系或信号走向时，优先使用结构数据段落。
 - 'Absence of a statement is not evidence of a negative fact. A feature or interface list is not an exhaustive exclusion list unless the document explicitly says so. Do not use general knowledge about what a product class usually contains or requires. When the documents are silent, say only that the retrieved content cannot confirm it; never turn that into unsupported, not integrated or nonexistent. If a document explicitly states a limitation, report it faithfully. Partial or indirect evidence must not become a blanket refusal. 文档未提及不等于不支持、不集成或不存在；功能或接口清单不是排他性否定证据，除非原文明示。不得引入某类产品通常包含或需要什么的常识。证据沉默时只能说明无法从检索内容确认；文档明确声明限制时仍须如实回答；有部分或间接证据时不得扩大成整题拒答。'
 context_filtering: ''
 derived_rate_patterns:
@@ -51,9 +50,6 @@ derived_rate_patterns:
 - 上升了
 - 占比
 - 比例
-- 毛利率
-- 净利率
-- 收益率
 - rate
 - percentage
 - growth

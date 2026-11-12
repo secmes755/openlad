@@ -82,6 +82,33 @@ class LayoutAnalyzer:
         self.restore_reading_order = self.config.get("restore_reading_order", True)
         self.element_types = self.config.get("element_types", self.ELEMENT_TYPES)
 
+        # Layout vocabulary (captions, page-type indicators, form fields) is
+        # pack data. Core compiles the patterns and keeps only the mechanism.
+        from ...plugins import get_generic_ingestion_rules
+        rules = get_generic_ingestion_rules()
+        self._caption_patterns = self._compile(
+            rules.get("caption_patterns", []))
+        self._footnote_markers = tuple(
+            rules.get("footnote_markers", []) or ())
+        self._title_punctuation = tuple(
+            rules.get("title_punctuation", []) or ())
+        indicators = rules.get("page_type_indicators", {}) or {}
+        self._page_type_patterns = {
+            kind: self._compile(patterns)
+            for kind, patterns in indicators.items()
+            if isinstance(patterns, list)
+        }
+
+    @staticmethod
+    def _compile(patterns) -> list:
+        compiled = []
+        for pattern in patterns or []:
+            try:
+                compiled.append(re.compile(str(pattern)))
+            except re.error:
+                continue
+        return compiled
+
     def analyze(self, raw_text: str, page_num: int = 1,
                 ocr_results: list[dict] = None,
                 image_path: str = None) -> LayoutResult:
@@ -291,20 +318,14 @@ class LayoutAnalyzer:
                 else:
                     return "section-header"
 
-        # 3. Figure/table caption
-        caption_patterns = [
-            r'^图\s*\d+', r'^Fig\.?\s*\d+', r'^Figure\s*\d+',
-            r'^表\s*\d+', r'^Table\s*\d+', r'^TABLE\s*\d+',
-            r'^[图表]\s*[一-九〇\d]+'
-        ]
-        for pattern in caption_patterns:
-            if re.match(pattern, text, re.IGNORECASE):
+        # 3. Figure/table caption (patterns come from the pack)
+        for pattern in self._caption_patterns:
+            if pattern.match(text):
                 return "caption"
 
         # 4. Footnote
-        if text_len < 200 and text.startswith(('*', '※', '①', '[', '(')):
-            if any(kw in text for kw in ['注', 'note', '参考', 'ref']):
-                return "footnote"
+        if text_len < 200 and text.startswith(self._footnote_markers):
+            return "footnote"
 
         # 5. List item
         if re.match(r'^[\s]*[•\-\*\d+\.\u2460-\u24ff][\s]', text):
@@ -341,8 +362,8 @@ class LayoutAnalyzer:
             if re.match(pattern, text):
                 return True
 
-        # Short text without punctuation (likely a title)
-        if len(text) < 30 and not any(c in text for c in '，。；：'):
+        # Short text without sentence punctuation (likely a title)
+        if len(text) < 30 and not any(c in text for c in self._title_punctuation):
             return True
 
         return False
@@ -401,25 +422,23 @@ class LayoutAnalyzer:
 
         return elements
 
+    def _matches_page_type(self, kind: str, text: str) -> bool:
+        return any(p.search(text) for p in self._page_type_patterns.get(kind, []))
+
     def _detect_page_type(self, elements: list[LayoutElement]) -> str:
         """Detect page type"""
         if not elements:
             return "blank"
 
         total_text = ' '.join(str(e.content) for e in elements)
-        total_text_lower = total_text.lower()
 
-        # Detect cover page (V5.0: use configurable indicators)
-        from ...config import settings
-        page_type_config = settings.CONTEXT_CONFIG.get("page_type_detection", {})
-        cover_indicators = page_type_config.get("cover_indicators", ["cover", "目录"])
-        if any(kw in total_text_lower for kw in cover_indicators):
+        # Detect cover page (pack-declared indicators)
+        if self._matches_page_type("cover", total_text):
             if len(elements) < 5:
                 return "cover"
 
-        # Detect table of contents (V5.0: use configurable indicators)
-        toc_indicators = page_type_config.get("toc_indicators", ["contents", "目录", "table of contents", "章节"])
-        if any(kw in total_text_lower for kw in toc_indicators):
+        # Detect table of contents
+        if self._matches_page_type("toc", total_text):
             toc_pattern_count = sum(1 for e in elements
                                if re.match(r'^[\d\.\s]+', str(e.content)))
             if toc_pattern_count >= 3:
@@ -431,10 +450,10 @@ class LayoutAnalyzer:
             return "table_page"
 
         # Detect form page
-        form_indicators = sum(1 for e in elements
-                            if any(kw in str(e.content) for kw in
-                                  ['姓名', '地址', '电话', '身份证', '号码',
-                                   'name', 'address', 'tel', 'phone', 'email']))
+        form_patterns = self._page_type_patterns.get("form_fields", [])
+        form_indicators = sum(
+            1 for e in elements
+            if any(p.search(str(e.content)) for p in form_patterns))
         if form_indicators >= 3:
             return "form"
 
@@ -444,7 +463,7 @@ class LayoutAnalyzer:
             return "image_page"
 
         # Detect appendix
-        if any(kw in total_text_lower for kw in ['appendix', '附录', '附表', '参考文献']):
+        if self._matches_page_type("appendix", total_text):
             return "appendix"
 
         # Detect blank page

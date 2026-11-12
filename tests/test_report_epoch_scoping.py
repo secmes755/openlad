@@ -100,3 +100,35 @@ def test_scoping_unknown_candidate_id_is_kept():
     kept = scope_candidates_by_report_epoch(
         "中兴通讯2025年年度报告显示", ["zzzz9999", ZTE_2024["id"]], DOCS)
     assert kept == ["zzzz9999"]
+
+
+def test_one_bad_pack_pattern_does_not_disable_other_packs(monkeypatch):
+    import core.retrieval.planner as planner
+
+    class Retrieval:
+        def __init__(self, pattern):
+            self.pattern = pattern
+
+        def get_report_epoch_pattern(self):
+            return self.pattern
+
+    class Pack:
+        def __init__(self, pattern):
+            self.retrieval = Retrieval(pattern)
+
+    class Registry:
+        def list_plugins(self):
+            return ['bad', 'good']
+
+        def get_plugin(self, pack_id):
+            return Pack('[' if pack_id == 'bad'
+                        else r'((?:19|20)\d{2})\s+annual report')
+
+    monkeypatch.setattr('core.plugins.get_plugin_registry', lambda: Registry())
+    planner._REPORT_EPOCH_RE_CACHE = []
+    planner._REPORT_EPOCH_RE_LOADED = False
+    try:
+        assert query_report_epochs('2025 annual report comparison') == {'2025'}
+    finally:
+        planner._REPORT_EPOCH_RE_CACHE = []
+        planner._REPORT_EPOCH_RE_LOADED = False
