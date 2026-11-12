@@ -77,3 +77,88 @@ def prompt_is_pack_template(prompt: str) -> bool:
     # The rendered prompt must follow the pack template's first line, not the
     # hardcoded fallback wording.
     return bool(template) and template.strip().split("\n")[0].strip() in prompt
+
+
+def test_summary_prompts_use_pack_templates():
+    from core.plugins import get_generic_ingestion_prompts
+    prompts = get_generic_ingestion_prompts()
+    for key in ("chapter_summary", "document_summary", "title_extraction"):
+        assert prompts.get(key), f"pack must declare {key}"
+    # Templates with literal braces must be format-safe.
+    prompts["title_extraction"].format(
+        filename="f", summary="s", categories="c", doc_type_hint="")
+    chart = prompts["chapter_summary"].format(title="T", content="C")
+    assert "\u8bf7\u7528\u4e2d\u6587" not in chart
+    assert "same language as the chapter content" in chart
+    doc = prompts["document_summary"].format(
+        filename="f.pdf", chapters="A", preview="B")
+    assert "same language as the document content" in doc
+
+
+def test_heading_style_markers_come_from_pack():
+    from core.plugins import get_generic_ingestion_rules
+    markers = get_generic_ingestion_rules().get("heading_style_markers") or []
+    assert markers
+    lowered = [str(m).lower() for m in markers]
+    # Case-insensitive match covers the Word "Heading 1" style family.
+    assert any(m in "heading 1" for m in lowered)
+    assert any(m in "标题 1" for m in lowered)
+    assert not any(m in "normal" for m in lowered)
+
+
+def test_generic_lookup_ignores_localised_names():
+    """The base pack is identified by id, never by a translated display name."""
+    from core.plugins import PluginRegistry
+    registry = PluginRegistry.__new__(PluginRegistry)
+    registry._plugins = {"finance": object()}
+    assert registry.get_generic() is None
+
+
+def test_chart_vocabulary_comes_from_pack():
+    from core.ingestion.layout.chart_analyzer import ChartAnalyzer
+    from core.plugins import get_generic_ingestion_rules
+    rules = get_generic_ingestion_rules()
+    assert rules.get("table_caption_keywords")
+    assert rules.get("non_chart_markers")
+    assert rules.get("chart_type_labels")
+
+    chart = ChartAnalyzer.__new__(ChartAnalyzer)
+    chart._table_caption_keywords = tuple(
+        str(k).lower() for k in rules["table_caption_keywords"])
+    chart._non_chart_markers = tuple(str(m) for m in rules["non_chart_markers"])
+    chart._chart_type_labels = tuple(str(m) for m in rules["chart_type_labels"])
+
+    assert any(kw in "\u8868 3 \u5f15\u811a" for kw in chart._table_caption_keywords)
+    assert any(kw in "table 3 pins" for kw in chart._table_caption_keywords)
+    assert not any(kw in "figure 3" for kw in chart._table_caption_keywords)
+
+
+def test_heading_and_table_rules_come_from_pack():
+    from core.ingestion.builder import DocumentIndexBuilder
+    builder = object.__new__(DocumentIndexBuilder)
+    from core.plugins import get_generic_ingestion_rules
+    rules = get_generic_ingestion_rules()
+    builder._heading_numerals = {
+        str(k): v for k, v in (rules.get("heading_numerals") or {}).items()}
+    builder._heading_levels = {
+        str(k): v for k, v in (rules.get("heading_levels") or {}).items()}
+    builder._default_heading_level = int(
+        rules.get("default_heading_level", 2) or 2)
+
+    assert builder._heading_number_value("\u4e09") == 3
+    assert builder._heading_number_value("\u5341") == 10
+    assert builder._heading_number_value("\u767e") == 0  # undeclared -> 0
+    assert builder._heading_level_for_unit("\u7ae0") == 2
+    assert builder._heading_level_for_unit("\u8282") == 3
+    # Undeclared unit falls back to the pack default, not a hardcoded value.
+    assert builder._heading_level_for_unit("\u5377") == 2
+
+    import re
+    marker = rules.get("table_marker_pattern")
+    caption = rules.get("table_caption_pattern")
+    assert marker and caption
+    assert re.search(marker, "[\u8868 3] \u5f15\u811a\u5217\u8868")
+    assert re.search(caption, "[\u8868 3] \u5f15\u811a\u5217\u8868").group(1) == "\u5f15\u811a\u5217\u8868"
+    assert re.search(marker, "[Table 4] Pin map")
+    # A plain sentence is not a table marker.
+    assert not re.search(marker, "\u666e\u901a\u6b63\u6587")

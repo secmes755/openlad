@@ -100,6 +100,43 @@ class DocumentIndexBuilder:
         self._ingest_locks = {}
         self._ingest_locks_guard = threading.Lock()
 
+        # Heading/table vocabulary is pack data; core keeps only the parsing
+        # mechanism. Absent rules leave these features disabled rather than
+        # silently falling back to one language's grammar.
+        self._heading_numerals = {}
+        self._heading_levels = {}
+        self._default_heading_level = 2
+        self._table_caption_pattern = ""
+        self._table_marker_pattern = ""
+        self._load_structure_vocabulary()
+
+    def _load_structure_vocabulary(self) -> None:
+        """Refresh heading/table vocabulary from the active pack."""
+        from ..plugins import get_generic_ingestion_rules
+        rules = get_generic_ingestion_rules()
+        self._heading_numerals = {
+            str(k): v for k, v in (rules.get("heading_numerals") or {}).items()}
+        self._heading_levels = {
+            str(k): v for k, v in (rules.get("heading_levels") or {}).items()}
+        self._default_heading_level = int(
+            rules.get("default_heading_level", 2) or 2)
+        self._table_caption_pattern = str(
+            rules.get("table_caption_pattern") or "")
+        self._table_marker_pattern = str(
+            rules.get("table_marker_pattern") or "")
+
+    def _heading_number_value(self, numerals: str) -> int:
+        """Map a pack-declared numeral word to its integer value."""
+        if not hasattr(self, "_heading_numerals"):
+            self._load_structure_vocabulary()
+        return int(self._heading_numerals.get(str(numerals), 0))
+
+    def _heading_level_for_unit(self, unit: str) -> int:
+        if not hasattr(self, "_heading_levels"):
+            self._load_structure_vocabulary()
+        return int(self._heading_levels.get(str(unit),
+                                             self._default_heading_level))
+
     def _ingest_lock(self, tid: str) -> threading.RLock:
         """Return the tenant's ingestion lock.
 
@@ -1371,16 +1408,14 @@ class DocumentIndexBuilder:
                     page_structure.update({"level": level, "path": current_path, "title": title})
                     break
 
-                cn_num_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
-                              '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
-                cn_heading_match = re.match(r'^第([一二三四五六七八九十]+)(编|章|节|部|篇)\s+(.+)', line)
+                cn_heading_match = re.match(
+                    r'^第([一二三四五六七八九十]+)(编|章|节|部|篇)\s+(.+)', line)
                 if cn_heading_match:
                     cn_num_str = cn_heading_match.group(1)
                     cn_unit = cn_heading_match.group(2)
                     title = cn_heading_match.group(3).strip()
-                    cn_num = cn_num_map.get(cn_num_str, 0)
-                    level_map = {'编': 1, '部': 1, '篇': 1, '章': 2, '节': 3}
-                    level = level_map.get(cn_unit, 2)
+                    cn_num = self._heading_number_value(cn_num_str)
+                    level = self._heading_level_for_unit(cn_unit)
                     path = f"{cn_num}.{cn_unit}.{title}"
                     current_path = path
                     current_level = level
@@ -1480,10 +1515,16 @@ class DocumentIndexBuilder:
                     break
 
 
-                table_match = re.search(r'[\[【（](?:表格|Table|表)\s*\d+[\]】）]', line)
+                # Empty patterns mean the pack declares none: skip the check
+                # rather than letting "" match every line.
+                if not hasattr(self, "_table_marker_pattern"):
+                    self._load_structure_vocabulary()
+                table_match = (re.search(self._table_marker_pattern, line)
+                               if self._table_marker_pattern else None)
                 if table_match:
                     page_structure["is_table"] = True
-                    caption_match = re.search(r'[\[【（](?:表格|Table|表)\s*\d+[\]】）]\s*(.+)', line)
+                    caption_match = (re.search(self._table_caption_pattern, line)
+                                     if self._table_caption_pattern else None)
                     if caption_match:
                         page_structure["table_caption"] = caption_match.group(1).strip()
 
@@ -1787,14 +1828,12 @@ class DocumentIndexBuilder:
         if len(content) > max_content:
             content = content[:max_content] + "..."
 
-        prompt = f"""请为以下技术文档章节生成一个简洁摘要（50-100字），说明该章节的核心内容：
-
-章节标题: {title}
-
-章节内容:
-{content}
-
-请用中文回答，只输出摘要内容，不要其他解释。"""
+        from ..plugins import get_generic_ingestion_prompts
+        template = get_generic_ingestion_prompts().get("chapter_summary")
+        prompt = (template.format(title=title, content=content) if template else
+                  f"Summarize this chapter in 50-100 words.\n\n"
+                  f"Chapter title: {title}\n\nChapter content:\n{content}\n\n"
+                  "Output the summary only, in the same language as the content.")
 
         try:
             summary = self.model_client.generate(prompt, max_tokens=256, temperature=0.3)
@@ -1881,17 +1920,15 @@ class DocumentIndexBuilder:
         if len(preview_text) > 2000:
             preview_text = preview_text[:2000] + "..."
 
-        prompt = f"""请为以下技术文档生成一个简洁的文档级摘要（100-200字），说明文档的核心内容和主要章节：
-
-文档: {parsed_doc.filename}
-
-主要章节:
-{chapter_text}
-
-章节内容预览:
-{preview_text}
-
-请用中文回答，只输出摘要内容，不要其他解释。"""
+        from ..plugins import get_generic_ingestion_prompts
+        template = get_generic_ingestion_prompts().get("document_summary")
+        prompt = (template.format(filename=parsed_doc.filename,
+                                  chapters=chapter_text,
+                                  preview=preview_text) if template else
+                  f"Summarize this document in 100-200 words.\n\n"
+                  f"Document: {parsed_doc.filename}\n\nMain chapters:\n{chapter_text}\n\n"
+                  f"Chapter content preview:\n{preview_text}\n\n"
+                  "Output the summary only, in the same language as the content.")
 
         try:
             summary = self.model_client.generate(prompt, max_tokens=512, temperature=0.3)

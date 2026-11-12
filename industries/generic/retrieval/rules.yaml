@@ -167,3 +167,4 @@ message_rules:
     - pattern: '[\u4e00-\u9fff]'
       text: '第 $page 页'
     - pattern: 'p.$page'
+

@@ -40,3 +40,29 @@ title_extraction: |
   3. doc_type: document type{doc_type_hint}; null if unknown
 
   Output one JSON object only: {{"subject": "...", "year": null, "doc_type": "..."}}
+
+chapter_summary: |
+  Summarize this document chapter in 50-100 words, stating its core content.
+
+  Chapter title: {title}
+
+  Chapter content:
+  {content}
+
+  Output the summary only, with no additional explanation.
+  Respond in the same language as the chapter content.
+
+document_summary: |
+  Summarize this document in 100-200 words, stating its core content and main chapters.
+
+  Document: {filename}
+
+  Main chapters:
+  {chapters}
+
+  Chapter content preview:
+  {preview}
+
+  Output the summary only, with no additional explanation.
+  Respond in the same language as the document content.
+
