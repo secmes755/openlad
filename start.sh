@@ -24,7 +24,7 @@ fi
 : ${OPENLAD_CHART_VLM_URL:="$OPENLAD_LLM_URL"}
 
 # Model names (matching backend registered model names)
-: ${OPENLAD_LLM_MODEL:="qwen3.5-9b"}
+: ${OPENLAD_LLM_MODEL:="qwen3.6-35b-a3b"}
 : ${OPENLAD_EMB_MODEL:="qwen3-embedding-0.6b"}
 : ${OPENLAD_CHART_VLM_MODEL:="$OPENLAD_LLM_MODEL"}
 

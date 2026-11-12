@@ -88,8 +88,9 @@ Probe before restarting anything:
 ```bash
 curl http://127.0.0.1:8080/health        # process responsive?
 # send a short completion and time it — compare against your normal token/s
+# replace model with the alias used by your active ingestion/query profile
 curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" \
-    -d '{"model":"qwen3.5-9b","messages":[{"role":"user","content":"ping"}],"max_tokens":16}'
+    -d '{"model":"qwen3.6-35b-a3b","messages":[{"role":"user","content":"ping"}],"max_tokens":16}'
 ```
 
 Fix: restart llama-server (and after any NVIDIA driver/library update,

@@ -80,10 +80,10 @@ cd /tmp/llama.cpp && cmake -B build && cmake --build build -j$(nproc)
 sudo cp build/bin/llama-server /usr/local/bin/
 
 mkdir -p ~/models
-# Query model: Qwen3.6-35B-A3B Q2_K_XL (~12 GB). A 30B-class MoE with about 3B
-# active parameters, so it decodes at the speed of a small model while fitting
-# a 16 GB card. Smaller models drive the query planner poorly: they loop on
-# document listing and never reach the page content.
+# Query profile: Qwen3.6-35B-A3B Q2_K_XL (~12 GB). This MoE has about 3B
+# active parameters and one query slot, fitting a 16 GB card alongside the
+# embedding model. Use the 9B + OCR ingestion profile from the deployment guide
+# when processing scanned documents.
 huggingface-cli download Qwen/Qwen3.6-35B-A3B-GGUF qwen3.6-35b-a3b-q2_k_xl.gguf \
     --local-dir ~/models
 # Embedding: Qwen3-Embedding-0.6B Q8_0 (~0.6 GB)
@@ -99,7 +99,8 @@ llama-server \
     --model ~/models/qwen3.6-35b-a3b-q2_k_xl.gguf \
     --host 127.0.0.1 --port 8080 --alias qwen3.6-35b-a3b \
     --n-gpu-layers 999 --ctx-size 32768 --parallel 1 \
-    --cache-type-k q8_0 --cache-type-v q8_0 --fit off --jinja
+    --cache-type-k q8_0 --cache-type-v q8_0 --reasoning off \
+    --cache-ram 2048 --fit off --jinja
 
 # Embedding (port 8081)
 llama-server \
@@ -109,9 +110,10 @@ llama-server \
     --embeddings --pooling mean --batch-size 2048 --cache-ram 0
 ```
 
-> `--reasoning off` is **critical** for Qwen3.5 — thinking mode breaks
-> structured outputs. Flag meanings and tuning per GPU size:
-> [deployment guide](docs/deployment.md#recommended-llama-server-flags).
+> Keep reasoning off for structured planning. This quickstart uses the 35B query
+> profile: one slot, 32K context, no concurrent OCR. For the simpler always-on
+> 9B profile and the staged 9B + OCR ingestion profile, see the
+> [deployment guide](docs/deployment.md#optional-staged-two-model-profile-for-16-gb-gpus).
 
 ### 4. Start OpenLAD
 
@@ -173,7 +175,7 @@ documents. Details: [deployment guide](docs/deployment.md#docker).
 
 | Guide | What it covers |
 |---|---|
-| [Deployment & hardware](docs/deployment.md) ([中文](docs/zh-CN/deployment.md)) | Hardware lookup table, model backends (llama.cpp / Ollama / OCR endpoint), recommended llama-server flags, Docker details |
+| [Deployment & hardware](docs/deployment.md) ([中文](docs/zh-CN/deployment.md)) | Hardware lookup, model backends, staged 9B ingestion / 35B query profiles, llama-server flags, Docker |
 | [Configuration reference](docs/configuration.md) ([中文](docs/zh-CN/configuration.md)) | Every `OPENLAD_*` environment variable, the embedding batch-size pairing rule, concurrency policy |
 | [API quickstart](docs/api-quickstart.md) ([中文](docs/zh-CN/api-quickstart.md)) | Login → upload → query with curl; multi-document comparison |
 | [Architecture](docs/architecture.md) ([中文](docs/zh-CN/architecture.md)) | System diagram, retrieval pipeline, industry-pack layering |

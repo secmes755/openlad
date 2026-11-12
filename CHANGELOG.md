@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The 16 GB deployment guide now covers staged model profiles.** The default
+  quickstart uses the 35B-A3B query profile with a 32K context and one slot;
+  OCR-dependent ingestion switches to the 9B + OCR profile. Runtime, Docker and
+  documentation model aliases now agree, and the resource limits and switching
+  procedure are explicit. The always-on 9B configuration remains supported.
+
 - **The synthesis context budget has one source of truth.** Four call sites read
   it as ``cfg.get("synthesis_context_budget", 35500)``, so deleting or renaming
   the config key would have silently fallen back to a stale number — the config
