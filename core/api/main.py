@@ -230,7 +230,8 @@ async def admin_page():
 # isolation. The filename whitelist (basename charset) blocks path traversal.
 # ---------------------------------------------------------------------------
 _IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:png|jpg|jpeg|webp)$", re.IGNORECASE)
-_PAGE_IMAGE_RE = re.compile(r'^(?P<doc_id>[A-Za-z0-9._-]+)_p(?P<page>\d+)\.png$', re.IGNORECASE)
+_PAGE_IMAGE_RE = re.compile(r'^(?P<doc_id>[A-Za-z0-9._-]+)_p(?P<page>\d{1,6})\.png$', re.IGNORECASE)
+_PAGE_IMAGE_REPAIR_SLOTS = asyncio.Semaphore(2)
 
 
 async def _repair_tenant_page_image(tenant_id: str, filename: str, image_path) -> bool:
@@ -265,7 +266,12 @@ async def tenant_image(filename: str):
     image_path = settings.get_tenant_data_dir(ctx.tenant_id) / "images" / filename
     if image_path.is_file() and not is_placeholder_image(image_path):
         return FileResponse(image_path, headers={"Cache-Control": "private, max-age=3600"})
-    await _repair_tenant_page_image(ctx.tenant_id, filename, image_path)
+    async with _PAGE_IMAGE_REPAIR_SLOTS:
+        repaired = await _repair_tenant_page_image(ctx.tenant_id, filename, image_path)
+    if repaired:
+        # A genuine blank PDF page has the same pixels as a legacy placeholder.
+        # A successful fresh render is authoritative and must remain readable.
+        return FileResponse(image_path, headers={"Cache-Control": "private, max-age=3600"})
     if not image_path.is_file() or is_placeholder_image(image_path):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path, headers={"Cache-Control": "private, max-age=3600"})

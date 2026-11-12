@@ -114,7 +114,9 @@ def _live_files(tenants_dir: Path) -> tuple[set[str], set[str]]:
                     "SELECT page_image_path, content_json FROM doc_pages"
                 ):
                     if r["page_image_path"]:
-                        filenames.add(os.path.basename(r["page_image_path"]))
+                        image_name = os.path.basename(r["page_image_path"])
+                        filenames.add(image_name)
+                        filenames.add(image_name + ".rendered")
                     cj = r["content_json"]
                     if cj and "_chart" in cj:
                         try:
