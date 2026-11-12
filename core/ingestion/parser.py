@@ -2,6 +2,7 @@
 Universal document parser - supports PDF, Excel, PPT, Word, Images, Markdown, HTML, TXT
 Fully generalized, no industry-specific content
 """
+import csv
 import io
 import logging
 import re
@@ -1432,6 +1433,13 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
         # latin-1 is a final loss-free byte mapping, not a guessed locale.
         return raw.decode('latin-1'), 'latin-1'
 
+    @staticmethod
+    def _csv_delimiter(text: str) -> str:
+        try:
+            return csv.Sniffer().sniff(text[:8192], delimiters=',;\t').delimiter
+        except csv.Error:
+            return ','
+
     def _parse_csv(self, path: Path) -> ParsedDocument:
         doc = ParsedDocument()
         doc.filename = path.name
@@ -1447,7 +1455,7 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
             try:
                 df = pd.read_csv(
                     io.StringIO(text), header=None, dtype=object,
-                    sep=None, engine='python', keep_default_na=False,
+                    sep=self._csv_delimiter(text), engine='python', keep_default_na=False,
                 )
                 rows = list(df.itertuples(index=False, name=None))
                 page_text = self._rows_to_page_text(rows)
