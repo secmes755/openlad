@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delimited documents retain their actual content.** Excel workbooks no longer
+  use the first row as synthetic column names or turn literal `N/A` values into
+  `nan`; cells are normalized into escaped Markdown tables, CSV is supported,
+  and failed sheets are reported without discarding successful sheets. Empty
+  Excel/PPT parses now fail explicitly instead of creating empty documents.
+  Legacy `.xls` support declares its `xlrd` dependency.
+
+- **Short non-empty chunks are preserved.** Chunking no longer discards text
+  solely because it is shorter than 20 characters; adjacent fragments can still
+  be merged by the existing chunk-size logic.
+
 ## [0.5.0] - 2026-11-12
 
 ### Fixed

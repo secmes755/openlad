@@ -10,6 +10,8 @@ partial document with no signal at all.
 import sys
 import types
 
+import pytest
+
 # builder.py top-level imports PIL/numpy (via layout), which the CI venv
 # intentionally lacks — same stub pattern as test_embedding_failure_visibility.
 try:
@@ -160,7 +162,7 @@ def test_pdf_total_crash_without_fallback_carries_parse_warning(monkeypatch, tmp
 # BUG-7.2: Excel/PPT parse failure returns an empty document silently
 # --------------------------------------------------------------------------
 
-def test_excel_failure_carries_parse_warning(monkeypatch, tmp_path):
+def test_excel_failure_raises_instead_of_shipping_an_empty_document(monkeypatch, tmp_path):
     f = tmp_path / "book.xlsx"
     f.write_bytes(b"fake workbook bytes")
     monkeypatch.setattr(parser_mod, "HAS_EXCEL", True)
@@ -172,13 +174,11 @@ def test_excel_failure_carries_parse_warning(monkeypatch, tmp_path):
         parser_mod, "pd", types.SimpleNamespace(ExcelFile=_raise_excel_file),
         raising=False,
     )
-    doc = parser_mod.DocumentParser()._parse_excel(f)
-    assert doc.pages == []
-    assert doc.metadata.get("parse_warnings"), \
-        "a 0-page Excel document must not ship verified"
+    with pytest.raises(RuntimeError, match="Excel parsing failed"):
+        parser_mod.DocumentParser()._parse_excel(f)
 
 
-def test_ppt_failure_carries_parse_warning(monkeypatch, tmp_path):
+def test_ppt_failure_raises_instead_of_shipping_an_empty_document(monkeypatch, tmp_path):
     f = tmp_path / "slides.pptx"
     f.write_bytes(b"fake deck bytes")
     monkeypatch.setattr(parser_mod, "HAS_PPT", True)
@@ -188,10 +188,8 @@ def test_ppt_failure_carries_parse_warning(monkeypatch, tmp_path):
 
     monkeypatch.setattr(parser_mod, "Presentation", _raise_presentation,
                         raising=False)
-    doc = parser_mod.DocumentParser()._parse_ppt(f)
-    assert doc.pages == []
-    assert doc.metadata.get("parse_warnings"), \
-        "a 0-slide deck must not ship verified"
+    with pytest.raises(RuntimeError, match="PPT parsing failed"):
+        parser_mod.DocumentParser()._parse_ppt(f)
 
 
 # --------------------------------------------------------------------------
