@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit no-language-switch constraint. The derived-rate corrective turn uses
   the same instruction, and the main prompt separates the two directives.
 
+- **Conversation changes isolate in-flight work.** Switching, creating or
+  deleting a session now invalidates older message loads and query responses.
+  A stale response can no longer overwrite the selected session's DOM or
+  history, and sending is blocked while session history is loading. Static asset
+  versions are bumped with the template changes.
+
+- **Removed misleading automatic welcome queries.** The three broad prompts
+  were not reliable intents for every corpus; the welcome page now leaves the
+  question to the user instead of issuing a query on a single click.
+
 - **An unreadable page image no longer aborts the whole document.** Image
   correction wrapped its work in ``try/except`` and fell back to
   ``Image.open``, but a file that could not be read at all failed the fallback

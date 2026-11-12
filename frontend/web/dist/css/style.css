@@ -267,33 +267,7 @@ body {
 .welcome-content p {
     font-size: 16px;
     color: var(--text-secondary);
-    margin-bottom: 32px;
 }
-.example-queries {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-.example-chip {
-    padding: 14px 20px;
-    background: var(--bg-main);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text-primary);
-    transition: all 0.2s;
-    text-align: left;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.example-chip:hover {
-    border-color: var(--primary);
-    box-shadow: var(--shadow);
-    transform: translateY(-1px);
-}
-.example-chip i { color: var(--primary); }
 
 /* Chat Messages */
 .chat-messages {

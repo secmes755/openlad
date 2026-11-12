@@ -8,9 +8,6 @@ const I18N_DICT = {
     // === App Header & Branding ===
     "app.title":                 { zh: "OpenLAD", en: "OpenLAD" },
     "app.subtitle":              { zh: "智能文档分析助手 — 基于您的知识库回答问题", en: "Intelligent document analysis assistant — Answer questions based on your knowledge base" },
-    "welcome.example1":          { zh: "总结知识库中文档的核心要点", en: "Summarize the key points of the documents in the knowledge base" },
-    "welcome.example2":          { zh: "对比文档之间的关键差异", en: "Compare the key differences between the documents" },
-    "welcome.example3":          { zh: "列出文档中提到的技术规格参数", en: "List the technical specifications mentioned in the documents" },
     "app.newChat":               { zh: "新建对话", en: "New Chat" },
     "app.logout":                { zh: "退出登录", en: "Logout" },
     "app.sidebar.close":         { zh: "关闭侧边栏", en: "Close Sidebar" },
