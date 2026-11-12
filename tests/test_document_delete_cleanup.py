@@ -21,6 +21,7 @@ Design conventions encoded here:
     that belongs to tenant B.
 """
 import json
+from pathlib import Path
 
 from core.db.tenant_db import TenantMetadataDB, TenantVectorDB
 
@@ -60,6 +61,9 @@ def _seed_document(meta, base, doc_id="a" * 32, n_pages=3, tenant_id="t1"):
         img = imgs_dir / f"{doc_id}_p{p}.png"
         img.write_bytes(b"\x89PNG fake")
         image_files.append(img)
+        marker = Path(str(img) + '.rendered')
+        marker.write_text('1\n')
+        image_files.append(marker)
 
         # Chart crops live only inside content_json (.charts[].image_path),
         # matching how ingestion records them -- there is no dedicated column.

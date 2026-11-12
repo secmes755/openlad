@@ -443,6 +443,7 @@ class TenantMetadataDB:
                     for pr in page_rows:
                         if pr["page_image_path"]:
                             image_paths.append(pr["page_image_path"])
+                            image_paths.append(pr["page_image_path"] + ".rendered")
                         # Chart crops are recorded only inside content_json
                         # (.charts[].image_path); there is no dedicated column.
                         cj = pr["content_json"]

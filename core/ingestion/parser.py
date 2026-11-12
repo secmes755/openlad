@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # pdfplumber open() therefore runs under this lock. Reentrant so the pre-filter
 # pass and the parse pass cannot deadlock against each other.
 _PDFPLUMBER_LOCK = threading.RLock()
+_PDFIUM_LOCK = threading.Lock()
 
 # Attempt to import parsing libraries
 try:
@@ -991,29 +992,32 @@ class DocumentParser:
         except ImportError:
             return rendered
         scale = dpi / 72.0  # pypdfium2 renders at 72 dpi unless scaled
-        try:
-            pdf = pdfium.PdfDocument(pdf_path)
-        except Exception as e:
-            logger.warning(f"pypdfium2 could not open {pdf_path}: {e}")
-            return rendered
-        try:
-            page_count = len(pdf)
-            wanted = range(1, page_count + 1) if page_numbers is None else page_numbers
-            for page_num in wanted:
-                idx = page_num - 1
-                if idx < 0 or idx >= page_count:
-                    continue
-                try:
-                    page = pdf.get_page(idx)
+        # pdfium is process-global native state; ingestion and lazy citation
+        # rendering must enter through the same serialization point.
+        with _PDFIUM_LOCK:
+            try:
+                pdf = pdfium.PdfDocument(pdf_path)
+            except Exception as e:
+                logger.warning(f"pypdfium2 could not open {pdf_path}: {e}")
+                return rendered
+            try:
+                page_count = len(pdf)
+                wanted = range(1, page_count + 1) if page_numbers is None else page_numbers
+                for page_num in wanted:
+                    idx = page_num - 1
+                    if idx < 0 or idx >= page_count:
+                        continue
                     try:
-                        bitmap = page.render(scale=scale)
-                        rendered[page_num] = bitmap.to_pil()
-                    finally:
-                        page.close()
-                except Exception as e:
-                    logger.warning(f"pypdfium2 render failed p{page_num}: {e}")
-        finally:
-            pdf.close()
+                        page = pdf.get_page(idx)
+                        try:
+                            bitmap = page.render(scale=scale)
+                            rendered[page_num] = bitmap.to_pil()
+                        finally:
+                            page.close()
+                    except Exception as e:
+                        logger.warning(f"pypdfium2 render failed p{page_num}: {e}")
+            finally:
+                pdf.close()
         return rendered
 
     def _render_single_page(self, pdf_path: str, page_num: int, dpi: int = 150):

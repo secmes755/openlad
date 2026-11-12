@@ -712,6 +712,7 @@ document.addEventListener('click', function(e) {
     const docId = el.getAttribute('data-doc-id');
     const msg = el.closest('.message');
     const src = msg && msg._sources ? msg._sources.find(s => s.doc_id === docId) : null;
+    if (src && src.has_page_image === false) return;
     const pages = src && src._pages && src._pages.length ? src._pages : [page];
     openPageImages(docId, pages, page, src ? (src.title || src.filename) : docId);
 });
@@ -768,12 +769,19 @@ document.addEventListener('click', (e) => {
 function findDocIdForPage(sources, pageNum) {
     if (!sources) return null;
     for (const src of sources) {
+        if (src.has_page_image === false) continue;
         const pages = src.pages || [];
         if (pages.includes(pageNum)) {
             return src.doc_id || null;
         }
     }
     return null;
+}
+
+function sourceSupportsPageImages(sources, docId) {
+    if (!docId) return false;
+    const src = (sources || []).find(s => s.doc_id === docId);
+    return !src || src.has_page_image !== false;
 }
 
 function processCitations(html, citationMap, sources) {
@@ -817,7 +825,8 @@ function processCitations(html, citationMap, sources) {
     // 4. Format 4: %%CITE_N%% (pre-protected standard)
     html = html.replace(/%%CITE_(\d+)%%/g, (match, pageNum) => {
         const docIds = citationMap ? citationMap[pageNum] : null;
-        const docId = docIds && docIds.length > 0 ? docIds[0] : findDocIdForPage(sources, parseInt(pageNum));
+        const mappedDocId = docIds && docIds.length > 0 ? docIds[0] : findDocIdForPage(sources, parseInt(pageNum));
+        const docId = sourceSupportsPageImages(sources, mappedDocId) ? mappedDocId : null;
         if (docId) {
             return `<sup class="page-cite" data-doc-id="${docId}" data-page="${pageNum}" title="View page ${pageNum}">[${pageNum}]</sup>`;
         }
