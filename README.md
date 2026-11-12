@@ -22,7 +22,7 @@ hardware: a 16 GB consumer GPU and 32 GB of RAM is the recommended baseline.
 
 <table>
 <tr><td><b>🔒 Fully Offline</b></td><td>All processing — LLM inference, embeddings, OCR, document parsing — happens locally. Works on air-gapped networks.</td></tr>
-<tr><td><b>📄 Multi-Format Ingestion</b></td><td>PDF, Word, Excel, PowerPoint, images, Markdown, HTML, TXT. Scanned/image-only pages are transcribed via a dedicated OCR endpoint (any OpenAI-compatible vision model, e.g. OvisOCR2), with Tesseract as an optional offline fallback.</td></tr>
+<tr><td><b>📄 Multi-Format Ingestion</b></td><td>PDF, Word, Excel, PowerPoint, images, Markdown, HTML, TXT, CSV. Scanned/image-only pages are transcribed via a dedicated OCR endpoint (any OpenAI-compatible vision model, e.g. OvisOCR2), with Tesseract as an optional offline fallback.</td></tr>
 <tr><td><b>🧠 Hybrid Retrieval</b></td><td>Full-text search (FTS5) + vector search (sqlite-vec) + LLM-driven planning. Three-phase pipeline: Plan → Retrieve → Synthesize.</td></tr>
 <tr><td><b>🏭 Industry Plugins</b></td><td>Extensible plugin system. 1 complete sample pack (Semiconductor) + 3 empty templates (Legal, Financial, Generic) for customization. Custom packs can be built for any domain.</td></tr>
 <tr><td><b>👥 Multi-Tenant</b></td><td>Isolated databases and vector spaces per tenant. Admin panel for user and document management.</td></tr>

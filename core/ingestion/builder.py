@@ -1978,7 +1978,7 @@ class DocumentIndexBuilder:
                 sub_chunks = self.parser._simple_chunk(text, chunk_size=max_chunk_size, overlap=chunk_overlap)
                 for sc in sub_chunks:
                     sc = sc.strip()
-                    if len(sc) >= 20:
+                    if sc:
                         chunks_with_pages.append((sc, [(page_id, page_num)], page_id, page_num))
                 continue
 
@@ -2011,7 +2011,7 @@ class DocumentIndexBuilder:
                     sub_chunks = self.parser._simple_chunk(chunk_text, chunk_size=max_chunk_size, overlap=chunk_overlap)
                 for sc in sub_chunks:
                     sc = sc.strip()
-                    if len(sc) >= 20:
+                    if sc:
                         final_chunks.append((sc, primary_id, primary_num))
             else:
                 final_chunks.append((chunk_text, primary_id, primary_num))
@@ -2417,7 +2417,7 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         import re
         # FIX: UUID format includes hyphens
         name = re.sub(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_', '', filename)
-        name = re.sub(r'\.(pdf|PDF|xlsx|xls|pptx|ppt|docx|jpg|jpeg|png|bmp|md|txt|html)$', '', name)
+        name = re.sub(r'\.(pdf|PDF|xlsx|xls|csv|pptx|ppt|docx|jpg|jpeg|png|bmp|md|txt|html)$', '', name)
         name = name.replace('_', ' ').replace('-', ' ')
         return name.strip() if name.strip() else filename
 

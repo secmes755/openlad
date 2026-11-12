@@ -29,6 +29,7 @@ REQUIRED_MODULES = {
     "pdfplumber": "pdfplumber",
     "pandas": "pandas",
     "openpyxl": "openpyxl",
+    "xlrd": "xlrd",
     "pptx": "python-pptx",
     "docx": "python-docx",
     "PIL": "Pillow",

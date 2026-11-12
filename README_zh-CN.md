@@ -21,7 +21,7 @@
 
 <table>
 <tr><td><b>🔒 完全离线</b></td><td>所有处理 — LLM 推理、Embedding、OCR、文档解析 — 均在本地完成。支持物理隔离网络。</td></tr>
-<tr><td><b>📄 多格式入库</b></td><td>PDF、Word、Excel、PowerPoint、图片、Markdown、HTML、TXT。扫描件/纯图像页面经专用 OCR 端点转写（任意 OpenAI 兼容视觉模型，如 OvisOCR2），可选 Tesseract 离线兜底。</td></tr>
+<tr><td><b>📄 多格式入库</b></td><td>PDF、Word、Excel、PowerPoint、图片、Markdown、HTML、TXT、CSV。扫描件/纯图像页面经专用 OCR 端点转写（任意 OpenAI 兼容视觉模型，如 OvisOCR2），可选 Tesseract 离线兜底。</td></tr>
 <tr><td><b>🧠 混合检索</b></td><td>全文检索（FTS5）+ 向量检索（sqlite-vec）+ LLM 驱动规划。三阶段流水线：规划 → 检索 → 合成。</td></tr>
 <tr><td><b>🏭 行业插件</b></td><td>可扩展的插件系统。1 个完整示例包（半导体）+ 3 个空模板（法律、金融、通用）供定制。可为任意领域定制行业包。</td></tr>
 <tr><td><b>👥 多租户</b></td><td>每租户独立数据库和向量空间。管理面板支持用户和文档管理。</td></tr>

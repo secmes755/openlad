@@ -2,6 +2,7 @@
 Universal document parser - supports PDF, Excel, PPT, Word, Images, Markdown, HTML, TXT
 Fully generalized, no industry-specific content
 """
+import io
 import logging
 import re
 import threading
@@ -393,7 +394,7 @@ class DocumentParser:
     """Universal document parser - fully generalized, no industry-specific logic"""
 
     SUPPORTED_EXTENSIONS = {
-        ".pdf", ".md", ".txt", ".html", ".htm",
+        ".pdf", ".md", ".txt", ".html", ".htm", ".csv",
         ".xlsx", ".xls", ".pptx", ".ppt",
         ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif",
         ".docx"
@@ -429,6 +430,8 @@ class DocumentParser:
             doc = self._parse_pdf(path)
         elif suffix in [".xlsx", ".xls"]:
             doc = self._parse_excel(path)
+        elif suffix == ".csv":
+            doc = self._parse_csv(path)
         elif suffix in [".pptx", ".ppt"]:
             doc = self._parse_ppt(path)
         elif suffix in [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif"]:
@@ -1359,38 +1362,150 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
     # Excel Parsing
     # ========================================================================
 
+    @staticmethod
+    def _clean_excel_cell(value) -> str:
+        """Render a cell without turning missing values or labels into noise."""
+        if value is None:
+            return ''
+        try:
+            if HAS_EXCEL and pd.isna(value):
+                return ''
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, float):
+            return str(int(value)) if value.is_integer() else repr(value)
+        if hasattr(value, 'isoformat'):
+            try:
+                if (getattr(value, 'hour', 1) == 0
+                        and getattr(value, 'minute', 1) == 0
+                        and getattr(value, 'second', 1) == 0):
+                    return value.date().isoformat()
+                return value.isoformat(sep=' ')
+            except (TypeError, ValueError, AttributeError):
+                return str(value)
+        return '\n'.join(' '.join(line.split()) for line in str(value).splitlines())
+
+    @staticmethod
+    def _rows_to_page_text(rows: list[list[str]], title: str = '') -> str:
+        """Render non-empty rows as a Markdown table without losing literals."""
+        cleaned = [
+            [DocumentParser._clean_excel_cell(value) for value in row]
+            for row in rows
+        ]
+        cleaned = [row for row in cleaned if any(row)]
+        if not cleaned:
+            return ''
+        width = max(len(row) for row in cleaned)
+        cleaned = [row + [''] * (width - len(row)) for row in cleaned]
+        kept_columns = [
+            index for index in range(width)
+            if any(row[index] for row in cleaned)
+        ]
+        cleaned = [[row[index] for index in kept_columns] for row in cleaned]
+
+        def cell_text(value: str) -> str:
+            return (value.replace('\\', '\\\\').replace('|', '\\|')
+                    .replace('\r\n', '\n').replace('\r', '\n')
+                    .replace('\n', '<br>'))
+
+        lines = [title] if title else []
+        while cleaned and sum(1 for value in cleaned[0] if value) <= 1 and len(cleaned) > 1:
+            lines.extend(value for value in cleaned.pop(0) if value)
+        if cleaned:
+            header, data = cleaned[0], cleaned[1:]
+            lines.append('| ' + ' | '.join(cell_text(value) for value in header) + ' |')
+            lines.append('| ' + ' | '.join('---' for _ in header) + ' |')
+            lines.extend(
+                '| ' + ' | '.join(cell_text(value) for value in row) + ' |'
+                for row in data
+            )
+        return '\n'.join(lines)
+
+    @staticmethod
+    def _read_delimited_text(path: Path) -> tuple[str, str]:
+        raw = path.read_bytes()
+        for encoding in ('utf-8-sig', 'utf-8', 'gb18030', 'big5'):
+            try:
+                return raw.decode(encoding), encoding
+            except UnicodeDecodeError:
+                continue
+        # latin-1 is a final loss-free byte mapping, not a guessed locale.
+        return raw.decode('latin-1'), 'latin-1'
+
+    def _parse_csv(self, path: Path) -> ParsedDocument:
+        doc = ParsedDocument()
+        doc.filename = path.name
+        doc.original_path = str(path.absolute())
+        doc.file_size = path.stat().st_size
+        text, encoding = self._read_delimited_text(path)
+        doc.metadata['encoding'] = encoding
+        if not text.strip():
+            raise RuntimeError(f"CSV parsing produced no content for {path.name!r}")
+
+        page_text = text
+        if HAS_EXCEL:
+            try:
+                df = pd.read_csv(
+                    io.StringIO(text), header=None, dtype=object,
+                    sep=None, engine='python', keep_default_na=False,
+                )
+                rows = list(df.itertuples(index=False, name=None))
+                page_text = self._rows_to_page_text(rows)
+            except Exception as exc:
+                doc.metadata.setdefault('parse_warnings', []).append(
+                    f"CSV structured parsing failed; raw text retained: {exc}"
+                )
+        if not page_text.strip():
+            raise RuntimeError(f"CSV parsing produced no content for {path.name!r}")
+        doc.pages.append(ParsedPage(
+            page_num=1, raw_text=page_text, section_title=path.stem,
+            content_dict={'encoding': encoding},
+        ))
+        return doc
+
     def _parse_excel(self, path: Path) -> ParsedDocument:
         doc = ParsedDocument()
         doc.filename = path.name
         doc.original_path = str(path.absolute())
         doc.file_size = path.stat().st_size
+        if not HAS_EXCEL:
+            raise RuntimeError(f"Excel parsing failed for {path.name!r}: pandas is unavailable")
 
-        if HAS_EXCEL:
-            try:
-                xl = pd.ExcelFile(path)
-                doc.metadata["sheets"] = xl.sheet_names
+        try:
+            excel = pd.ExcelFile(path)
+        except Exception as exc:
+            raise RuntimeError(f"Excel parsing failed for {path.name!r}: {exc}") from exc
 
-                for sheet_idx, sheet_name in enumerate(xl.sheet_names, 1):
-                    df = pd.read_excel(path, sheet_name=sheet_name)
-                    sheet_text = f"=== Sheet: {sheet_name} ===\n"
-                    sheet_text += " | ".join(map(str, df.columns)) + "\n"
-                    sheet_text += "-|-".join(["---"] * len(df.columns)) + "\n"
-                    for _, row in df.iterrows():
-                        sheet_text += " | ".join(map(str, row.values)) + "\n"
-
-                    parsed_page = ParsedPage(
-                        page_num=sheet_idx,
-                        raw_text=sheet_text,
-                        section_title=sheet_name,
-                        content_dict={"sheet": sheet_name, "columns": list(df.columns)}
+        failures = []
+        with excel as workbook:
+            doc.metadata['sheets'] = workbook.sheet_names
+            for sheet_idx, sheet_name in enumerate(workbook.sheet_names, 1):
+                try:
+                    frame = workbook.parse(
+                        sheet_name, header=None, dtype=object, keep_default_na=False,
                     )
-                    doc.pages.append(parsed_page)
-            except Exception as e:
-                logger.error(f"Excel parsing failed {path}: {e}")
-                doc.metadata.setdefault("parse_warnings", []).append(
-                    f"Excel parsing failed: {e}"
-                )
+                    rows = list(frame.itertuples(index=False, name=None))
+                    sheet_text = self._rows_to_page_text(
+                        rows, f"=== Sheet: {sheet_name} ===",
+                    )
+                except Exception as exc:
+                    failures.append(f"Sheet {sheet_name!r}: {exc}")
+                    continue
+                if not sheet_text:
+                    continue
+                doc.pages.append(ParsedPage(
+                    page_num=sheet_idx, raw_text=sheet_text,
+                    section_title=sheet_name,
+                    content_dict={'sheet': sheet_name},
+                ))
 
+        if failures:
+            doc.metadata.setdefault('parse_warnings', []).extend(failures)
+        if not doc.pages:
+            detail = '; '.join(failures) if failures else 'all sheets empty'
+            raise RuntimeError(
+                f"Excel parsing produced no content for {path.name!r}: {detail}"
+            )
         return doc
 
     # ========================================================================
@@ -1460,12 +1575,11 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                         content_dict=content_dict
                     )
                     doc.pages.append(parsed_page)
-            except Exception as e:
-                logger.error(f"PPT parsing failed {path}: {e}")
-                doc.metadata.setdefault("parse_warnings", []).append(
-                    f"PPT parsing failed: {e}"
-                )
+            except Exception as exc:
+                raise RuntimeError(f"PPT parsing failed for {path.name!r}: {exc}") from exc
 
+        if not doc.pages:
+            raise RuntimeError(f"PPT parsing produced no content for {path.name!r}")
         return doc
 
     def _extract_ppt_chart_data(self, chart, slide_idx: int) -> str:
