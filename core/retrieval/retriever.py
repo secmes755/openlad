@@ -1654,9 +1654,11 @@ class SegmentMerger:
             if len(source_content) > max_source_content:
                 source_content = mark_truncated(source_content[:max_source_content])
 
+            from ..ingestion.page_images import document_supports_page_images
             source_entry = {
                 "doc_id": doc_id, "title": doc_title,
                 "filename": doc_results[0].filename,
+                "has_page_image": document_supports_page_images(doc),
                 "pages": list(set(p for p in included_pages if p)),
                 "content": source_content,
             }
