@@ -578,6 +578,46 @@ Respond entirely in the same language as the user's question. Never switch langu
             }]
         }
 
+    def _render_catalog(self, max_chars: int) -> str:
+        """Render the document catalog within a character budget.
+
+        A raw ``json.dumps(...)[:max_chars]`` cut the listing mid-document, so
+        on a large collection the tail — including documents the query named —
+        never reached the model. The listing is therefore rendered compactly and
+        truncated on whole-document boundaries, worst-case by dropping chapter
+        detail (which only narrows page targeting) before dropping documents.
+        """
+        docs = (self.catalog or {}).get('documents') or []
+        if not docs:
+            return json.dumps({'documents': []}, ensure_ascii=False)
+
+        def render(items):
+            return json.dumps({'documents': items},
+                              ensure_ascii=False, separators=(',', ':'))
+
+        full = render(docs)
+        if len(full) <= max_chars:
+            return full + "\n"
+
+        # Tier 1: every document, title + doc_id only.
+        minimal = [{'doc_id': d.get('doc_id'), 'title': d.get('title')}
+                   for d in docs]
+        shrunken = render(minimal)
+        if len(shrunken) <= max_chars:
+            return shrunken + "\n(chapter detail omitted to fit the listing)\n"
+
+        # Tier 2: as many whole documents as fit, then say so explicitly so the
+        # model can widen its search instead of assuming the set is complete.
+        kept = []
+        for doc in minimal:
+            if len(render(kept + [doc])) > max_chars:
+                break
+            kept.append(doc)
+        omitted = len(minimal) - len(kept)
+        return (render(kept)
+                + f"\n({omitted} more documents are not listed here; the "
+                  "listing was shortened to fit.)\n")
+
     def retrieve(self, query: str) -> dict:
         """
         Complete Agent workflow - main public interface.
@@ -603,10 +643,13 @@ Respond entirely in the same language as the user's question. Never switch langu
             forced_selection += f"The query explicitly mentions the following models: {', '.join(d.get('title') for d in mentioned_docs)}\n"
             forced_selection += "These documents MUST be listed in target_docs!"
 
+        catalog_json = self._render_catalog(
+            settings.AGENTIC_CONFIG.get('catalog_json_max', 4000))
+
         analysis_prompt = f"""You are a librarian. Please carefully review all collection documents and answer the reader's question.
 
 Collection document list:
-{json.dumps(self.catalog, ensure_ascii=False, indent=2)[:settings.AGENTIC_CONFIG.get('catalog_json_max', 4000)]}
+{catalog_json}
 
 Reader question: "{query}"{forced_selection}
 
