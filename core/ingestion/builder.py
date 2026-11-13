@@ -1213,13 +1213,25 @@ class DocumentIndexBuilder:
 
         # V5.0: Assign chapter info to each page with proper hierarchy
         for page_num in sorted(page_results.keys()):
-            # Find the most specific (deepest) chapter entry for this page
-            best_entry = None
-            for entry in toc_entries:
-                if entry["page_num"] <= page_num:
-                    best_entry = entry
-                else:
-                    break
+            # A page can open several sections (a chapter boundary mid-page).
+            # The page's subject is the FIRST section starting on it, not the
+            # last one before the next page: taking the last made every earlier
+            # section on that page unaddressable — a datasheet's "Graphics
+            # Engine" page was filed under the "Video input interface" section
+            # that merely began on the same page, so its content could not be
+            # reached by searching for it.
+            starting_here = page_entries.get(page_num, [])
+            if starting_here:
+                best_entry = starting_here[0]
+                also_on_page = [e["title"] for e in starting_here[1:]]
+            else:
+                best_entry = None
+                for entry in toc_entries:
+                    if entry["page_num"] <= page_num:
+                        best_entry = entry
+                    else:
+                        break
+                also_on_page = []
 
             if best_entry:
                 # V5.0: Use full path for better identification
@@ -1229,6 +1241,7 @@ class DocumentIndexBuilder:
                     "path": full_path,  # Use full hierarchical path
                     "short_path": best_entry["path"],  # Keep short path for reference
                     "title": best_entry["title"],
+                    "additional_sections": also_on_page,
                     "is_table": False,
                     "table_caption": ""
                 }
