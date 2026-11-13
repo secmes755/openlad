@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A page that opens several sections is filed under the first one.** When a
+  datasheet starts a new numbered section mid-page, the structure index took
+  the last section at or before that page, overwriting the one the page
+  actually opens with. A page whose subject was "Graphics Engine" was recorded
+  as the section that merely began later on the same page, so its content could
+  not be reached by searching for it. The page's own first section is used now,
+  and later same-page sections are retained as `additional_sections`.
+
 - **Multi-document questions reach the documents they name.** The agentic
   document catalog was sliced by character count, cutting the listing
   mid-document: on a collection of a few dozen documents the tail never
