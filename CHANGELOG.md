@@ -32,6 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-document questions reach the documents they name.** The agentic
+  document catalog was sliced by character count, cutting the listing
+  mid-document: on a collection of a few dozen documents the tail never
+  reached the model, so a question naming those documents selected none of
+  them and the agent swept the whole tenant instead, answering from unrelated
+  documents. The listing is now rendered compactly and truncated on
+  whole-document boundaries, dropping chapter detail before documents and
+  stating explicitly when documents were omitted.
+
+- **A planner decomposition is no longer discarded.** When the string-level
+  decomposer could not split a query — it only recognises Latin model tokens,
+  so organisation names in another script produced a single sub-query — the
+  engine fell back to a tenant-wide retrieval plan even though the planner had
+  already produced a correct per-document decomposition. The planner's plan is
+  now reused and normalised to the executor's contract.
+
 - **Excel merged cells retain their actual ownership.** Declared `.xlsx` and
   `.xls` merge rectangles restore their anchor value only inside the rectangle,
   including rows or columns dropped as empty by pandas. Existing values and
