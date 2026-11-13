@@ -1,0 +1,131 @@
+# Ingestion rules (generic). Vocabulary that is language- or industry-specific
+# belongs to the corresponding vertical pack, never to core.
+
+# Values a model may return instead of an actual category. They collapse to NULL
+# so downstream routing cannot mistake a placeholder for a real category.
+unknown_labels:
+  - other
+  - unknown
+  - unclassified
+  - uncategorized
+  - none
+  - "null"
+  - n/a
+  - na
+  - 其他
+  - 其它
+  - 未知
+  - 未分类
+  - 无
+
+# High-frequency function words used only to detect garbled text. Language
+# lists are declared here so core carries no single-language dictionary.
+quality_common_words:
+  zh:
+    - 的
+    - 是
+    - 在
+    - 和
+    - 了
+    - 与
+    - 有
+    - 被
+    - 为
+    - 以
+    - 及
+    - 对
+    - 或
+    - 将
+    - 从
+    - 到
+    - 也
+    - 而
+    - 其
+    - 之
+    - 中
+    - 上
+    - 下
+    - 内
+    - 外
+    - 时
+    - 后
+    - 前
+    - 间
+  en:
+    - the
+    - of
+    - and
+    - to
+    - in
+    - is
+    - for
+    - with
+
+# Page/element detection patterns. Each entry is a regex matched against the
+# page's normalized text; core supplies the matching mechanism only.
+page_type_indicators:
+  cover:
+    - '(?i)^\s*cover\b'
+  toc:
+    - '(?i)table of contents'
+    - '(?i)\bcontents\b'
+    - '目录'
+    - '章节'
+  appendix:
+    - '(?i)^\s*appendix\b'
+  form_fields:
+    - '(?i)\b(email|phone|address)\b'
+
+caption_patterns:
+  - '(?i)^图\s*\d+'
+  - '(?i)^[图表]\s*[一-九〇\d]+'
+  - '(?i)^fig\.?\s*\d+'
+  - '(?i)^figure\s*\d+'
+  - '(?i)^表\s*\d+'
+  - '(?i)^table\s*\d+'
+
+# Characters that mark a sentence rather than a heading; a short block
+# containing one of these is body text, not a title.
+title_punctuation: ['，', '。', '；', '：', '.', ',', ';', ':']
+
+footnote_markers: ['*', '※', '①', '[']
+
+# Numeral words accepted in a numbered heading ("第X章"), mapped to integers.
+# Declared per language so core carries no single-language numeral table.
+heading_numerals:
+  一: 1
+  二: 2
+  三: 3
+  四: 4
+  五: 5
+  六: 6
+  七: 7
+  八: 8
+  九: 9
+  十: 10
+
+# Heading unit -> outline depth. Units absent here fall back to the pack's
+# default_heading_level.
+heading_levels:
+  编: 1
+  部: 1
+  篇: 1
+  章: 2
+  节: 3
+default_heading_level: 2
+
+# Bracketed table captions, e.g. "[Table 3] Pin list" or "（表 2）参数".
+table_caption_pattern: '(?i)[\[【（]\s*(?:表格|table|表)\s*\d+\s*[\]】）]\s*(.+)'
+table_marker_pattern: '(?i)[\[【（]\s*(?:表格|table|表)\s*\d+\s*[\]】）]'
+
+heading_style_markers: ['heading', '标题']
+
+table_caption_keywords: ['表格', 'table', '表']
+
+# Markers a vision model may emit to mean "this region is not a chart".
+non_chart_markers: ['NON_CHART_CONTENT', '非图表内容']
+
+# Labels models use when naming the chart type on its own line.
+chart_type_labels: ['Type:', '类型：', '类型:']
+
+

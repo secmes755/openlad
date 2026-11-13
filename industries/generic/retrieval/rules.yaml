@@ -92,55 +92,79 @@ query_expansion:
 low_value_sections: []
 spec_sections: []
 entity_patterns: []
-spec_query_terms: {}
+spec_query_terms:
+  数量: [count, number]
+  多少个: [count, number]
+  版本: [version, protocol, support]
 
-# 查询侧实体停用词（entity_stopwords）
-# 中文企业文档（年报/季报/公告）里的领域通用词：它们在企业语料中
-# 几乎每个标题都含，绝不能当"实体"去匹配文档（否则 "公司" 会把所有
-# "...股份有限公司..." 标题的文档强行并入 doc_filter，造成跨文档污染）。
-# core 只保留领域无关的疑问/元词汇（"多少"/"是什么"），企业文档词汇
-# 由本包提供；更细的财报词汇可由 financial 等行业包继续叠加。
+# 查询侧实体停用词：仅跨行业疑问词和元信息词。企业报告、产品或
+# 其他领域词汇由对应行业包提供。
 entity_stopwords:
-  - 公司
-  - 集团
-  - 股份
-  - 有限
-  - 责任
-  - 公司名称
-  - 股票代码
-  - 年报
-  - 季报
-  - 年度报告
-  - 季度报告
-  - 营业
-  - 收入
-  - 利润
-  - 资产
-  - 负债
-  - 权益
-  - 现金流
-  - 营业收入
-  - 净利润
-  - 总资产
-  - 净资产
-  - 每股收益
-  - 财务
-  - 金额
-  - 总额
-  - 合计
+  - 多少
+  - 什么
+  - 如何
+  - 是否
+  - 哪些
+  - 怎样
+  - 为何
+  - 原因
+  - 是多少
+  - 是什么
+  - 怎么样
+  - 有哪些
+  - 为什么
+  - 什么原因
+  - 情况
+  - 介绍
+  - 信息
+  - 内容
+  - 问题
+  - 答案
+  - 主要
+  - 业务
+  - 数据
+  - 指标
+  - 数值
 
-# 报告期词表：只有把年份绑定到"报告类型名词"上才认作文档期别。
-#   "2025年年度报告" -> 指定期别 2025
-#   "较2024年下降"   -> 2024 只是比较期，不是文档期别
-# core 只做期别裁剪这个动作，认哪些名词由本包提供；不声明则不做裁剪。
-# 采用正则而非词表，是因为需要否定断言（"年报"不能匹配"年报期"）。
-report_epoch_pattern: "((?:19|20)\\d{2})\\s*(?:年|财年)?\\s*(?:年度报告|年报(?!告)|半年度报告|半年报|中期报告|第[一二三四1234]季度报告|季度报告|季报|财报|报告(?!期))"
-
-# 标题抽取时给模型的 doc_type 举例（内容层词汇）。
-# 留空则提示词不带举例，由模型自行判断文档类型。
+# 报告期和文档类型示例属于内容层，由对应行业包声明。
+report_epoch_pattern: ""
 title_derivation:
-  doc_type_examples:
-    - 年度报告
-    - 员工手册
-    - 体检报告
-    - datasheet
+  doc_type_examples: []
+
+table_request_markers: [表格, table]
+table_request_exclusions: []
+no_answer_markers:
+  - not found
+  - no relevant
+  - no information
+  - 未找到
+  - 没有找到
+  - 未提及
+  - 不包含
+  - 无相关
+  - does not contain
+  - does not mention
+planner_no_result_markers:
+  - 知识库中没有
+  - no documents in the knowledge base
+
+message_rules:
+  no_result:
+    - pattern: '[\u4e00-\u9fff]'
+      text: '根据当前知识库中的文档，未找到相关信息。'
+    - pattern: ''
+      text: 'No relevant information was found in the available documents.'
+  source_excerpts_header:
+    - pattern: '[\u4e00-\u9fff]'
+      text: '依据原文：'
+    - pattern: ''
+      text: 'Source excerpts:'
+  source_citation:
+    - pattern: '[\u4e00-\u9fff]'
+      text: '《$title》第 $page 页'
+    - pattern: '$title, p.$page'
+  source_citation_no_title:
+    - pattern: '[\u4e00-\u9fff]'
+      text: '第 $page 页'
+    - pattern: 'p.$page'
+

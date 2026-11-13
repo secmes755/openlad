@@ -112,14 +112,9 @@ def test_match_boost_rule():
     assert m._match_boost_rule("uart count", "UART Interfaces", {}) == 0.0
 
 
-# ---- QueryPlanner entity stopwords (core meta-words + pack-injected) ----
+# ---- QueryPlanner entity stopwords supplied entirely by packs ----
 def test_entity_stopwords_filter_generic_terms():
-    """Generic Chinese query words must not be treated as document entities
-    (cross-doc contamination variant: '公司' force-merges unrelated
-    '...股份有限公司...' reports into the doc_filter). Domain words like
-    '公司'/'营业收入' live in the generic pack's entity_stopwords and reach
-    the planner via RetrievalPlugin.get_entity_stopwords(); core meta-words
-    ('多少'...) are always active."""
+    """Pack vocabulary filters query noise without a core-language fallback."""
     import re
 
     import core.plugins as plugins_mod
@@ -127,14 +122,8 @@ def test_entity_stopwords_filter_generic_terms():
 
     text = "在美的集团(股票代码000333)的2025年年度报告中，公司2025年度营业收入是多少？"
     cn = re.findall(r'[\u4e00-\u9fff]{2,12}', text)
+    assert not hasattr(QueryPlanner, '_CN_ENTITY_STOPWORDS')
 
-    # Core-only: meta-words filtered, domain words NOT (they are the pack's
-    # job — a bare core must not know annual-report vocabulary).
-    core_kept = [w for w in cn if w not in QueryPlanner._CN_ENTITY_STOPWORDS]
-    assert "多少" not in core_kept
-    assert "公司" in core_kept  # not core's business anymore
-
-    # With the generic pack loaded the full filter is restored.
     old_registry = plugins_mod._registry
     QueryPlanner._STOPWORDS_CACHE = None
     try:
@@ -144,26 +133,19 @@ def test_entity_stopwords_filter_generic_terms():
         QueryPlanner._STOPWORDS_CACHE = None
         stopwords = QueryPlanner._all_entity_stopwords()
         kept = [w for w in cn if w not in stopwords]
+        assert "多少" not in kept
         assert "公司" not in kept
         assert "股票代码" not in kept
         assert "营业收入" not in kept
-        # The real entity must survive
         assert any("美的集团" in w for w in kept)
     finally:
         plugins_mod._registry = old_registry
         QueryPlanner._STOPWORDS_CACHE = None
 
 
-def test_entity_stopwords_keeps_real_entity():
+def test_entity_stopwords_have_no_core_vocabulary():
     from core.retrieval.planner import QueryPlanner
-    assert "美的集团" not in QueryPlanner._CN_ENTITY_STOPWORDS
-    assert "贵州茅台" not in QueryPlanner._CN_ENTITY_STOPWORDS
-    # Domain vocabulary must NOT live in core (pack-injected instead).
-    assert "公司" not in QueryPlanner._CN_ENTITY_STOPWORDS
-    assert "营业收入" not in QueryPlanner._CN_ENTITY_STOPWORDS
-    # Domain-neutral meta-words stay in core.
-    assert "多少" in QueryPlanner._CN_ENTITY_STOPWORDS
-    assert "是什么" in QueryPlanner._CN_ENTITY_STOPWORDS
+    assert not hasattr(QueryPlanner, '_CN_ENTITY_STOPWORDS')
 
 
 # ---- HierarchicalRetriever._expand_query_terms ----

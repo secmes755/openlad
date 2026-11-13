@@ -7,7 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Core keeps mechanisms; packs own vocabulary.** Query-term expansion,
+  entity stopwords, report-epoch patterns, table-request markers,
+  no-result wording, citation formats and ingestion locale rules
+  (classification prompts, unknown labels, quality-check word lists,
+  caption/page-type indicators, title extraction) are now read from packs.
+  Core resolves them through the existing `get_retrieval_rules`,
+  `get_ingestion_prompts` and `get_parsing_rules` hooks plus one small message
+  renderer, and degrades to empty behaviour when a pack declares nothing.
+  Report-epoch, stopword and message rules are aggregated per pack, so one
+  malformed pack pattern disables only itself.
+- Generic no longer carries enterprise-report or schematic vocabulary; those
+  moved to the sample enterprise and semiconductor packs. Unused hardcoded
+  prompt builder removed.
+- **Ingestion grammar is pack data.** Numbered-heading numerals and outline
+  levels, bracketed table captions, chart caption markers, and Word heading
+  style markers are read from the generic ingestion pack. Chapter and document
+  summaries now follow the content language instead of always answering in one
+  language. An undeclared rule disables its feature rather than matching every
+  line; report-epoch and table-caption equivalence was verified against the
+  previous implementation.
+
 ### Fixed
+
+- **A page that opens several sections is filed under the first one.** When a
+  datasheet starts a new numbered section mid-page, the structure index took
+  the last section at or before that page, overwriting the one the page
+  actually opens with. A page whose subject was "Graphics Engine" was recorded
+  as the section that merely began later on the same page, so its content could
+  not be reached by searching for it. The page's own first section is used now,
+  and later same-page sections are retained as `additional_sections`.
+
+- **Multi-document questions reach the documents they name.** The agentic
+  document catalog was sliced by character count, cutting the listing
+  mid-document: on a collection of a few dozen documents the tail never
+  reached the model, so a question naming those documents selected none of
+  them and the agent swept the whole tenant instead, answering from unrelated
+  documents. The listing is now rendered compactly and truncated on
+  whole-document boundaries, dropping chapter detail before documents and
+  stating explicitly when documents were omitted.
+
+- **A planner decomposition is no longer discarded.** When the string-level
+  decomposer could not split a query — it only recognises Latin model tokens,
+  so organisation names in another script produced a single sub-query — the
+  engine fell back to a tenant-wide retrieval plan even though the planner had
+  already produced a correct per-document decomposition. The planner's plan is
+  now reused and normalised to the executor's contract.
 
 - **Excel merged cells retain their actual ownership.** Declared `.xlsx` and
   `.xls` merge rectangles restore their anchor value only inside the rectangle,
