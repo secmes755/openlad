@@ -89,6 +89,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every retrieval path applies the pack's vocabulary.** Single-document
+  retrieval previously searched only the query's own wording while the exact
+  path consulted the pack, so a document using equivalent terminology was
+  unreachable through the common route. Pack terms are now searched as separate
+  bounded routes and fused by rank, keeping the caller's query text intact
+  instead of concatenating expansions into one diluted query.
+
+- **A synonym group is reachable through any of its members.** The table is an
+  equivalence class, but only its head wording matched. A query phrased with a
+  member now reaches the same vocabulary.
+
+- **Pack section weights are applied, and on the score scale of the path.**
+  Section boost rules declared by a pack were never loaded, and weights had been
+  added as absolute points to scores whose scale differs per path. Weights are
+  now treated as relative multipliers, so a pack states emphasis without
+  overriding the ranking of the path that produced the candidates.
+
+- **The merge score floor adapts to rank-derived scales.** A single absolute
+  threshold deleted every row of a fused-rank path, whose scores are two orders
+  of magnitude lower than raw full-text scores.
+
+- **Truncation keeps numeric rows next to their header.** Table data rows carry
+  numbers but no query vocabulary, so text scoring could never select them and
+  the answer was dropped while the header survived.
+
+- **Benchmark runs refuse to execute fewer cases than requested.** An unknown
+  case id previously filtered the run to nothing and still reported a pass;
+  unknown ids and non-positive repeat counts are now errors. This is a test
+  harness fix and does not change product behaviour.
+
 - **Prompt budgets follow the deployed per-slot window.** Retrieval and synthesis
   reserve answer and protocol space before evidence is assembled; the public
   35B profile defaults to 32768 tokens and the 9B profile documents its own
