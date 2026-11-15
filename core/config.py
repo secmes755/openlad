@@ -286,9 +286,16 @@ CONTEXT_CONFIG = {
     "merger_min_chars_per_doc": 5000,
     # Merger: minimum score threshold for results
     "merger_min_score_threshold": 0.15,
-    # Merger: relative floor for score scales that sit below the absolute one
-    # (fused/rank-derived scores are ~0.01-0.05 where raw FTS is 1-1000).
+    # Merger: relative floor for score scales that sit below the absolute one.
+    # Fused rank scores (~0.01-0.05) and raw FTS scores (1-1000) do not share a
+    # scale, so an absolute floor alone deletes every row of the former.
     "merger_min_score_ratio": 0.35,
+    # Fusion of pack synonym routes (RRF). A pack synonym is evidence, not a
+    # replacement for the query, so its routes count half as much as the user's
+    # own wording; the precision term keeps a single exact route from losing to
+    # broad agreement across several loose routes.
+    "pack_term_fusion_weight": 0.5,
+    "pack_term_precision_weight": 1.0,
     # Merger: low-value page score penalty
     "merger_low_value_penalty": 3.0,
     # Merger: content length cap by score tier (top, high, medium, low, floor)

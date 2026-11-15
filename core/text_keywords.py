@@ -37,9 +37,22 @@ def extract_search_keywords(text: str, max_terms: int = 64) -> list[str]:
     Base keywords remain first. Only search lookup uses this broader set;
     ranking, evidence selection and answer logic keep the narrower tokens.
     """
+    keywords, derived = split_search_keywords(text, max_terms)
+    return keywords + derived
+
+
+def split_search_keywords(text: str, max_terms: int = 64) -> tuple[list[str], list[str]]:
+    """Return ``(base keywords, derived n-grams)`` separately.
+
+    Callers that prioritise terms need to distinguish what the user actually
+    wrote from the n-grams generated to widen recall. Deriving that boundary
+    from list position would be a guess; the two groups are different in kind,
+    so they are returned as different values.
+    """
     keywords = extract_keywords(text)
-    if not text or max_terms <= len(keywords):
-        return keywords[:max_terms] if max_terms > 0 else []
+    derived: list[str] = []
+    if not text or max_terms <= 0:
+        return [], []
     from .plugins import get_generic_search_ngram_rules
     seen = {keyword.casefold() for keyword in keywords}
     for rule in get_generic_search_ngram_rules():
@@ -61,7 +74,7 @@ def extract_search_keywords(text: str, max_terms: int = 64) -> list[str]:
                     folded = value.casefold()
                     if value and not value.isdigit() and folded not in seen:
                         seen.add(folded)
-                        keywords.append(value)
-                        if len(keywords) >= max_terms:
-                            return keywords
-    return keywords
+                        derived.append(value)
+                        if len(keywords) + len(derived) >= max_terms:
+                            return keywords, derived
+    return keywords, derived

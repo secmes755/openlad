@@ -10,7 +10,7 @@ from typing import Any
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models.client import EmbeddingError, get_model_client
-from ..text_keywords import extract_keywords, extract_search_keywords
+from ..text_keywords import extract_keywords, extract_search_keywords, split_search_keywords
 from .router import IntentType, QueryPlan
 from .truncation import MARKER, mark_truncated, truncate_to_fit
 
@@ -351,13 +351,11 @@ class HierarchicalRetriever:
         # keyword extractor already produced: a long CJK phrase expands into
         # dozens of overlapping n-grams, so appending afterwards let the cap
         # drop the translated synonyms that match the document's own wording.
-        # Order: query terms -> pack synonyms -> n-gram variants.
+        # Order: query terms -> pack synonyms -> derived n-grams.
+        _, ngram_terms = split_search_keywords(query, max_terms=64)
+        # `keywords` is the caller's term set (already the base keywords for this
+        # query); splitting again here would re-derive them from scratch.
         base_terms = list(keywords)
-        ngram_terms = []
-        if len(base_terms) > 3:
-            head = [t for t in base_terms[:3]]
-            ngram_terms = [t for t in base_terms[3:]]
-            base_terms = head
         expanded = list(base_terms)
         seen = {t.lower() for t in expanded}
         for term, synonyms in merged.items():
@@ -414,15 +412,9 @@ class HierarchicalRetriever:
         token_weight = settings.CONTEXT_CONFIG.get("pack_term_fusion_weight", 0.5)
         searches = [(term, True, token_weight) for term in alternatives]
         searches.append((query, False, 1.0))
-        weak = None
         for search_query, strict, weight in searches:
             rows = self._search_fts(
                 search_query, limit=depth, doc_id_filter=doc_id_filter, strict=strict)
-            if not rows:
-                relaxed = self._search_fts(
-                    search_query, limit=depth, doc_id_filter=doc_id_filter)
-                weak = relaxed if weak is None else weak + relaxed
-                continue
             for rank, row in enumerate(rows, 1):
                 key = row.get("page_id") or (row.get("doc_id"), row.get("page_num"))
                 entry = fused.setdefault(key, {"row": row, "score": 0.0, "raw": 0.0})
@@ -435,14 +427,6 @@ class HierarchicalRetriever:
                 entry["score"] += weight / (60 + rank)
                 entry["precision"] = max(entry.get("precision", 0.0),
                                          weight / (10 + rank))
-                entry["raw"] = max(entry["raw"], row.get("score", 0.0))
-        if weak:
-            logger.info(f"[RETRIEVER] pack terms matched no strict query; "
-                        f"fusing {len(weak)} relaxed rows from {len(alternatives)} terms")
-            for rank, row in enumerate(weak, 1):
-                key = row.get("page_id") or (row.get("doc_id"), row.get("page_num"))
-                entry = fused.setdefault(key, {"row": row, "score": 0.0, "raw": 0.0})
-                entry["score"] += 0.25 / (60 + rank * max(len(alternatives), 1))
                 entry["raw"] = max(entry["raw"], row.get("score", 0.0))
         for entry in fused.values():
             entry["score"] += entry.pop("precision", 0.0) * settings.CONTEXT_CONFIG.get(
