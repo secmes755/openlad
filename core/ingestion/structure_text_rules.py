@@ -7,18 +7,24 @@ functions; nothing here touches the database or the network.
 """
 import re
 
-# Fix 3c: title ends with a bare number, a unit, or a divider token
-_TRAILING_TOKEN_RE = re.compile(
-    r"(?:%|mg|L|ml|kg|元|万|亿|N/A|NA|—|–|--|…|\d+(?:[,.]\d+)*)$"
-)
-# Fix 3b: two consecutive pure-numeric tokens (year/table-number runs)
+# Numeric/table heuristics are language-neutral. Script, vocabulary and chapter
+# labels are loaded from the base pack at call time.
 _TWO_DIGIT_TOKENS_RE = re.compile(r"\d+(?:[,.]\d+)*\s+\d+(?:[,.]\d+)*")
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
-_WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _DIGIT_RE = re.compile(r"\d")
-# Fix 3e: sentence boundary inside the "title" ("...was even larger. The
-# data...") — body-text fragments, never real headings
-_SENTENCE_BOUNDARY_RE = re.compile(r"\.\s+[A-Z]")
+
+
+def _language_value(name: str) -> str:
+    from ..plugins import get_generic_ingestion_rules
+    return str(get_generic_ingestion_rules().get(name) or "")
+
+
+def _language_pattern(name: str) -> str:
+    return _language_value(name)
+
+
+def _matches_rule(name: str, text: str, flags: int = 0) -> bool:
+    pattern = _language_pattern(name)
+    return bool(pattern and re.search(pattern, text, flags))
 
 
 def numeric_title_is_heading(num_prefix: str, title: str) -> bool:
@@ -45,18 +51,19 @@ def numeric_title_is_heading(num_prefix: str, title: str) -> bool:
     """
     if not title:
         return False
-    if _CJK_RE.search(title):
+    if _matches_rule("unconditional_heading_script_pattern", title):
         return True
-    words = _WORD_RE.findall(title)
+    word_pattern = _language_pattern("heading_word_pattern")
+    words = re.findall(word_pattern, title) if word_pattern else []
     if len(words) < 1:  # a
         return False
     if _TWO_DIGIT_TOKENS_RE.search(title):  # b
         return False
-    if _TRAILING_TOKEN_RE.search(title):  # c
+    if _matches_rule("trailing_title_token_pattern", title):  # c
         return False
     if title and len(_DIGIT_RE.findall(title)) / len(title) > 0.4:  # d
         return False
-    if _SENTENCE_BOUNDARY_RE.search(title):  # e
+    if _matches_rule("heading_sentence_boundary_pattern", title):  # e
         return False
     return True
 
@@ -69,7 +76,7 @@ def chapter_heading_title_is_valid(title: str) -> bool:
     pages."""
     if not title:
         return False
-    if re.match(r"^(Chapter|Section|Part)\b", title, re.IGNORECASE):
+    if _matches_rule("chapter_heading_reserved_pattern", title, re.IGNORECASE):
         return False
     return True
 
@@ -80,9 +87,10 @@ def compose_parent_chapter(chapter_num: int, parent_title: str) -> str:
     Never double-prefix: if the recorded title already carries the unit
     prefix (page-header stitch residue, e.g. "Chapter 5"), return it
     verbatim — otherwise prefix once ("Chapter 5 Financial Statements")."""
-    if re.match(r"^(Chapter|Section|Part)\b", parent_title, re.IGNORECASE):
+    if _matches_rule("chapter_heading_reserved_pattern", parent_title, re.IGNORECASE):
         return parent_title
-    return f"Chapter {chapter_num} {parent_title}"
+    chapter_label = _language_value("chapter_label")
+    return f"{chapter_label} {chapter_num} {parent_title}".strip()
 
 
 def build_repeated_lines(page_results: dict[int, dict]) -> set[str]:

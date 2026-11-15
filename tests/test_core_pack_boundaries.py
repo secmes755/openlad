@@ -89,3 +89,20 @@ def test_table_and_planner_intent_vocabulary_come_from_packs():
     assert not synth._requires_table('规格表写了什么', semiconductor)
     assert QueryPlanner._is_no_result_reason('知识库中没有相关文档')
     assert not QueryPlanner._is_no_result_reason('ordinary reasoning')
+
+
+def test_language_grammar_is_pack_owned():
+    """Core mechanisms must not reintroduce script-specific token grammars."""
+    core = Path(__file__).resolve().parent.parent / 'core'
+    for directory in (core / 'ingestion', core / 'retrieval'):
+        for source in directory.rglob('*.py'):
+            text = source.read_text(encoding='utf-8')
+            assert '\\u4e00' not in text, source
+            assert '[一-鿿]' not in text, source
+
+    from core.plugins import get_generic_ingestion_rules, get_generic_keyword_patterns
+    ingestion = get_generic_ingestion_rules()
+    assert ingestion.get('numbered_heading_pattern')
+    assert ingestion.get('spaced_character_run_pattern')
+    assert ingestion.get('chapter_heading_reserved_pattern')
+    assert get_generic_keyword_patterns()

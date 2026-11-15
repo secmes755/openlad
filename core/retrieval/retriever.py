@@ -10,8 +10,9 @@ from typing import Any
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models.client import EmbeddingError, get_model_client
+from ..text_keywords import extract_keywords
 from .router import IntentType, QueryPlan
-from .truncation import MARKER, mark_truncated
+from .truncation import MARKER, mark_truncated, truncate_to_fit
 
 logger = logging.getLogger(__name__)
 
@@ -192,17 +193,9 @@ class HierarchicalRetriever:
         - Page score = number of matched chunks + chunk quality score + keyword hit bonus
         - Control page count to avoid context explosion
         """
-        import re
-
-        # Extract query keywords (for bonus scoring)
-        cjk_range = r'\u4e00-\u9fff'
-        # 2+ character CJK words + 3+ character English/digit tokens
-        query_keywords = []
-        for m in re.finditer(rf'[{cjk_range}]{{2,}}', query):
-            query_keywords.append(m.group())
-        for m in re.finditer(r'[A-Za-z0-9]{3,}', query):
-            if not re.match(r'^\d+$', m.group()):  # filter out pure digits
-                query_keywords.append(m.group())
+        # Token shapes are pack data; this class only applies the returned
+        # patterns and scores their matches.
+        query_keywords = extract_keywords(query)
 
         # Aggregate by page
         page_stats = {}  # (doc_id, page_id) -> {chunks, score_sum, chunk_texts, page_num}
@@ -357,26 +350,8 @@ class HierarchicalRetriever:
         return expanded
 
     def _tokenize_query(self, query: str) -> list[str]:
-        """Extract meaningful keywords from a query for structure index / FTS search.
-
-        Handles CJK and ASCII consistently:
-        - CJK: 2+ character sequences (e.g., "详细规格", "是什么")
-        - ASCII: 2+ character tokens (e.g., "AB1234", "MCU", "NPU")
-        - Pure digit tokens are excluded
-
-        This replaces the naive .split() approach which fails on Chinese
-        (no spaces = 1 giant keyword = 0 structure index matches).
-        """
-        keywords = []
-        # CJK: 2+ character sequences
-        for m in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
-            keywords.append(m.group())
-        # ASCII: 2+ character tokens (exclude pure digits)
-        for m in re.finditer(r'[A-Za-z0-9]{2,}', query):
-            token = m.group()
-            if not re.match(r'^\d+$', token):
-                keywords.append(token)
-        return keywords
+        """Extract query keywords using the base pack's token shapes."""
+        return extract_keywords(query)
 
     def _retrieve_exact(self, query: str, plan: QueryPlan,
                          max_results: int, doc_id_filter: set[str] = None,
@@ -1294,69 +1269,46 @@ class SegmentMerger:
             return {}
 
     def _smart_truncate(self, page_text: str, query: str, max_len: int) -> str:
-        """
-        Intelligently truncate page content, prioritizing paragraphs containing query keywords.
+        """Fit a page while preserving keyword-bearing structural blocks.
 
-        Strategy:
-        1. Extract sentences containing query keywords (priority preservation)
-        2. Preserve content beginning (usually has title/overview)
-        3. Preserve content ending (usually has summary/tables)
-        4. Truncate middle sections as needed
+        PDF text is commonly separated by newlines rather than prose sentence
+        boundaries. Blocks are selected by relevance but emitted in source order.
         """
-        import re
-
         if len(page_text) <= max_len:
             return page_text
+        if max_len <= 0:
+            return ""
 
-        # Extract query keywords (2+ character CJK, 3+ character English)
-        keywords = []
-        for m in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
-            keywords.append(m.group())
-        for m in re.finditer(r'[A-Za-z0-9]{3,}', query):
-            if not re.match(r'^\d+$', m.group()):
-                keywords.append(m.group())
+        keywords = extract_keywords(query)
+        blocks = [block.strip() for block in re.split(
+            r'\n\s*\n+|\n+|(?<=[。！？.!?])\s+', page_text) if block.strip()]
+        if not blocks:
+            return truncate_to_fit(page_text, max_len)
 
-        # Find sentences containing keywords
-        sentences = re.split(r'(?<=[。！？\.\!\?])\s+', page_text)
-        keyword_sentences = []
-        other_sentences = []
+        scored = []
+        for index, block in enumerate(blocks):
+            folded = block.casefold()
+            hits = sum(folded.count(keyword.casefold()) for keyword in keywords)
+            scored.append((index, hits))
 
-        for s in sentences:
-            s = s.strip()
-            if not s:
-                continue
-            has_kw = any(kw.lower() in s.lower() for kw in keywords if kw)
-            if has_kw:
-                keyword_sentences.append(s)
-            else:
-                other_sentences.append(s)
+        selected = {0, len(blocks) - 1}
+        for index, hits in sorted(scored, key=lambda item: (-item[1], item[0])):
+            if hits > 0:
+                selected.add(index)
 
-        # Build result: keyword sentences + head + tail
-        parts = []
-        parts.append("...[excerpt]...")
+        def render(indices) -> str:
+            return "...[excerpt]...\n" + "\n".join(blocks[i] for i in sorted(indices))
 
-        # Add keyword sentences
-        if keyword_sentences:
-            parts.append("\n[Relevant paragraphs]")
-            parts.extend(keyword_sentences[:10])  # at most 10 sentences
-
-        # Calculate remaining space
-        used = len("\n".join(parts))
-        remaining = max_len - used - 100
-
-        if remaining > 500:
-            # Preserve head and tail
-            half = remaining // 2
-            head = page_text[:half]
-            tail = page_text[-half:] if len(page_text) > half * 2 else ""
-            parts.append(f"\n{head}")
-            if tail and tail not in head:
-                parts.append(f"\n...\n{tail}")
-
-        result = "\n".join(parts)
+        result = render(selected)
         if len(result) > max_len:
-            result = mark_truncated(result[:max_len])
-        return result
+            selected = set()
+            for index, hits in sorted(scored, key=lambda item: (-item[1], item[0])):
+                if hits > 0 and len(render(selected | {index})) <= max_len:
+                    selected.add(index)
+            if not selected:
+                return truncate_to_fit(page_text, max_len)
+            result = render(selected)
+        return truncate_to_fit(mark_truncated(result), max_len)
 
     def _segment_page_content(self, content: str, section_title: str) -> str:
         """

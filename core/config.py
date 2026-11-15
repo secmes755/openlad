@@ -193,20 +193,20 @@ CONTEXT_CONFIG = {
     "min_pages_per_doc": 5,
     "max_pages_per_doc": 80,
     "filtered_steps_quota_ratio": 0.8,
-    # ── Synthesis context budget (derived from llm_max_tokens) ──
-    # Total safe prompt space (llm_max_tokens × token_to_char_ratio)
-    "synthesis_safe_chars": 45875,  # 65536 × 0.7
-    # Context available after reserving room for system prompt + query + output.
-    # The safe ceiling is llm_max_tokens × token_to_char_ratio; this holds the
-    # prompt side comfortably below it so the model client's safety guard never
-    # has to truncate. Note llm_max_tokens is the PER-SLOT context
-    # (--ctx-size / --parallel), not --ctx-size itself.
-    # Consumers read this key directly — there is no per-call-site default, so
-    # changing the value here changes every path (config.py is the single source).
-    # Retrieval routinely returns 55-59K chars and this budget truncated 36-40%
-    # of it, dropping candidate pages that held the answer. 45000 stays under
-    # synthesis_safe_chars (45875) so the client-side guard never fires.
-    "synthesis_context_budget": 45000,
+    # ── Synthesis context budget (prompt + output share one window) ──
+    # Chat protocol bytes are small but must not be spent on document content.
+    "prompt_protocol_reserve_chars": 512,
+    # Maximum prompt chars after reserving synthesis_max_tokens for the answer:
+    # int((65536 - 4096) * 0.7) - 512 = 42496.
+    "synthesis_safe_chars": 42496,
+    # Normal prompt overhead (system instruction, pack rules, question, labels).
+    # The synthesizer also measures the actual prompt and shrinks the context if
+    # a pack exceeds this estimate; this is a retrieval budget, not a guarantee.
+    "synthesis_prompt_overhead_chars": 10000,
+    # 32000 + 10000 <= 42496. Leaving headroom avoids the previous behaviour
+    # where retrieval alone consumed the whole window and the model client had
+    # to cut evidence after the prompt had already been assembled.
+    "synthesis_context_budget": 32000,
     # Map-Reduce trigger: context exceeding this goes through chunked extraction
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.

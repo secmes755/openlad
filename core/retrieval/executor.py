@@ -9,6 +9,7 @@ from typing import Any
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db
 from ..models.client import get_model_client
+from ..text_keywords import extract_keywords
 from .retriever import HierarchicalRetriever, SearchResult, SegmentMerger
 from .router import IntentType, QueryPlan
 from .truncation import mark_truncated
@@ -426,7 +427,7 @@ class RetrievalExecutor:
             return query
 
         # Only clean up extra spaces and punctuation, preserve all semantic words
-        cleaned = re.sub(r'[^\w\s\u4e00-\u9fff]', ' ', query)
+        cleaned = re.sub(r'[^\w\s]', ' ', query)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
 
         if cleaned != query:
@@ -845,13 +846,7 @@ class RetrievalExecutor:
             if not q:
                 return 0
             q_lower = q.lower()
-            tokens = []
-            for m in re.finditer(r'[\u4e00-\u9fff]{2,}', q_lower):
-                tokens.append(m.group())
-            for m in re.finditer(r'[A-Za-z0-9]{2,}', q_lower):
-                token = m.group()
-                if not re.match(r'^\d+$', token):
-                    tokens.append(token)
+            tokens = extract_keywords(q_lower)
             text = f"{ch.get('title', '')} {ch.get('keywords', '')} {ch.get('summary', '')} {ch.get('entities', '')}".lower()
             hit = 0
             for t in tokens:
@@ -1064,11 +1059,7 @@ Output only JSON, no explanation."""
         # product name itself, present on every page) carry no pinning signal
         # and are ignored. Controlled by chapter_exact_match_pinning config.
         if query and results and settings.CONTEXT_CONFIG.get("chapter_exact_match_pinning", True):
-            pin_terms = []
-            for m in re.finditer(r'[A-Za-z][A-Za-z0-9_]{1,}', query):
-                pin_terms.append(m.group().lower())
-            for m in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
-                pin_terms.append(m.group())
+            pin_terms = [term.lower() for term in extract_keywords(query)]
             pin_terms = list(dict.fromkeys(pin_terms))
             if pin_terms:
                 def _term_hit(term: str, text: str) -> bool:
@@ -1220,8 +1211,9 @@ Output only JSON, no explanation."""
                 skipped.append(filter_term)
                 continue
             if len(filter_term) == 2:
-                is_all_cn = '\u4e00' <= filter_term[0] <= '\u9fff' and '\u4e00' <= filter_term[1] <= '\u9fff'
-                if not is_all_cn:
+                from ..plugins import get_generic_short_doc_filter_pattern
+                short_pattern = get_generic_short_doc_filter_pattern()
+                if not short_pattern or not re.fullmatch(short_pattern, filter_term):
                     skipped.append(filter_term)
                     continue
             filter_with_space = filter_term.replace('_', ' ')
@@ -1266,9 +1258,9 @@ Output only JSON, no explanation."""
             while idx != -1:
                 before = text[idx - 1] if idx > 0 else ' '
                 after = text[idx + len(term)] if idx + len(term) < len(text) else ' '
-                # Word boundary: not preceded/followed by letter/digit/Chinese char
-                is_word_boundary = not (before.isalnum() or '\u4e00' <= before <= '\u9fff')
-                is_word_boundary_after = not (after.isalnum() or '\u4e00' <= after <= '\u9fff')
+                # Unicode-aware word boundaries; isalnum() already covers CJK.
+                is_word_boundary = not before.isalnum()
+                is_word_boundary_after = not after.isalnum()
                 if is_word_boundary and is_word_boundary_after:
                     return True
                 # Non-whole-word but length >= 3, also accept (e.g., "StoneTech" in "Beijing Stone Century Technology")

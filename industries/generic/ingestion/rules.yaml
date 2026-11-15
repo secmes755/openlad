@@ -20,6 +20,8 @@ unknown_labels:
 
 # High-frequency function words used only to detect garbled text. Language
 # lists are declared here so core carries no single-language dictionary.
+quality_dictionary_pattern: '[\u4e00-\u9fff]{2,3}'
+quality_fallback_word_pattern: '[a-zA-Z]{2,}'
 quality_common_words:
   zh:
     - 的
@@ -92,6 +94,15 @@ footnote_markers: ['*', '※', '①', '[']
 
 # Numeral words accepted in a numbered heading ("第X章"), mapped to integers.
 # Declared per language so core carries no single-language numeral table.
+# Grammar for numbered headings: three capture groups are numeral, unit, title.
+numbered_heading_pattern: '^第([一二三四五六七八九十]+)(编|章|节|部|篇)\s+(.+)'
+spaced_character_run_pattern: '(?:[一-鿿][ 　]){2,}[一-鿿]'
+unconditional_heading_script_pattern: '[\u4e00-\u9fff]'
+heading_word_pattern: '[A-Za-z]{2,}'
+trailing_title_token_pattern: '(?:%|mg|L|ml|kg|元|万|亿|N/A|NA|—|–|--|…|\d+(?:[,.]\d+)*)$'
+heading_sentence_boundary_pattern: '\.\s+[A-Z]'
+chapter_heading_reserved_pattern: '^(Chapter|Section|Part)\b'
+chapter_label: 'Chapter'
 heading_numerals:
   一: 1
   二: 2

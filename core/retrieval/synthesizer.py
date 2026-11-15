@@ -8,8 +8,9 @@ from typing import Any
 
 from ..config import settings
 from ..models.client import get_model_client
+from ..text_keywords import extract_keywords
 from .router import IntentType, QueryPlan
-from .truncation import is_truncated, mark_truncated
+from .truncation import is_truncated, mark_truncated, truncate_to_fit
 
 logger = logging.getLogger(__name__)
 
@@ -117,21 +118,23 @@ class AnswerSynthesizer:
             effective_context = self._map_reduce_extract(context, query, industry_pack=industry_pack, original_query=original_query)
             logger.info(f"[SYNTHESIZER] After Map-Reduce reduction: {len(effective_context)} chars")
 
+        industry_addon = ""
         if industry_pack:
             manifest = getattr(industry_pack, "manifest", None)
             pack_name = getattr(manifest, "name", "unknown") if manifest else "unknown"
             pack_version = getattr(manifest, "version", "N/A") if manifest else "N/A"
             logger.info(f"[SYNTHESIZER] Using industry Prompt pack: {pack_name} v{pack_version} (category={routed_category})")
-            # Use legacy prompt as base (compact structure, higher LLM compliance), append industry pack constraints
-            base_prompt = self._build_legacy_prompt(query, effective_context, catalog, history_section, structured_context, original_query)
             industry_addon = self._build_industry_addon(industry_pack, query)
-            if industry_addon:
-                prompt = base_prompt + "\n\n" + industry_addon
-            else:
-                prompt = base_prompt
         else:
             logger.warning(f"[SYNTHESIZER] No industry pack matched, using built-in default Prompt (category={routed_category})")
-            prompt = self._build_legacy_prompt(query, effective_context, catalog, history_section, structured_context, original_query)
+
+        def build_prompt(context_text):
+            base = self._build_legacy_prompt(
+                query, context_text, catalog, history_section,
+                structured_context, original_query)
+            return base + "\n\n" + industry_addon if industry_addon else base
+
+        prompt = build_prompt(effective_context)
 
         try:
             # FIX: When user explicitly requests a table, use generate_json to output structured data ensuring correct format
@@ -144,6 +147,26 @@ class AnswerSynthesizer:
                 logger.info(f"[SYNTHESIZER] Language instruction: {lang_instruction!r}")
                 cfg = settings.CONTEXT_CONFIG
                 synthesis_max_tokens = cfg.get("synthesis_max_tokens", 4096)
+                prompt_limit = self.model_client.prompt_char_limit(synthesis_max_tokens)
+                prompt_chars = len(prompt) + len(lang_instruction)
+                if prompt_chars > prompt_limit:
+                    # Fit the evidence, not the instructions. The budget is
+                    # measured from the actual pack/system prompt rather than
+                    # assuming a fixed overhead that another pack can exceed.
+                    overhead = prompt_chars - len(effective_context)
+                    context_limit = prompt_limit - overhead
+                    if context_limit > 0:
+                        previous = len(effective_context)
+                        effective_context = truncate_to_fit(
+                            effective_context, context_limit)
+                        prompt = build_prompt(effective_context)
+                        logger.warning(
+                            f"[SYNTHESIZER] Fit prompt to model window: "
+                            f"context {previous} -> {len(effective_context)} chars")
+                    else:
+                        logger.error(
+                            "[SYNTHESIZER] Prompt instructions alone exceed the "
+                            "model window; document context cannot be fitted")
                 raw_answer = self.model_client.generate(
                     prompt,
                     system_prompt=lang_instruction,
@@ -374,12 +397,9 @@ Output only JSON."""
         from .spec_facts import extract_model_tokens
         keywords.update(extract_model_tokens(raw_answer))
 
-        # Long CJK phrases (4+ chars) — specific term names / article numbers
-        # written as words.
-        keywords.update(re.findall(r'[\u4e00-\u9fff]{4,}', raw_answer))
-
-        # Latin terms (4+ chars) — product / standard names in any language.
-        keywords.update(re.findall(r'[A-Za-z][A-Za-z0-9_-]{3,}', raw_answer))
+        # Pack-owned token shapes supply language-specific terms; core only
+        # combines them with the structural anchors above.
+        keywords.update(extract_keywords(raw_answer))
 
         # Industry-pack anchor patterns (additive regexes, vocabulary in pack)
         if industry_pack is not None:

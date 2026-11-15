@@ -91,6 +91,14 @@ query_expansion:
   keywords: []
 low_value_sections: []
 spec_sections: []
+# Token shapes are language data, not core retrieval policy. Core applies these
+# expressions and deduplicates the matches; it carries no script-specific ranges.
+keyword_patterns:
+  - '[\u4e00-\u9fff]{2,}'
+  - '[A-Za-z][A-Za-z0-9_-]+'
+  - '\d[\d,]*\.?\d*'
+short_doc_filter_pattern: '^[\u4e00-\u9fff]{2}$'
+
 entity_patterns: []
 spec_query_terms:
   数量: [count, number]

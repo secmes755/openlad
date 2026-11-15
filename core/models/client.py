@@ -316,6 +316,22 @@ class ModelClient:
             messages, max_tokens, temperature, json_mode, json_array_mode,
             base_url, model, api_key).text
 
+    @staticmethod
+    def prompt_char_limit(max_tokens: int) -> int:
+        """Return the prompt budget after reserving output and protocol space.
+
+        Prompt and completion share one model context window. The old guard used
+        the whole window for the prompt and therefore accepted requests that were
+        already too large before the model generated its first token.
+        """
+        cfg = settings.CONTEXT_CONFIG
+        context_tokens = cfg["llm_max_tokens"]
+        output_tokens = max(0, int(max_tokens))
+        available_tokens = max(1, context_tokens - output_tokens)
+        protocol_reserve = cfg["prompt_protocol_reserve_chars"]
+        return max(1000, int(available_tokens * cfg["token_to_char_ratio"])
+                   - protocol_reserve)
+
     def _chat_completion_result(self, messages: list, max_tokens: int = 2048,
                                 temperature: float = 0.7, json_mode: bool = False,
                                 json_array_mode: bool = False,
@@ -332,7 +348,7 @@ class ModelClient:
         # === Prompt length guard: prevent oversized prompts from crashing llama-server ===
         llm_max_tokens = settings.CONTEXT_CONFIG.get("llm_max_tokens", 131072)
         ratio = settings.CONTEXT_CONFIG.get("token_to_char_ratio", 0.7)
-        max_prompt_chars = int(llm_max_tokens * ratio)
+        max_prompt_chars = self.prompt_char_limit(max_tokens)
         total_chars = 0
         for m in messages:
             content = m.get("content", "")
@@ -354,10 +370,12 @@ class ModelClient:
             logger.critical(f"[MODEL] Oversized prompt call stack:\n{''.join(traceback.format_stack())}")
             # Truncate the last (user) message to fit
             overhead = total_chars - len(str(messages[-1].get("content", "")))
-            safe_len = max_prompt_chars - overhead - 5000  # 5K safety margin for template
+            safe_len = max_prompt_chars - overhead
             if safe_len > 1000 and isinstance(messages[-1].get("content"), str):
                 old_len = len(messages[-1]["content"])
-                messages[-1]["content"] = messages[-1]["content"][:safe_len] + "\n\n[CONTENT TRUNCATED BY SAFETY GUARD]"
+                from ..retrieval.truncation import truncate_to_fit
+                messages[-1]["content"] = truncate_to_fit(
+                    messages[-1]["content"], safe_len)
                 logger.critical(f"[MODEL] Truncated last message from {old_len} to {len(messages[-1]['content'])} chars")
             else:
                 logger.critical("[MODEL] Cannot safely truncate — overhead alone exceeds limit. Allowing request to proceed with CRITICAL warning.")

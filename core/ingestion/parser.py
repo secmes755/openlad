@@ -93,13 +93,8 @@ from ..config import (
 )
 from ..models import get_model_client
 
-# Runs of 3+ single CJK characters separated by ASCII or full-width spaces.
-# pdfplumber sometimes emits one character per text run ("瑞 芯 微" for
-# "瑞芯微"); the trigram FTS tokenizer cannot match a normal query term
-# against such text. Two adjacent single characters ("是 否" in a table)
-# are deliberately NOT matched — those are separate cells, not spacing
-# artefacts. Applied per line so folding never crosses line boundaries.
-_SPACED_CJK_RUN = re.compile(r"(?:[一-鿿][ 　]){2,}[一-鿿]")
+# The pack supplies the script pattern used to repair per-character PDF runs.
+# Core only applies it per line and never folds across line boundaries.
 
 # Characters of the accumulated OCR transcription echoed back as the resume
 # cue when a continuation round is needed (finish_reason == "length").
@@ -107,15 +102,15 @@ OCR_CONTINUATION_TAIL_CHARS = 200
 
 
 def normalize_spaced_cjk(text: str) -> str:
-    """Fold spaces inside runs of 3+ consecutive single CJK characters.
-
-    Line-scoped (never folds across "\n"), handles ASCII and U+3000 spaces.
-    Text without such runs is returned unchanged.
-    """
+    """Fold pack-matched per-character runs without crossing line boundaries."""
     if not text:
         return text
+    from ..plugins import get_generic_ingestion_rules
+    pattern = get_generic_ingestion_rules().get("spaced_character_run_pattern")
+    if not pattern:
+        return text
     return "\n".join(
-        _SPACED_CJK_RUN.sub(lambda m: m.group(0).replace(" ", "").replace("　", ""), ln)
+        re.sub(pattern, lambda m: m.group(0).replace(" ", "").replace("　", ""), ln)
         for ln in text.split("\n")
     )
 

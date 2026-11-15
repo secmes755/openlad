@@ -45,14 +45,15 @@ def test_llm_max_tokens_is_the_per_slot_context_not_the_total():
     """
     cfg = settings.CONTEXT_CONFIG
     ctx = cfg["llm_max_tokens"]
-    safe = cfg["synthesis_safe_chars"]
     out_max = cfg.get("synthesis_max_tokens", 4096)
     ratio = cfg["token_to_char_ratio"]
 
-    prompt_tokens = safe / ratio
-    assert prompt_tokens + out_max <= ctx * 1.5, (
-        f"safe prompt ({prompt_tokens:.0f} tok) + output ({out_max} tok) exceeds "
-        f"llm_max_tokens ({ctx}); prompt and completion share one window"
+    from core.models.client import ModelClient
+    prompt_chars = ModelClient.prompt_char_limit(out_max)
+    assert (prompt_chars + cfg["prompt_protocol_reserve_chars"]
+            + int(out_max * ratio) <= int(ctx * ratio)), (
+        "prompt, protocol reserve and output must share one context window; "
+        "there is no tolerance for accepting an oversized request"
     )
 
 

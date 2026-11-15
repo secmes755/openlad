@@ -21,6 +21,7 @@ from ..config import (
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models import get_model_client
 from ..plugins import get_plugin_registry
+from ..text_keywords import extract_keywords
 from . import title_deriver
 from .classifier import DocumentClassifier
 from .layout import ChartAnalyzer, FormulaRecognizer, LayoutAnalyzer
@@ -108,6 +109,7 @@ class DocumentIndexBuilder:
         self._default_heading_level = 2
         self._table_caption_pattern = ""
         self._table_marker_pattern = ""
+        self._numbered_heading_pattern = ""
         self._load_structure_vocabulary()
 
     def _load_structure_vocabulary(self) -> None:
@@ -124,6 +126,8 @@ class DocumentIndexBuilder:
             rules.get("table_caption_pattern") or "")
         self._table_marker_pattern = str(
             rules.get("table_marker_pattern") or "")
+        self._numbered_heading_pattern = str(
+            rules.get("numbered_heading_pattern") or "")
 
     def _heading_number_value(self, numerals: str) -> int:
         """Map a pack-declared numeral word to its integer value."""
@@ -1421,8 +1425,10 @@ class DocumentIndexBuilder:
                     page_structure.update({"level": level, "path": current_path, "title": title})
                     break
 
-                cn_heading_match = re.match(
-                    r'^第([一二三四五六七八九十]+)(编|章|节|部|篇)\s+(.+)', line)
+                if not hasattr(self, "_numbered_heading_pattern"):
+                    self._load_structure_vocabulary()
+                cn_heading_match = (re.match(self._numbered_heading_pattern, line)
+                                    if self._numbered_heading_pattern else None)
                 if cn_heading_match:
                     cn_num_str = cn_heading_match.group(1)
                     cn_unit = cn_heading_match.group(2)
@@ -2427,13 +2433,10 @@ embedded cleanly) — callers persist them as document-level ingest_warnings.
         return 0
 
     def _extract_keywords_from_title(self, title: str) -> str:
-        """Extract keywords from section title (for structure index retrieval)"""
+        """Extract pack-shaped keywords from a section title."""
         if not title:
             return ""
-        import re
-        # Extract Chinese/English words/phrases, no stopword filtering
-        words = re.findall(r'[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9\-_]{1,}', title)
-        return ", ".join(words[:5])  # Max 5 keywords
+        return ", ".join(extract_keywords(title)[:5])
 
     def _extract_title(self, filename: str) -> str:
         """Extract document title from filename.

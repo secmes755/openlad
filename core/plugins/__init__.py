@@ -240,6 +240,14 @@ class RetrievalPlugin(ABC):
         long phrases); these patterns are additive. Default: none."""
         return []
 
+    def get_keyword_patterns(self) -> list[str]:
+        """Language/token shapes used for keyword extraction, owned by packs."""
+        return []
+
+    def get_short_doc_filter_pattern(self) -> str:
+        """Optional language rule admitting a two-character document filter."""
+        return ""
+
     def get_section_boost_rules(self) -> dict[str, Any]:
         """Section boost rules (query-intent -> boost/penalty), default {}."""
         return {}
@@ -441,6 +449,13 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         # Domain-specific evidence-anchor regexes from rules.yaml
         # `evidence_anchor_patterns` (default empty).
         return self.config.rules.get("evidence_anchor_patterns", []) or []
+
+    def get_keyword_patterns(self) -> list[str]:
+        # Language-specific token shapes from rules.yaml (default empty).
+        return self.config.rules.get("keyword_patterns", []) or []
+
+    def get_short_doc_filter_pattern(self) -> str:
+        return str(self.config.rules.get("short_doc_filter_pattern") or "")
 
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"
@@ -1159,3 +1174,31 @@ def get_plugin_registry(scan_dirs: list[str] = None) -> PluginRegistry:
         dirs = scan_dirs or settings.PLUGIN_CONFIG.get("industries_scan_dirs", [])
         _registry = PluginRegistry(scan_dirs=dirs)
     return _registry
+
+
+def get_generic_keyword_patterns() -> list[str]:
+    """Read token shapes from the base pack, with a language-neutral fallback."""
+    try:
+        generic = get_plugin_registry().get_generic()
+        retrieval = getattr(generic, "retrieval", None) if generic else None
+        getter = getattr(retrieval, "get_keyword_patterns", None)
+        patterns = getter() if callable(getter) else []
+        if isinstance(patterns, list):
+            return [p for p in patterns if isinstance(p, str) and p]
+    except Exception as e:
+        logger.warning(f"[PLUGIN] generic keyword patterns unavailable: {e}")
+    # No hidden CJK fallback: an installation without pack rules still handles
+    # identifiers and Latin tokens, while other scripts simply produce no terms.
+    return [r"[A-Za-z0-9]+"]
+
+
+def get_generic_short_doc_filter_pattern() -> str:
+    """Return the optional base-pack rule for short document filters."""
+    try:
+        generic = get_plugin_registry().get_generic()
+        retrieval = getattr(generic, "retrieval", None) if generic else None
+        getter = getattr(retrieval, "get_short_doc_filter_pattern", None)
+        return str(getter() or "") if callable(getter) else ""
+    except Exception as e:
+        logger.warning(f"[PLUGIN] short document-filter rule unavailable: {e}")
+        return ""

@@ -12,6 +12,7 @@ from typing import Any
 from ..config import REPORT_EPOCH_SCOPING_ENABLED, settings
 from ..db.tenant_db import get_tenant_metadata_db
 from ..models.client import get_model_client
+from ..text_keywords import extract_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -392,8 +393,9 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
                     if len(clean) >= 3 or (len(clean) >= 2 and has_letter and has_digit):
                         entities.append(clean)
 
-            # FIX: Also extract Chinese entities (company names, product names, etc.)
-            cn_pattern = re.findall(r'[\u4e00-\u9fff]{2,12}', source_text)
+            # Pack-shaped, non-ASCII entity tokens (company/product names etc.).
+            cn_pattern = [w for w in extract_keywords(source_text)
+                          if len(w) <= 12 and not re.search(r'[A-Za-z0-9]', w)]
             stopwords = self._all_entity_stopwords()
             for w in cn_pattern:
                 if w not in entities and w not in stopwords:

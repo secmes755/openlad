@@ -34,6 +34,17 @@ def mark_truncated(text: str) -> str:
     return f"{text}\n{MARKER}"
 
 
+def truncate_to_fit(text: str, max_chars: int) -> str:
+    """Fit text and its truncation marker inside one hard character budget."""
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 0:
+        return ""
+    if max_chars <= len(MARKER) + 1:
+        return MARKER[:max_chars]
+    return f"{text[:max_chars - len(MARKER) - 1].rstrip()}\n{MARKER}"
+
+
 def is_truncated(text: str) -> bool:
     """True when the text carries any known truncation marker."""
     if not text:
