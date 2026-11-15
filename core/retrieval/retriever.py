@@ -167,10 +167,14 @@ class HierarchicalRetriever:
         # FIX: Always try FTS first — even for 2-char CJK queries. If the query
         # contains non-CJK tokens like "AB1234" or "MCU", those can still be matched
         # via FTS trigram tokenizer. Fallback to bigram only when FTS returns 0.
-        chunk_results = self.metadata_db.search_fts_chunks(query, limit=limit * 10, page_filter=page_filter)
+        chunk_results = self.metadata_db.search_fts_chunks(
+            query, limit=limit * 10, page_filter=page_filter,
+            doc_id_filter=doc_id_filter)
         if not chunk_results:
             logger.info(f"[RETRIEVER] query '{query}' FTS returned 0 results, falling back to bigram LIKE")
-            chunk_results = self.metadata_db.search_fts_chunks(query, limit=limit * 5, force_bigram_only=True, page_filter=page_filter)
+            chunk_results = self.metadata_db.search_fts_chunks(
+                query, limit=limit * 5, force_bigram_only=True,
+                page_filter=page_filter, doc_id_filter=doc_id_filter)
 
         # Tag primary tenant results
         for r in chunk_results:

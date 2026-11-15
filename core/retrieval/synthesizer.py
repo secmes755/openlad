@@ -64,16 +64,6 @@ class AnswerSynthesizer:
         else:
             return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query, explicit_pack_id)
 
-    @staticmethod
-    def _needs_completion_retry(answer: str) -> bool:
-        """Detect a bounded class of visibly incomplete short generations."""
-        text = (answer or "").strip()
-        if not text or len(text) >= 80 or re.search(r"\d", text):
-            return False
-        if text.endswith((".", "!", "?", "。", "！", "？", ";", "；")):
-            return False
-        return bool(re.search(r"[A-Za-z][A-Za-z-]{2,}$", text))
-
     def _synthesize_standard(self, query: str, plan: QueryPlan,
                              context: str, sources: list[dict],
                              chat_history: str = None,
@@ -181,33 +171,8 @@ class AnswerSynthesizer:
                     prompt,
                     system_prompt=lang_instruction,
                     temperature=0.1,
-                    max_tokens=synthesis_max_tokens,
-                    timeout=None
+                    max_tokens=synthesis_max_tokens
                 )
-                if self._needs_completion_retry(raw_answer):
-                    repair_instruction = (
-                        "\n\nThe previous response was incomplete. Give the complete "
-                        "requested value explicitly and do not stop after a document "
-                        "or section title.")
-                    repair_prompt = prompt + repair_instruction
-                    if len(repair_prompt) + len(lang_instruction) <= prompt_limit:
-                        try:
-                            repaired = self.model_client.generate(
-                                repair_prompt,
-                                system_prompt=lang_instruction,
-                                temperature=0.0,
-                                max_tokens=synthesis_max_tokens,
-                                timeout=None,
-                            )
-                            if repaired.strip():
-                                logger.info(
-                                    "[SYNTHESIZER] Replaced an incomplete short answer "
-                                    "after one bounded retry")
-                                raw_answer = repaired
-                        except Exception as retry_error:
-                            logger.warning(
-                                f"[SYNTHESIZER] Completion retry failed; keeping the "
-                                f"original answer: {retry_error}")
                 raw_answer = raw_answer.strip()
                 if self._is_garbled(raw_answer):
                     logger.error("[SYNTHESIZER] LLM returned garbled or empty output")
@@ -826,32 +791,26 @@ Compute the rate the question asks for from exactly those figures. Show the arit
 
         # 1. Strip common thinking process marker lines
         think_patterns = [
-            r'\*?\(?\s*Self-Correction[^\n]*',
-            r'\*?\(?\s*Drafting[^\n]*',
-            r'\*?\(?\s*Refining[^\n]*',
-            r'\*?\(?\s*Ensure[^\n]*',
-            r'\*?\(?\s*Check[^\n]*',
-            r'\*?\(?\s*Correction[^\n]*',
-            r'\*?\(?\s*Note[^\n]*',
-            r'\*?\(?\s*Wait[^\n]*',
-            r'\*?\(?\s*Actually[^\n]*',
-            r'\*?\(?\s*Looking[^\n]*',
-            r'\*?\(?\s*I must[^\n]*',
-            r'\*?\(?\s*I will[^\n]*',
-            r'\*?\(?\s*I need[^\n]*',
-            r'\*?\(?\s*Let me[^\n]*',
-            r'\*?\(?\s*The text[^\n]*',
-            r'\*?\(?\s*Dimensions[^\n]*',
-            r'\*?\(?\s*Columns[^\n]*',
-            r'\*?\(?\s*Rows[^\n]*',
-            r'\*?\(?\s*Compare the main[^\n]*',
-            r'\*?\(?\s*Three documents[^\n]*',
-            r'\*?\(?\s*Markdown table[^\n]*',
-            r'\*?\(?\s*Detailed comparison[^\n]*',
+            r'\*?\(?\s*Self-Correction\b[^\n]*',
+            r'\*?\(?\s*Drafting\b[^\n]*',
+            r'\*?\(?\s*Refining\b[^\n]*',
+            r'\*?\(?\s*Ensure\b[^\n]*',
+            r'\*?\(?\s*Check\b[^\n]*',
+            r'\*?\(?\s*Correction\b[^\n]*',
+            r'\*?\(?\s*Wait\b[^\n]*',
+            r'\*?\(?\s*Actually\b[^\n]*',
+            r'\*?\(?\s*Looking\b[^\n]*',
+            r'\*?\(?\s*I must\b[^\n]*',
+            r'\*?\(?\s*I will\b[^\n]*',
+            r'\*?\(?\s*I need\b[^\n]*',
+            r'\*?\(?\s*Let me\b[^\n]*',
         ]
         cleaned = text
         for pat in think_patterns:
-            cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE)
+            # Only standalone artifact lines are removable. Legitimate answer
+            # text such as "Release Notes" or "The text ..." must survive.
+            cleaned = re.sub(r'^\s*' + pat, '', cleaned,
+                             flags=re.IGNORECASE | re.MULTILINE)
 
         # 2. If the answer contains a Markdown table, prioritize extracting the table and preceding summary paragraphs
         # Find where the first table starts
@@ -867,7 +826,7 @@ Compute the rate the question asks for from exactly those figures. Show the arit
             # Strip thinking text after the table
             suffix_lines = []
             for line in suffix.split('\n'):
-                if re.match(r'\*?\(?\s*(Self-Correction|Drafting|Refining|Ensure|Check|Note|Wait|Actually|Looking|I must|I will|I need|Let me)', line, re.IGNORECASE):
+                if re.match(r'\*?\(?\s*(Self-Correction|Drafting|Refining|Ensure|Check|Wait|Actually|Looking|I must|I will|I need|Let me)\b', line, re.IGNORECASE):
                     break
                 suffix_lines.append(line)
             cleaned = keep_prefix + '\n' + '\n'.join(suffix_lines)

@@ -614,7 +614,9 @@ class TenantMetadataDB:
         return ids
 
 
-    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: set[int] | None = None) -> list[dict]:
+    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False,
+                          page_filter: set[int] | None = None,
+                          doc_id_filter: set[str] | None = None) -> list[dict]:
         """Chunk-level FTS search (OpenLAD: downgraded from page-level to chunk-level)
 
         FIX: When force_bigram_only=True, skip FTS trigram search and go directly to bigram LIKE search.
@@ -677,11 +679,15 @@ class TenantMetadataDB:
 
         # Phase 2: Build page filter SQL clause
         page_filter_sql = ""
-        page_filter_params = []
+        page_filter_params: list = []
         if page_filter:
             page_filter_sql = f"AND dc.page_num IN ({','.join(['?'] * len(page_filter))})"
             page_filter_params = list(page_filter)
             logger.info(f"[FTS] Applying page_filter: {sorted(page_filter)[:20]}{'...' if len(page_filter) > 20 else ''} ({len(page_filter)} pages)")
+        if doc_id_filter and "__ALL__" not in doc_id_filter:
+            doc_ids = sorted(doc_id_filter)
+            page_filter_sql += f" AND dc.doc_id IN ({','.join(['?'] * len(doc_ids))})"
+            page_filter_params.extend(doc_ids)
 
         # 1. FTS5 trigram search (3+ characters)
         # FIX: When force_bigram_only=True, skip FTS search and go directly to bigram LIKE
