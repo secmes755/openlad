@@ -306,12 +306,20 @@ class TextQualityChecker:
         self.min_dictionary_hit_rate = self.config.get("min_dictionary_hit_rate", 0.3)
         self.enable_ocr_fallback = self.config.get("enable_ocr_fallback", True)
 
-        # Common Chinese word list (generic, not industry-specific)
-        self._cn_common_words = set([
-            "的", "是", "在", "和", "了", "与", "有", "被", "为", "以",
-            "及", "对", "或", "将", "从", "到", "也", "而", "其", "之",
-            "中", "上", "下", "内", "外", "时", "后", "前", "间",
-        ])
+        # Common function words come from the pack; core carries no language
+        # dictionary. Missing rules simply disable this signal.
+        from ...plugins import get_generic_ingestion_rules
+        quality_rules = get_generic_ingestion_rules()
+        word_lists = quality_rules.get("quality_common_words", {}) or {}
+        self._quality_dictionary_pattern = str(
+            quality_rules.get("quality_dictionary_pattern") or "")
+        self._quality_fallback_word_pattern = str(
+            quality_rules.get("quality_fallback_word_pattern") or "")
+        self._common_words = {
+            str(word)
+            for words in word_lists.values() if isinstance(words, list)
+            for word in words if str(word).strip()
+        }
 
 
     def check(self, text: str) -> dict[str, Any]:
@@ -491,19 +499,21 @@ class TextQualityChecker:
         if not text:
             return 0.0
 
-        # Extract 2-3 character Chinese word groups
         import re
-        words = re.findall(r'[\u4e00-\u9fff]{2,3}', text)
+        words = (re.findall(self._quality_dictionary_pattern, text)
+                 if self._quality_dictionary_pattern else [])
 
         if not words:
-            # If no Chinese, check English words
-            en_words = re.findall(r'[a-zA-Z]{2,}', text)
+            # Optional secondary script rule, also owned by the pack.
+            en_words = (re.findall(self._quality_fallback_word_pattern, text)
+                        if self._quality_fallback_word_pattern else [])
             if en_words:
-                # Simple check: assume English words are valid
+                # The fallback script has no dictionary signal; preserve the
+                # existing conservative estimate rather than inventing hits.
                 return min(len(en_words) / 10, 1.0)
             return 0.0
 
-        hits = sum(1 for w in words if w in self._cn_common_words)
+        hits = sum(1 for w in words if w in self._common_words)
 
         return min(hits / len(words), 1.0) if words else 0.0
 

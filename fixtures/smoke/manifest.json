@@ -1,0 +1,17 @@
+{
+  "documents": [
+    {
+      "file": "release_notes.md",
+      "queries": [
+        {
+          "query": "发布说明的版本号是多少？",
+          "contains": ["2.5.0"]
+        },
+        {
+          "query": "发布说明的作者是谁？",
+          "contains": ["OpenLAD"]
+        }
+      ]
+    }
+  ]
+}

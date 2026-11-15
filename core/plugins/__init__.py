@@ -210,6 +210,14 @@ class RetrievalPlugin(ABC):
         these out. Default: [].  Industry packs supply their own words."""
         return []
 
+    def get_message_rules(self) -> dict[str, list[dict[str, str]]]:
+        """Ordered message rules keyed by message id.
+
+        Each rule has a regex ``pattern`` and a ``text`` template. Core only
+        performs matching/substitution; language and wording stay in packs.
+        """
+        return {}
+
     def get_report_epoch_pattern(self) -> str:
         """Regex marking a year that names a document epoch rather than a
         comparison period (default: empty, which disables epoch pruning).
@@ -230,6 +238,18 @@ class RetrievalPlugin(ABC):
         sampling (e.g. a legal pack might anchor on article numbers).
         Core always applies its generic anchors (numbers, model tokens,
         long phrases); these patterns are additive. Default: none."""
+        return []
+
+    def get_keyword_patterns(self) -> list[str]:
+        """Language/token shapes used for keyword extraction, owned by packs."""
+        return []
+
+    def get_short_doc_filter_pattern(self) -> str:
+        """Optional language rule admitting a two-character document filter."""
+        return ""
+
+    def get_search_ngram_rules(self) -> list[dict]:
+        """Pack-owned substring rules used only to broaden FTS search terms."""
         return []
 
     def get_section_boost_rules(self) -> dict[str, Any]:
@@ -404,6 +424,9 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         # industry carries). Merged into the planner's entity filter.
         return self.config.rules.get("entity_stopwords", []) or []
 
+    def get_message_rules(self) -> dict[str, list[dict[str, str]]]:
+        return self.config.rules.get("message_rules", {}) or {}
+
     def get_report_epoch_pattern(self) -> str:
         # Regex from rules.yaml `report_epoch_pattern` (default empty). A year
         # counts as a document epoch only when it is bound to one of these
@@ -430,6 +453,17 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
         # Domain-specific evidence-anchor regexes from rules.yaml
         # `evidence_anchor_patterns` (default empty).
         return self.config.rules.get("evidence_anchor_patterns", []) or []
+
+    def get_keyword_patterns(self) -> list[str]:
+        # Language-specific token shapes from rules.yaml (default empty).
+        return self.config.rules.get("keyword_patterns", []) or []
+
+    def get_short_doc_filter_pattern(self) -> str:
+        return str(self.config.rules.get("short_doc_filter_pattern") or "")
+
+    def get_search_ngram_rules(self) -> list[dict]:
+        rules = self.config.rules.get("search_ngram_rules", []) or []
+        return rules if isinstance(rules, list) else []
 
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"
@@ -492,88 +526,6 @@ class YAMLIndustryPlugin(IndustryPlugin):
     def retrieval(self) -> RetrievalPlugin:
         return self._retrieval
 
-    def build_prompt(self, query: str, context: str, catalog: str = "",
-                     history_section: str = "", schematic_context: str = None) -> str:
-        """Build synthesis prompt from industry package config"""
-        prompts = self._retrieval.config.prompts or {}
-        constraints = self._retrieval.config.answer_constraints or {}
-
-        system_prompt = prompts.get("system_prompt", "")
-        answer_rules = prompts.get("answer_rules", [])
-        context_filtering = prompts.get("context_filtering", "")
-        output_structure = prompts.get("output_structure", "")
-
-        format_constraints = constraints.get("format_constraints", [])
-        depth_constraints = constraints.get("depth_constraints", [])
-        prohibited_behaviors = constraints.get("prohibited_behaviors", [])
-
-        prompt = f"""基于以下信息回答用户问题。{history_section}
-
-知识库目录（列出所有可用文档，问"有哪些信息/文档"时据此回答全部）：
-{catalog}
-
-用户问题：{query}"""
-
-        if schematic_context:
-            prompt += f"""
-
-原理图结构化数据（精确引脚-网络连接关系）：
-{schematic_context}"""
-
-        prompt += f"""
-
-检索到的详细内容：
-{context}"""
-
-        if system_prompt:
-            prompt += f"""
-
-{system_prompt}"""
-
-        if context_filtering:
-            prompt += f"""
-
-{context_filtering}"""
-
-        rules_text = "\n".join(f"- {rule}" for rule in answer_rules)
-        if rules_text:
-            prompt += f"""
-
-回答规则：
-{rules_text}"""
-
-        fmt_text = "\n".join(f"- {c}" for c in format_constraints)
-        depth_text = "\n".join(f"- {c}" for c in depth_constraints)
-        prohibit_text = "\n".join(f"- {c}" for c in prohibited_behaviors)
-
-        if fmt_text:
-            prompt += f"""
-
-格式约束：
-{fmt_text}"""
-        if depth_text:
-            prompt += f"""
-
-深度约束：
-{depth_text}"""
-        if prohibit_text:
-            prompt += f"""
-
-禁止行为：
-{prohibit_text}"""
-
-        if output_structure:
-            prompt += f"""
-
-输出格式：
-{output_structure}"""
-
-        prompt += """
-
-请用中文回答。"""
-        return prompt
-
-
 # =============================================================================
 # Pack Composition: generic base layer + selected industry overlay
 # =============================================================================
@@ -600,6 +552,72 @@ def _merge_hook_dicts(base: dict, overlay: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+def get_generic_ingestion_rules() -> dict:
+    """Merged ingestion rules from the generic base plus active overlay.
+
+    Core reads ingestion vocabulary through this single entry point so packs
+    supply labels, language word lists and structural patterns.
+    """
+    try:
+        registry = get_plugin_registry()
+        pack = registry.get_generic()
+        if pack is None:
+            return {}
+        ingestion = getattr(pack, 'ingestion', None)
+        get_rules = getattr(ingestion, 'get_parsing_rules', None)
+        rules = get_rules() if callable(get_rules) else {}
+        return rules if isinstance(rules, dict) else {}
+    except Exception as exc:
+        logger.warning(f"Generic ingestion rules unavailable: {exc}")
+        return {}
+
+
+def get_generic_ingestion_prompts() -> dict[str, str]:
+    try:
+        registry = get_plugin_registry()
+        pack = registry.get_generic()
+        if pack is None:
+            return {}
+        ingestion = getattr(pack, 'ingestion', None)
+        get_prompts = getattr(ingestion, 'get_ingestion_prompts', None)
+        prompts = get_prompts() if callable(get_prompts) else {}
+        return prompts if isinstance(prompts, dict) else {}
+    except Exception as exc:
+        logger.warning(f"Generic ingestion prompts unavailable: {exc}")
+        return {}
+
+
+def render_pack_message(message_id: str, text: str = '', retrieval=None,
+                        **values) -> str:
+    """Render pack-owned wording without embedding language rules in core."""
+    if retrieval is None:
+        pack = get_plugin_registry().get_generic()
+        retrieval = getattr(pack, 'retrieval', None) if pack else None
+    get_rules = getattr(retrieval, 'get_message_rules', None)
+    if not callable(get_rules):
+        return ''
+    import re
+    from string import Template
+    rules_by_id = get_rules()
+    if not isinstance(rules_by_id, dict):
+        return ''
+    rules = rules_by_id.get(message_id, [])
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        pattern = str(rule.get('pattern', '') or '')
+        try:
+            if pattern and not re.search(pattern, text):
+                continue
+        except re.error as exc:
+            logger.warning(f"Invalid pack message pattern for {message_id}: {exc}")
+            continue
+        template = str(rule.get('text', '') or '')
+        if template:
+            return Template(template).safe_substitute(**values)
+    return ''
 
 
 class ComposedRetrievalPlugin(RetrievalPlugin):
@@ -665,6 +683,27 @@ class ComposedRetrievalPlugin(RetrievalPlugin):
     def get_entity_stopwords(self) -> list[str]:
         return _union_list(self._base.get_entity_stopwords(),
                            self._overlay.get_entity_stopwords())
+
+    def get_report_epoch_pattern(self) -> str:
+        overlay = getattr(self._overlay, 'get_report_epoch_pattern', None)
+        base = getattr(self._base, 'get_report_epoch_pattern', None)
+        overlay_pattern = overlay() if callable(overlay) else ''
+        base_pattern = base() if callable(base) else ''
+        return str(overlay_pattern or base_pattern or '')
+
+    def get_message_rules(self) -> dict[str, list[dict[str, str]]]:
+        base_get = getattr(self._base, 'get_message_rules', None)
+        overlay_get = getattr(self._overlay, 'get_message_rules', None)
+        base = base_get() if callable(base_get) else {}
+        overlay = overlay_get() if callable(overlay_get) else {}
+        if not isinstance(base, dict):
+            base = {}
+        if not isinstance(overlay, dict):
+            overlay = {}
+        return {
+            key: _union_list(overlay.get(key, []), base.get(key, []))
+            for key in set(base) | set(overlay)
+        }
 
     def get_spec_extraction_config(self) -> dict[str, Any]:
         return _merge_hook_dicts(self._base.get_spec_extraction_config(),
@@ -1066,7 +1105,7 @@ class PluginRegistry:
         industry vocabulary/rules into unrelated queries.
         """
         for pid, plugin in self._plugins.items():
-            if pid == "generic" or "通用" in plugin.manifest.name:
+            if pid == "generic":
                 return plugin
         return None
 
@@ -1143,3 +1182,46 @@ def get_plugin_registry(scan_dirs: list[str] = None) -> PluginRegistry:
         dirs = scan_dirs or settings.PLUGIN_CONFIG.get("industries_scan_dirs", [])
         _registry = PluginRegistry(scan_dirs=dirs)
     return _registry
+
+
+def get_generic_keyword_patterns() -> list[str]:
+    """Read token shapes from the base pack, with a language-neutral fallback."""
+    try:
+        generic = get_plugin_registry().get_generic()
+        retrieval = getattr(generic, "retrieval", None) if generic else None
+        getter = getattr(retrieval, "get_keyword_patterns", None)
+        patterns = getter() if callable(getter) else []
+        if isinstance(patterns, list):
+            return [p for p in patterns if isinstance(p, str) and p]
+    except Exception as e:
+        logger.warning(f"[PLUGIN] generic keyword patterns unavailable: {e}")
+    # No hidden CJK fallback: an installation without pack rules still handles
+    # identifiers and Latin tokens, while other scripts simply produce no terms.
+    return [r"[A-Za-z0-9]+"]
+
+
+def get_generic_short_doc_filter_pattern() -> str:
+    """Return the optional base-pack rule for short document filters."""
+    try:
+        generic = get_plugin_registry().get_generic()
+        retrieval = getattr(generic, "retrieval", None) if generic else None
+        getter = getattr(retrieval, "get_short_doc_filter_pattern", None)
+        return str(getter() or "") if callable(getter) else ""
+    except Exception as e:
+        logger.warning(f"[PLUGIN] short document-filter rule unavailable: {e}")
+        return ""
+
+
+def get_generic_search_ngram_rules() -> list[dict]:
+    """Return base-pack n-gram rules; missing rules disable the broadening."""
+    try:
+        generic = get_plugin_registry().get_generic()
+        retrieval = getattr(generic, "retrieval", None) if generic else None
+        getter = getattr(retrieval, "get_search_ngram_rules", None)
+        rules = getter() if callable(getter) else []
+        if not isinstance(rules, list):
+            return []
+        return [rule for rule in rules if isinstance(rule, dict)]
+    except Exception as e:
+        logger.warning(f"[PLUGIN] search n-gram rules unavailable: {e}")
+        return []

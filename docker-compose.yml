@@ -1,4 +1,4 @@
-# OpenLAD single-container deployment (0.4.0).
+# OpenLAD single-container deployment (0.5.0).
 #
 # The API runs in the container; model services stay OUTSIDE (llama-server /
 # vLLM / Ollama on this host, or a cloud OpenAI-compatible endpoint).
@@ -23,13 +23,14 @@ services:
   openlad:
     build:
       context: .
-    image: openlad:0.4.0
+    image: openlad:0.5.0
     container_name: openlad
     network_mode: host
     environment:
       OPENLAD_LLM_URL: "${OPENLAD_LLM_URL:-http://127.0.0.1:8080/v1}"
       OPENLAD_EMB_URL: "${OPENLAD_EMB_URL:-http://127.0.0.1:8081/v1}"
       OPENLAD_LLM_MODEL: "${OPENLAD_LLM_MODEL:-qwen3.6-35b-a3b}"
+      OPENLAD_LLM_MAX_TOKENS: "${OPENLAD_LLM_MAX_TOKENS:-32768}"
       OPENLAD_EMB_MODEL: "${OPENLAD_EMB_MODEL:-qwen3-embedding-0.6b}"
       OPENLAD_DATA_DIR: /app/data
       OPENLAD_ADMIN_PASSWORD: "${OPENLAD_ADMIN_PASSWORD:?set OPENLAD_ADMIN_PASSWORD in .env}"

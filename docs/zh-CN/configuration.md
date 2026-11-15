@@ -64,6 +64,7 @@ OPENLAD_EMB_MAX_INPUT_TOKENS=512
 | 变量                           | 默认值         | 说明                             |
 | ------------------------------ | ------------ | -------------------------------- |
 | `OPENLAD_MAX_CHARS`            | *（未设置——自动预算）* | 覆盖 phase-2 检索上下文预算（字符数）。查询报 "context size exceeded" 时调低 |
+| `OPENLAD_LLM_MAX_TOKENS`       | `32768`      | LLM 每槽上下文窗口：`--ctx-size / --parallel`，必须与查询服务一致 |
 | `OPENLAD_EMB_MAX_INPUT_TOKENS` | `2048`       | 必须与 embedding 服务 `--batch-size` 一致——见上方配对规则 |
 | `OPENLAD_INGEST_MAX_WORKERS`   | `1`          | 入库并行 worker 数——与 LLM 服务 `--parallel` 对齐（安全默认 `1`；如 `--parallel 2` → 设 `2`） |
 | `OPENLAD_CHART_VLM_MAX_WORKERS`| `1`          | 入库期间图表/VLM 并发数——同上配对规则 |

@@ -112,18 +112,30 @@ class TestBuilderFunctions:
 
 
 class TestPlannerStopwords:
-    def test_core_metawords_always_present(self):
-        from core.retrieval.planner import QueryPlanner
-        sw = QueryPlanner._CN_ENTITY_STOPWORDS
-        for w in ("多少", "什么", "如何", "是什么", "情况", "主要"):
-            assert w in sw
+    def test_generic_pack_supplies_cross_industry_metawords(self):
+        from pathlib import Path
 
-    def test_core_no_longer_carries_financial_words(self):
-        # Domain vocabulary must live in packs, not core.
+        from core.plugins import PluginRegistry
+        root = Path(__file__).resolve().parent.parent
+        registry = PluginRegistry(scan_dirs=[str(root / 'industries')])
+        sw = registry.get_generic().retrieval.get_entity_stopwords()
+        for word in ("多少", "什么", "如何", "是什么", "情况", "主要"):
+            assert word in sw
+
+    def test_enterprise_vocabulary_is_only_in_its_pack(self):
+        from pathlib import Path
+
+        from core.plugins import PluginRegistry
         from core.retrieval.planner import QueryPlanner
-        sw = QueryPlanner._CN_ENTITY_STOPWORDS
-        for w in ("营业收入", "净利润", "公司", "年报", "每股收益"):
-            assert w not in sw
+        root = Path(__file__).resolve().parent.parent
+        registry = PluginRegistry(scan_dirs=[str(root / 'industries')])
+        generic = registry.get_generic().retrieval.get_entity_stopwords()
+        enterprise = registry.get_plugin(
+            'sample_enterprise_report').retrieval.get_entity_stopwords()
+        assert not hasattr(QueryPlanner, '_CN_ENTITY_STOPWORDS')
+        for word in ("营业收入", "净利润", "公司", "年报", "每股收益"):
+            assert word not in generic
+            assert word in enterprise
 
     def test_pack_stopwords_merge(self, monkeypatch):
         from core.retrieval.planner import QueryPlanner
@@ -147,14 +159,14 @@ class TestPlannerStopwords:
                             lambda: _FakeRegistry())
         try:
             sw = QueryPlanner._all_entity_stopwords()
-            assert "营业收入" in sw      # pack-injected
-            assert "公司" in sw          # pack-injected
-            assert "多少" in sw          # core meta-word survives
+            assert "营业收入" in sw
+            assert "公司" in sw
+            assert "多少" not in sw  # no hidden core vocabulary
             assert "心肌梗死" not in sw  # domain entity NOT filtered
         finally:
             QueryPlanner._STOPWORDS_CACHE = None
 
-    def test_pack_stopwords_failure_falls_back_to_core(self, monkeypatch):
+    def test_pack_stopwords_failure_is_empty_and_safe(self, monkeypatch):
         from core.retrieval.planner import QueryPlanner
         QueryPlanner._STOPWORDS_CACHE = None
 
@@ -164,6 +176,6 @@ class TestPlannerStopwords:
         monkeypatch.setattr("core.plugins.get_plugin_registry", _boom)
         try:
             sw = QueryPlanner._all_entity_stopwords()
-            assert sw == QueryPlanner._CN_ENTITY_STOPWORDS
+            assert sw == frozenset()
         finally:
             QueryPlanner._STOPWORDS_CACHE = None

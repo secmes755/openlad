@@ -81,6 +81,10 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 | `--cache-ram`    | `2048`   | 主机侧 prompt cache 上限（MiB）——**必须显式设置**，见下方说明 |
 | `-n`             | `-1`     | 生成 token 数无限制                       |
 
+将 `OPENLAD_LLM_MAX_TOKENS` 设为**每槽窗口**（`--ctx-size` 除以
+`--parallel`）：上述 9B 配置为 `131072`，下方 35B 单槽配置为 `32768`。
+不要填写服务的总上下文大小。
+
 **Embedding — Qwen3-Embedding-0.6B Q8_0：**
 
 | 参数             | 值     | 说明                          |

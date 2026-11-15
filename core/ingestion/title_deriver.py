@@ -70,20 +70,24 @@ def generate_identifiable_title(model_client, filename: str, summary: str,
         ("category_level1", "category_level2", "category_level3")
     )
     examples = _doc_type_examples()
-    doc_type_hint = f"（如 {'/'.join(examples)}）" if examples else ""
-    prompt = f"""请根据文档文件名和文档内容摘要，提取该文档的标识信息。
-
-文件名: {filename}
-内容摘要: {summary}
-文档分类: {cat_text}
-
-请提取以下三个字段：
-1. subject: 文档主要描述的主体（公司/组织/项目/个人名称，使用全称；无法确定填 null）
-2. year: 文档内容涉及的年份（4位数字；无法确定填 null）
-3. doc_type: 文档类型{doc_type_hint}（无法确定填 null）
-
-只输出一个 JSON 对象，不要输出任何其他内容：
-{{"subject": "...", "year": null, "doc_type": "..."}}"""
+    doc_type_hint = f" ({'/'.join(examples)})" if examples else ""
+    from ..plugins import get_generic_ingestion_prompts
+    prompts = get_generic_ingestion_prompts()
+    template = prompts.get("title_extraction")
+    if template:
+        prompt = template.format(
+            filename=filename, summary=summary, categories=cat_text,
+            doc_type_hint=doc_type_hint)
+    else:
+        prompt = (
+            "Extract document identity from the filename and summary.\n\n"
+            f"Filename: {filename}\nSummary: {summary}\nCategories: {cat_text}\n\n"
+            "Fields:\n"
+            "1. subject: the main entity (organization/project/person), full name; null if unknown\n"
+            "2. year: 4-digit year the content concerns; null if unknown\n"
+            f"3. doc_type: document type{doc_type_hint}; null if unknown\n\n"
+            'Output one JSON object only: {"subject": "...", "year": null, "doc_type": "..."}'
+        )
 
     try:
         data = model_client.generate_json(prompt, max_tokens=256, temperature=0)

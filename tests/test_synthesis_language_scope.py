@@ -47,10 +47,19 @@ def test_language_instruction_is_not_a_cjk_latin_split(query):
 def test_legacy_prompt_separates_language_rule_and_uses_original_query():
     prompt = _synth()._build_legacy_prompt(
         query='English rewrite', context='ctx', catalog='catalog',
-        history_section='', schematic_context='', original_query='中文原问题')
+        history_section='', structured_context='', original_query='中文原问题')
     assert 'User question: English rewrite' in prompt
     assert f"Answer the user's question directly.\n\n{LANGUAGE_RULE}" in prompt
     assert 'directly.Use the language' not in prompt
+
+
+def test_legacy_prompt_uses_domain_neutral_structured_data_label():
+    prompt = _synth()._build_legacy_prompt(
+        query='q', context='ctx', catalog='', history_section='',
+        structured_context='A -> B', original_query='q')
+    assert 'Structured document data' in prompt
+    assert 'Schematic' not in prompt
+    assert 'pin-to-net' not in prompt
 
 
 class _RetryModel:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Docker deployment verification for OpenLAD 0.4.0.
+# Docker deployment verification for OpenLAD 0.5.0.
 #
 # Verifies the single-container deployment against the real stack:
 #   - image build (--no-cache)
@@ -24,7 +24,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-IMAGE="${OPENLAD_VERIFY_IMAGE:-openlad:0.4.0-verify}"
+IMAGE="${OPENLAD_VERIFY_IMAGE:-openlad:0.5.0-verify}"
 NAME="openlad_verify"
 DATA_DIR="/tmp/openlad_docker_verify_data"
 TEST_DOC="${TEST_DOC:-$REPO_ROOT/fixtures/Rockchip-RK3588-Datasheet-V1.9.pdf}"
@@ -59,13 +59,18 @@ fi
 
 echo ""
 echo "== T1: docker build =="
-NO_CACHE_FLAG="${NO_CACHE:---no-cache}"
-if sg docker -c "docker build $NO_CACHE_FLAG --build-arg PIP_INDEX_URL=${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/} -t $IMAGE ." >/tmp/openlad_docker_build.log 2>&1; then
-  ok "build succeeded"
+if [ "${OPENLAD_VERIFY_SKIP_BUILD:-0}" = "1" ]; then
+  docker image inspect "$IMAGE" >/dev/null
+  ok "using prebuilt image $IMAGE"
 else
-  bad "build failed (see /tmp/openlad_docker_build.log)"
-  tail -20 /tmp/openlad_docker_build.log
-  exit 1
+  NO_CACHE_FLAG="${NO_CACHE:---no-cache}"
+  if sg docker -c "docker build $NO_CACHE_FLAG --build-arg PIP_INDEX_URL=${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/} -t $IMAGE ." >/tmp/openlad_docker_build.log 2>&1; then
+    ok "build succeeded"
+  else
+    bad "build failed (see /tmp/openlad_docker_build.log)"
+    tail -20 /tmp/openlad_docker_build.log
+    exit 1
+  fi
 fi
 
 echo ""
@@ -74,6 +79,7 @@ docker run -d --name "$NAME" --network host \
   -e OPENLAD_LLM_URL="$LLM_URL" \
   -e OPENLAD_EMB_URL="$EMB_URL" \
   -e OPENLAD_LLM_MODEL="${OPENLAD_LLM_MODEL:-qwen3.6-35b-a3b}" \
+  -e OPENLAD_LLM_MAX_TOKENS="${OPENLAD_LLM_MAX_TOKENS:-32768}" \
   -e OPENLAD_EMB_MODEL="${OPENLAD_EMB_MODEL:-qwen3-embedding-0.6b}" \
   -e OPENLAD_DATA_DIR=/app/data \
   -e OPENLAD_ADMIN_PASSWORD="$ADMIN_PASS" \
@@ -128,7 +134,11 @@ else
       ANS=$(curl -fsS -m 180 -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
         -d '{"query":"RK3588 datasheet 中，CPU 的最大频率是多少？"}' "$API/api/v1/query" 2>/dev/null | \
         python3 -c "import json,sys; print(json.load(sys.stdin).get('answer',''))" 2>/dev/null || true)
-      if [ -n "$ANS" ]; then ok "query answered (${ANS:0:80}...)"; else bad "query returned empty answer"; fi
+      if printf '%s' "$ANS" | python3 -c "import re,sys; a=sys.stdin.read(); ok=not a.lstrip().startswith('[System Notice:') and bool(re.search(r'2\\.4\\s*GHz', a, re.I)); raise SystemExit(0 if ok else 1)"; then
+        ok "query answered with the expected specification (${ANS:0:80}...)"
+      else
+        bad "query missed the expected specification (${ANS:0:120}...)"
+      fi
     else
       bad "ingestion timed out"
     fi

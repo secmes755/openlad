@@ -1,0 +1,12 @@
+id: sample_enterprise_report
+name: Enterprise Report Sample Pack
+version: 1.0.0
+description: Sample vocabulary for enterprise and periodic business reports; no private entities or tenant configuration.
+author: OpenLAD Team
+category_mapping:
+  - Enterprise Reports
+  - Business Reports
+  - 企业报告
+aliases:
+  - enterprise_report
+is_builtin: true

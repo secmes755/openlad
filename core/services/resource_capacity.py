@@ -106,8 +106,11 @@ class ResourceCapacityManager:
         disk = self._detect_disk()
 
         # Read context window size from env var
-        llm_ctx = int(os.environ.get("OPENLAD_LLM_CONTEXT_SIZE", "131072"))
-        avg_chars = settings.CONTEXT_CONFIG.get("standard_chars", 60000)
+        llm_ctx = int(os.environ.get(
+            "OPENLAD_LLM_CONTEXT_SIZE",
+            str(settings.CONTEXT_CONFIG.get("llm_max_tokens", 32768)),
+        ))
+        avg_chars = settings.CONTEXT_CONFIG.get("synthesis_safe_chars", 19558)
         max_concurrent = int(os.environ.get("OPENLAD_QUERY_MAX_CONCURRENT", "1"))
 
         self._snapshot = ResourceSnapshot(
@@ -148,8 +151,9 @@ class ResourceCapacityManager:
 
         # Deployment advice
         deployment_advice = (
-            f"External mode — LLM deployed externally. Recommended context window >= {llm_ctx} tokens, "
-            f"~{avg_chars} chars per request. Concurrency controlled by OPENLAD_QUERY_MAX_CONCURRENT (current={max_concurrent})."
+            f"External mode — per-slot context budget {llm_ctx} tokens, "
+            f"~{avg_chars} prompt chars. Concurrency controlled by "
+            f"OPENLAD_QUERY_MAX_CONCURRENT (current={max_concurrent})."
         )
 
         # Dynamic rate limiting: fewer max tenants, higher per-user quota

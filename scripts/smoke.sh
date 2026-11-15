@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # OpenLAD local verification script (run against a locally running instance).
-# Reads fixtures/manifest.json and, for each document: idempotent upload,
-# wait for ingestion, then ask each question and require a non-empty answer.
+# Reads a manifest and, for each document: idempotent upload, wait for
+# ingestion, then ask each question and check its required answer terms.
 #
 # Usage:
-#   ./scripts/smoke.sh                          # uses fixtures/manifest.json
+#   ./scripts/smoke.sh                          # small public Markdown fixture
+#   ./scripts/smoke.sh fixtures/manifest.json  # full public PDF smoke
 #   ./scripts/smoke.sh path/to/manifest.json
 #
 # Requires:
@@ -22,12 +23,14 @@ fi
 
 # Tenant: explicit OPENLAD_TENANT wins; otherwise omit X-Tenant-ID so the
 # server auto-associates the API key's own tenant.
-AUTH=(-H "Authorization: Bearer $KEY")
+AUTH_SCHEME="Bearer"
+HEADER_FLAG=-H
+AUTH=( "$HEADER_FLAG" "Authorization: ${AUTH_SCHEME} ${KEY}" )
 if [ -n "${OPENLAD_TENANT:-}" ]; then
   AUTH+=(-H "X-Tenant-ID: $OPENLAD_TENANT")
 fi
 
-MANIFEST="${1:-fixtures/manifest.json}"
+MANIFEST="${1:-fixtures/smoke/manifest.json}"
 if [ ! -f "$MANIFEST" ]; then
   echo "error: manifest not found: $MANIFEST" >&2
   exit 1
@@ -81,11 +84,19 @@ while IFS= read -r DOC; do
   QUERIES=$(python3 -c "
 import json, sys
 d = json.load(open(sys.argv[1]))
-print('\n'.join(q for x in d['documents'] if x['file'] == sys.argv[2] for q in x['queries']))
+for x in d['documents']:
+    if x['file'] != sys.argv[2]:
+        continue
+    for q in x['queries']:
+        if isinstance(q, str):
+            q = {'query': q, 'contains': []}
+        print(json.dumps(q, ensure_ascii=False))
 " "$MANIFEST" "$DOC")
   QN=0
-  while IFS= read -r QUERY; do
-    [ -n "$QUERY" ] || continue
+  while IFS= read -r QUERY_JSON; do
+    [ -n "$QUERY_JSON" ] || continue
+    QUERY=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['query'])" "$QUERY_JSON")
+    EXPECTED=$(python3 -c "import json,sys; print(json.dumps(json.loads(sys.argv[1]).get('contains', []), ensure_ascii=False))" "$QUERY_JSON")
     QN=$((QN + 1))
     echo "  [q$QN] $QUERY"
     ANSWER=$(curl -fsS -m 180 "${AUTH[@]}" -H "Content-Type: application/json" \
@@ -93,6 +104,10 @@ print('\n'.join(q for x in d['documents'] if x['file'] == sys.argv[2] for q in x
       "$BASE_URL/api/v1/query" | python3 -c "import json,sys; print(json.load(sys.stdin).get('answer',''))")
     if [ -z "$ANSWER" ]; then
       echo "  error: empty answer" >&2
+      exit 1
+    fi
+    if ! printf '%s' "$ANSWER" | python3 -c "import json,sys; a=sys.stdin.read(); terms=json.loads(sys.argv[1]); ok=not a.lstrip().startswith('[System Notice:') and all(str(t).casefold() in a.casefold() for t in terms); raise SystemExit(0 if ok else 1)" "$EXPECTED"; then
+      echo "  error: answer missing required terms or is a system fallback" >&2
       exit 1
     fi
     echo "  -> ${ANSWER:0:120}..."

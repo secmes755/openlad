@@ -614,10 +614,14 @@ class TenantMetadataDB:
         return ids
 
 
-    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False, page_filter: set[int] | None = None) -> list[dict]:
+    def search_fts_chunks(self, query: str, limit: int = 20, force_bigram_only: bool = False,
+                          page_filter: set[int] | None = None,
+                          doc_id_filter: set[str] | None = None,
+                          strict: bool = False) -> list[dict]:
         """Chunk-level FTS search (OpenLAD: downgraded from page-level to chunk-level)
 
         FIX: When force_bigram_only=True, skip FTS trigram search and go directly to bigram LIKE search.
+        When strict=True, use only the FTS AND/exact term query and skip broad OR/LIKE supplements.
         This handles queries consisting entirely of 2-character Chinese words, since the trigram tokenizer cannot index 2-character words.
 
         Phase 2 FIX: Added page_filter parameter to restrict search to specific page numbers.
@@ -677,17 +681,21 @@ class TenantMetadataDB:
 
         # Phase 2: Build page filter SQL clause
         page_filter_sql = ""
-        page_filter_params = []
+        page_filter_params: list = []
         if page_filter:
             page_filter_sql = f"AND dc.page_num IN ({','.join(['?'] * len(page_filter))})"
             page_filter_params = list(page_filter)
             logger.info(f"[FTS] Applying page_filter: {sorted(page_filter)[:20]}{'...' if len(page_filter) > 20 else ''} ({len(page_filter)} pages)")
+        if doc_id_filter and "__ALL__" not in doc_id_filter:
+            doc_ids = sorted(doc_id_filter)
+            page_filter_sql += f" AND dc.doc_id IN ({','.join(['?'] * len(doc_ids))})"
+            page_filter_params.extend(doc_ids)
 
         # 1. FTS5 trigram search (3+ characters)
         # FIX: When force_bigram_only=True, skip FTS search and go directly to bigram LIKE
         if trigram_tokens and not force_bigram_only:
-            # Try AND search first
-            if len(trigram_tokens) >= 2:
+            # Try AND search first (strict mode also permits one exact term)
+            if len(trigram_tokens) >= 2 or strict:
                 and_query = ' AND '.join(_fts5_quote(t) for t in trigram_tokens)
                 try:
                     with self.get_connection() as conn:
@@ -712,7 +720,7 @@ class TenantMetadataDB:
                     logger.warning(f"Chunk FTS AND search error: {e}")
 
             # If AND results are less than 30% of limit, supplement with OR
-            if len(all_results) < int(max(limit * 0.3, 3)):
+            if not strict and len(all_results) < int(max(limit * 0.3, 3)):
                 match_query = ' OR '.join(_fts5_quote(t) for t in trigram_tokens)
                 try:
                     with self.get_connection() as conn:
@@ -741,7 +749,7 @@ class TenantMetadataDB:
 
         # 2. Supplementary recall: search 2-character Chinese words with LIKE
         # FIX: Sort by number of matched keywords (more matches rank higher), not simply by page_num
-        if bigram_tokens:
+        if bigram_tokens and not strict:
             like_limit = max(limit * 2, 40)
             try:
                 with self.get_connection() as conn:

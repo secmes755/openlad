@@ -8,8 +8,9 @@ from typing import Any
 
 from ..config import settings
 from ..models.client import get_model_client
+from ..text_keywords import extract_keywords
 from .router import IntentType, QueryPlan
-from .truncation import is_truncated, mark_truncated
+from .truncation import is_truncated, mark_truncated, truncate_to_fit
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class AnswerSynthesizer:
         catalog = ""
 
         # SCHEMATIC_ENGINE related code removed in OpenLAD
-        schematic_context = ""
+        structured_context = ""
 
         industry_pack = None
         # Explicit selection wins over every detection path: the caller
@@ -117,37 +118,59 @@ class AnswerSynthesizer:
             effective_context = self._map_reduce_extract(context, query, industry_pack=industry_pack, original_query=original_query)
             logger.info(f"[SYNTHESIZER] After Map-Reduce reduction: {len(effective_context)} chars")
 
+        industry_addon = ""
         if industry_pack:
             manifest = getattr(industry_pack, "manifest", None)
             pack_name = getattr(manifest, "name", "unknown") if manifest else "unknown"
             pack_version = getattr(manifest, "version", "N/A") if manifest else "N/A"
             logger.info(f"[SYNTHESIZER] Using industry Prompt pack: {pack_name} v{pack_version} (category={routed_category})")
-            # Use legacy prompt as base (compact structure, higher LLM compliance), append industry pack constraints
-            base_prompt = self._build_legacy_prompt(query, effective_context, catalog, history_section, schematic_context, original_query)
             industry_addon = self._build_industry_addon(industry_pack, query)
-            if industry_addon:
-                prompt = base_prompt + "\n\n" + industry_addon
-            else:
-                prompt = base_prompt
         else:
             logger.warning(f"[SYNTHESIZER] No industry pack matched, using built-in default Prompt (category={routed_category})")
-            prompt = self._build_legacy_prompt(query, effective_context, catalog, history_section, schematic_context, original_query)
+
+        def build_prompt(context_text):
+            base = self._build_legacy_prompt(
+                query, context_text, catalog, history_section,
+                structured_context, original_query)
+            return base + "\n\n" + industry_addon if industry_addon else base
+
+        prompt = build_prompt(effective_context)
 
         try:
             # FIX: When user explicitly requests a table, use generate_json to output structured data ensuring correct format
             # Use original_query for judgment to avoid false triggers from planner-rewritten English queries (e.g., "specification table")
             table_check_query = original_query or query
-            if self._requires_table(table_check_query):
+            if self._requires_table(table_check_query, industry_pack):
                 answer = self._generate_table_answer(table_check_query, context, prompt)
             else:
                 lang_instruction = self._get_language_instruction(original_query or query)
                 logger.info(f"[SYNTHESIZER] Language instruction: {lang_instruction!r}")
                 cfg = settings.CONTEXT_CONFIG
                 synthesis_max_tokens = cfg.get("synthesis_max_tokens", 4096)
+                prompt_limit = self.model_client.prompt_char_limit(synthesis_max_tokens)
+                prompt_chars = len(prompt) + len(lang_instruction)
+                if prompt_chars > prompt_limit:
+                    # Fit the evidence, not the instructions. The budget is
+                    # measured from the actual pack/system prompt rather than
+                    # assuming a fixed overhead that another pack can exceed.
+                    overhead = prompt_chars - len(effective_context)
+                    context_limit = prompt_limit - overhead
+                    if context_limit > 0:
+                        previous = len(effective_context)
+                        effective_context = truncate_to_fit(
+                            effective_context, context_limit)
+                        prompt = build_prompt(effective_context)
+                        logger.warning(
+                            f"[SYNTHESIZER] Fit prompt to model window: "
+                            f"context {previous} -> {len(effective_context)} chars")
+                    else:
+                        logger.error(
+                            "[SYNTHESIZER] Prompt instructions alone exceed the "
+                            "model window; document context cannot be fitted")
                 raw_answer = self.model_client.generate(
                     prompt,
                     system_prompt=lang_instruction,
-                    temperature=0,
+                    temperature=0.1,
                     max_tokens=synthesis_max_tokens
                 )
                 raw_answer = raw_answer.strip()
@@ -155,6 +178,7 @@ class AnswerSynthesizer:
                     logger.error("[SYNTHESIZER] LLM returned garbled or empty output")
                     fallback = self._build_fallback_answer(query, context, sources)
                     return {"answer": fallback, "sources": sources, "structured": False, "confidence": "low"}
+                logger.info(f"[SYNTHESIZER] Raw answer ({len(raw_answer)} chars):\n{raw_answer}")
                 answer = self._post_process_answer(raw_answer)
                 answer = self._enforce_derived_figure(
                     answer, original_query or query, industry_pack)
@@ -176,7 +200,7 @@ class AnswerSynthesizer:
             fallback = self._build_fallback_answer(query, context, sources)
             return {"answer": fallback, "sources": sources, "structured": False, "confidence": "none"}
 
-    def _build_legacy_prompt(self, query, context, catalog, history_section, schematic_context, original_query=None):
+    def _build_legacy_prompt(self, query, context, catalog, history_section, structured_context, original_query=None):
         prompt = f"""Answer the user's question based on the information below.{history_section}
 
 Knowledge Base Catalog (lists all available documents; when asked "what information/documents are available", answer based on this entire catalog):
@@ -184,13 +208,13 @@ Knowledge Base Catalog (lists all available documents; when asked "what informat
 
 User question: {query}"""
 
-        if schematic_context:
+        if structured_context:
             prompt += f"""
 
-Schematic structured data (precise pin-to-net connection relationships; when answering schematic routing/connection questions, prioritize this data):
-{schematic_context}
+Structured document data (use these explicit relationships as supporting evidence):
+{structured_context}
 
-Retrieved detailed content (may contain supplementary information related to schematics):
+Retrieved detailed content:
 {context}"""
         else:
             prompt += f"""
@@ -374,12 +398,9 @@ Output only JSON."""
         from .spec_facts import extract_model_tokens
         keywords.update(extract_model_tokens(raw_answer))
 
-        # Long CJK phrases (4+ chars) — specific term names / article numbers
-        # written as words.
-        keywords.update(re.findall(r'[\u4e00-\u9fff]{4,}', raw_answer))
-
-        # Latin terms (4+ chars) — product / standard names in any language.
-        keywords.update(re.findall(r'[A-Za-z][A-Za-z0-9_-]{3,}', raw_answer))
+        # Pack-owned token shapes supply language-specific terms; core only
+        # combines them with the structural anchors above.
+        keywords.update(extract_keywords(raw_answer))
 
         # Industry-pack anchor patterns (additive regexes, vocabulary in pack)
         if industry_pack is not None:
@@ -500,17 +521,27 @@ Output only JSON."""
                 lines.append(f"- {title}{pages_str}")
         return "\n".join(lines)
 
-    def _requires_table(self, query: str) -> bool:
-        """
-        Detect whether the user explicitly requests table output.
-        No longer hardcodes keyword lists; uses LLM judgment.
-        """
+    @staticmethod
+    def _retrieval_rules(industry_pack=None) -> dict:
+        if industry_pack is None:
+            from ..plugins import get_plugin_registry
+            industry_pack = get_plugin_registry().get_generic()
+        retrieval = getattr(industry_pack, 'retrieval', None) if industry_pack else None
+        get_rules = getattr(retrieval, 'get_retrieval_rules', None)
+        if not callable(get_rules):
+            return {}
+        rules = get_rules()
+        return rules if isinstance(rules, dict) else {}
+
+    def _requires_table(self, query: str, industry_pack=None) -> bool:
+        """Detect explicit table requests using pack-declared vocabulary."""
         q = query.lower()
-        # Simple rule: query contains 'table' (Chinese '表格' or English) and is not a common datasheet query term like 'specification table'
-        if '规格表' in q:
+        rules = self._retrieval_rules(industry_pack)
+        exclusions = rules.get('table_request_exclusions', []) or []
+        if any(str(marker).lower() in q for marker in exclusions):
             return False
-        has_table_kw = '表格' in q or 'table' in q
-        return has_table_kw
+        markers = rules.get('table_request_markers', []) or []
+        return any(str(marker).lower() in q for marker in markers)
 
     def _generate_table_answer(self, query: str, context: str, base_prompt: str) -> str:
         """
@@ -528,29 +559,29 @@ Output only JSON."""
         entities = seen[:4]
         cfg = settings.CONTEXT_CONFIG
         direct_max_tokens = cfg.get("direct_generate_max_tokens", 4096)
-        # FIX: Single-chip queries are not suitable for comparison tables, fallback to normal answer generation
+        # Fewer than two detected subjects cannot form a comparison table.
         if len(entities) < 2:
-            logger.info(f"[SYNTHESIZER] Single-chip query ({entities}), skipping table generation, using normal answer")
+            logger.info(f"[SYNTHESIZER] Fewer than two subjects ({entities}), using normal answer")
             raw_answer = self.model_client.generate(base_prompt, temperature=0, max_tokens=direct_max_tokens)
             return self._post_process_answer(raw_answer.strip())
 
         entity_names = ", ".join(entities)
         entity_cols = ', '.join([f'"{e}": "..."' for e in entities])
-        json_prompt = f"""Based on the following information, output specification comparison data for {entity_names}.
+        json_prompt = f"""Based on the following information, output comparison data for {entity_names}.
 
 Requirements:
-- Each dimension must include specific parameters for each product
-- Parameters must be fully expanded, including specific values, standards, performance metrics
-- If a product's documentation does not mention a specific dimension, fill in "Not explicitly mentioned in documentation"
+- Each dimension must include specific values for each subject
+- Preserve values, units, conditions and source scope exactly
+- If a subject's documentation does not mention a dimension, use "Not explicitly mentioned in documentation"
 
 Output JSON:
 {{
-  "dimensions": ["Specification", {', '.join([json.dumps(e) for e in entities])}],
+  "dimensions": ["Dimension", {', '.join([json.dumps(e) for e in entities])}],
   "rows": [
-    {{"dimension": "Processor", {entity_cols}}},
+    {{"dimension": "Attribute", {entity_cols}}},
     ...
   ],
-  "summary": "2-3 sentence summary"
+  "summary": "Brief summary"
 }}
 
 {context}
@@ -638,12 +669,9 @@ Output JSON:
         ans_len = len(answer)
 
         # ── Negative indicators ──
-        not_found_markers = [
-            "not found", "no relevant", "no information",
-            "未找到", "没有找到", "未提及", "不包含", "无相关",
-            "does not contain", "does not mention"
-        ]
-        has_not_found = any(m in ans_lower for m in not_found_markers)
+        not_found_markers = self._retrieval_rules(industry_pack).get(
+            'no_answer_markers', []) or []
+        has_not_found = any(str(m).lower() in ans_lower for m in not_found_markers)
 
         # ── Specificity indicators ──
         # Domain vocabulary (regex fragments) comes from the industry pack.
@@ -763,32 +791,26 @@ Compute the rate the question asks for from exactly those figures. Show the arit
 
         # 1. Strip common thinking process marker lines
         think_patterns = [
-            r'\*?\(?\s*Self-Correction[^\n]*',
-            r'\*?\(?\s*Drafting[^\n]*',
-            r'\*?\(?\s*Refining[^\n]*',
-            r'\*?\(?\s*Ensure[^\n]*',
-            r'\*?\(?\s*Check[^\n]*',
-            r'\*?\(?\s*Correction[^\n]*',
-            r'\*?\(?\s*Note[^\n]*',
-            r'\*?\(?\s*Wait[^\n]*',
-            r'\*?\(?\s*Actually[^\n]*',
-            r'\*?\(?\s*Looking[^\n]*',
-            r'\*?\(?\s*I must[^\n]*',
-            r'\*?\(?\s*I will[^\n]*',
-            r'\*?\(?\s*I need[^\n]*',
-            r'\*?\(?\s*Let me[^\n]*',
-            r'\*?\(?\s*The text[^\n]*',
-            r'\*?\(?\s*Dimensions[^\n]*',
-            r'\*?\(?\s*Columns[^\n]*',
-            r'\*?\(?\s*Rows[^\n]*',
-            r'\*?\(?\s*Compare the main[^\n]*',
-            r'\*?\(?\s*Three documents[^\n]*',
-            r'\*?\(?\s*Markdown table[^\n]*',
-            r'\*?\(?\s*Detailed comparison[^\n]*',
+            r'\*?\(?\s*Self-Correction\b[^\n]*',
+            r'\*?\(?\s*Drafting\b[^\n]*',
+            r'\*?\(?\s*Refining\b[^\n]*',
+            r'\*?\(?\s*Ensure\b[^\n]*',
+            r'\*?\(?\s*Check\b[^\n]*',
+            r'\*?\(?\s*Correction\b[^\n]*',
+            r'\*?\(?\s*Wait\b[^\n]*',
+            r'\*?\(?\s*Actually\b[^\n]*',
+            r'\*?\(?\s*Looking\b[^\n]*',
+            r'\*?\(?\s*I must\b[^\n]*',
+            r'\*?\(?\s*I will\b[^\n]*',
+            r'\*?\(?\s*I need\b[^\n]*',
+            r'\*?\(?\s*Let me\b[^\n]*',
         ]
         cleaned = text
         for pat in think_patterns:
-            cleaned = re.sub(pat, '', cleaned, flags=re.IGNORECASE)
+            # Only standalone artifact lines are removable. Legitimate answer
+            # text such as "Release Notes" or "The text ..." must survive.
+            cleaned = re.sub(r'^\s*' + pat, '', cleaned,
+                             flags=re.IGNORECASE | re.MULTILINE)
 
         # 2. If the answer contains a Markdown table, prioritize extracting the table and preceding summary paragraphs
         # Find where the first table starts
@@ -804,7 +826,7 @@ Compute the rate the question asks for from exactly those figures. Show the arit
             # Strip thinking text after the table
             suffix_lines = []
             for line in suffix.split('\n'):
-                if re.match(r'\*?\(?\s*(Self-Correction|Drafting|Refining|Ensure|Check|Note|Wait|Actually|Looking|I must|I will|I need|Let me)', line, re.IGNORECASE):
+                if re.match(r'\*?\(?\s*(Self-Correction|Drafting|Refining|Ensure|Check|Wait|Actually|Looking|I must|I will|I need|Let me)\b', line, re.IGNORECASE):
                     break
                 suffix_lines.append(line)
             cleaned = keep_prefix + '\n' + '\n'.join(suffix_lines)

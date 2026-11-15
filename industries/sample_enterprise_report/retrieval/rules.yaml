@@ -1,0 +1,41 @@
+# Enterprise-report vocabulary; core and the generic base remain domain-neutral.
+entity_stopwords:
+  - 公司
+  - 集团
+  - 股份
+  - 有限
+  - 责任
+  - 公司名称
+  - 股票代码
+  - 年报
+  - 季报
+  - 年度报告
+  - 季度报告
+  - 营业
+  - 收入
+  - 利润
+  - 资产
+  - 负债
+  - 权益
+  - 现金流
+  - 营业收入
+  - 净利润
+  - 总资产
+  - 净资产
+  - 每股收益
+  - 财务
+  - 金额
+  - 总额
+  - 合计
+
+# The first capture group is the document epoch. Comparison years without a
+# report noun deliberately do not match.
+report_epoch_pattern: "((?:19|20)\\d{2})\\s*(?:年|财年)?\\s*(?:年度报告|年报(?!告)|半年度报告|半年报|中期报告|第[一二三四1234]季度报告|季度报告|季报|财报|报告(?!期))"
+
+title_derivation:
+  doc_type_examples:
+    - 年度报告
+
+query_expansion:
+  keywords: []
+entity_patterns: []

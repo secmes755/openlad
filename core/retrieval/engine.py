@@ -105,6 +105,38 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
 
         return "traditional"
 
+    @staticmethod
+    def _planned_step(plan: dict | None) -> dict | None:
+        """Return a planner-produced multi-entity step, normalised for the executor.
+
+        Only a step that carries several sub-queries (or several per-document
+        filters) is worth reusing: anything else is no better than the fallback
+        plan. The executor expects ``step["query"]`` to be a string or a list of
+        strings, while the planner emits ``sub_queries`` as objects, so the
+        shape is normalised here rather than leaked downstream.
+        """
+        if not isinstance(plan, dict):
+            return None
+        for step in plan.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            raw_subs = step.get("sub_queries") or []
+            filters = step.get("doc_filter") or []
+            subs = []
+            for sub in raw_subs:
+                if isinstance(sub, str):
+                    subs.append(sub)
+                elif isinstance(sub, dict) and sub.get("query"):
+                    subs.append(str(sub["query"]))
+            if len(subs) <= 1 and len(filters) <= 1:
+                continue
+            normalised = dict(step)
+            normalised["query"] = subs[0] if len(subs) == 1 else (
+                subs or str(step.get("query") or ""))
+            normalised.pop("sub_queries", None)
+            return {**plan, "steps": [normalised]}
+        return None
+
     def _execute_deep_research(self, query_text: str, tenant_id: str,
                                 components: dict, chat_history: str = None,
                                 industry_hint: str = None) -> dict[str, Any]:
@@ -180,11 +212,28 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         sub_queries = self.decomposer.decompose(query_text, entities=entities)
         plan_routed_category = ""
         if len(sub_queries) <= 1:
-            # Decomposition failed, fall back to fallback_plan
-            logger.info("[ENGINE] deep_research decomposition failed, falling back to fallback_plan")
-            plan = planner._fallback_plan(query_text, entities=entities)
-            plan_routed_category = plan.get("routed_category", "")
-            retrieval_result = executor.execute(plan, tenant_id=tenant_id, industry_hint=industry_hint, original_query=query_text)
+            # The planner may already hold a usable decomposition even though
+            # the string-level decomposer could not build one: it recognises
+            # entities the token extractor does not (e.g. organisation names in
+            # a non-Latin script). Discarding that plan threw away per-document
+            # filters and turned a targeted comparison into a tenant-wide sweep,
+            # which answered from unrelated documents.
+            planned = self._planned_step(main_plan)
+            if planned:
+                logger.info("[ENGINE] deep_research using the planner's "
+                            "decomposition (string-level decomposition found "
+                            "a single sub-query)")
+                plan = planned
+                plan_routed_category = plan.get("routed_category", "")
+                retrieval_result = executor.execute(
+                    plan, tenant_id=tenant_id, industry_hint=industry_hint,
+                    original_query=query_text)
+            else:
+                # Decomposition failed, fall back to fallback_plan
+                logger.info("[ENGINE] deep_research decomposition failed, falling back to fallback_plan")
+                plan = planner._fallback_plan(query_text, entities=entities)
+                plan_routed_category = plan.get("routed_category", "")
+                retrieval_result = executor.execute(plan, tenant_id=tenant_id, industry_hint=industry_hint, original_query=query_text)
         else:
             logger.info(f"[ENGINE] deep_research decomposed into {len(sub_queries)} sub-queries")
             all_contexts = []
@@ -456,7 +505,9 @@ Output ONLY a JSON object: {"type": "deep_research"} or {"type": "traditional"}"
         total_results = retrieval_result.get("total_results", 0)
         total_chars = retrieval_result.get("total_chars", 0)
         if total_results == 0 or total_chars < 50:
-            answer = "No relevant information found in the knowledge base."
+            from ..plugins import render_pack_message
+            answer = render_pack_message('no_result', query_text) or (
+                "No relevant information found in the knowledge base.")
             elapsed_ms = int((time.time() - start_time) * 1000)
             # NOTE: query audit logging happens in the API route layer
             # (routes/query.py), which always runs after engine.query returns.

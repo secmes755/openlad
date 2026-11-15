@@ -46,7 +46,7 @@ def test_format_value_first_legacy(_restore_config):
     settings.CONTEXT_CONFIG["spec_facts_presentation"] = "value_first"
     block = format_spec_facts([_PCIE_FACT])
     assert "PCIe protocol: PCIe3.1(8Gbps), PCIe2.1" in block
-    assert "原文:" in block
+    assert "source:" in block
 
 
 def test_format_source_first_falls_back_when_no_source(_restore_config):
