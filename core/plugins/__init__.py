@@ -248,6 +248,10 @@ class RetrievalPlugin(ABC):
         """Optional language rule admitting a two-character document filter."""
         return ""
 
+    def get_search_ngram_rules(self) -> list[dict]:
+        """Pack-owned substring rules used only to broaden FTS search terms."""
+        return []
+
     def get_section_boost_rules(self) -> dict[str, Any]:
         """Section boost rules (query-intent -> boost/penalty), default {}."""
         return {}
@@ -456,6 +460,10 @@ class YAMLRetrievalPlugin(RetrievalPlugin):
 
     def get_short_doc_filter_pattern(self) -> str:
         return str(self.config.rules.get("short_doc_filter_pattern") or "")
+
+    def get_search_ngram_rules(self) -> list[dict]:
+        rules = self.config.rules.get("search_ngram_rules", []) or []
+        return rules if isinstance(rules, list) else []
 
     def format_citation(self, page_num: int, doc_title: str = "") -> str:
         return f"[^{page_num}^]"
@@ -1202,3 +1210,18 @@ def get_generic_short_doc_filter_pattern() -> str:
     except Exception as e:
         logger.warning(f"[PLUGIN] short document-filter rule unavailable: {e}")
         return ""
+
+
+def get_generic_search_ngram_rules() -> list[dict]:
+    """Return base-pack n-gram rules; missing rules disable the broadening."""
+    try:
+        generic = get_plugin_registry().get_generic()
+        retrieval = getattr(generic, "retrieval", None) if generic else None
+        getter = getattr(retrieval, "get_search_ngram_rules", None)
+        rules = getter() if callable(getter) else []
+        if not isinstance(rules, list):
+            return []
+        return [rule for rule in rules if isinstance(rule, dict)]
+    except Exception as e:
+        logger.warning(f"[PLUGIN] search n-gram rules unavailable: {e}")
+        return []

@@ -64,6 +64,16 @@ class AnswerSynthesizer:
         else:
             return self._synthesize_standard(query, plan, context, sources, chat_history, routed_category, original_query, explicit_pack_id)
 
+    @staticmethod
+    def _needs_completion_retry(answer: str) -> bool:
+        """Detect a bounded class of visibly incomplete short generations."""
+        text = (answer or "").strip()
+        if not text or len(text) >= 80 or re.search(r"\d", text):
+            return False
+        if text.endswith((".", "!", "?", "。", "！", "？", ";", "；")):
+            return False
+        return bool(re.search(r"[A-Za-z][A-Za-z-]{2,}$", text))
+
     def _synthesize_standard(self, query: str, plan: QueryPlan,
                              context: str, sources: list[dict],
                              chat_history: str = None,
@@ -170,14 +180,40 @@ class AnswerSynthesizer:
                 raw_answer = self.model_client.generate(
                     prompt,
                     system_prompt=lang_instruction,
-                    temperature=0,
-                    max_tokens=synthesis_max_tokens
+                    temperature=0.1,
+                    max_tokens=synthesis_max_tokens,
+                    timeout=None
                 )
+                if self._needs_completion_retry(raw_answer):
+                    repair_instruction = (
+                        "\n\nThe previous response was incomplete. Give the complete "
+                        "requested value explicitly and do not stop after a document "
+                        "or section title.")
+                    repair_prompt = prompt + repair_instruction
+                    if len(repair_prompt) + len(lang_instruction) <= prompt_limit:
+                        try:
+                            repaired = self.model_client.generate(
+                                repair_prompt,
+                                system_prompt=lang_instruction,
+                                temperature=0.0,
+                                max_tokens=synthesis_max_tokens,
+                                timeout=None,
+                            )
+                            if repaired.strip():
+                                logger.info(
+                                    "[SYNTHESIZER] Replaced an incomplete short answer "
+                                    "after one bounded retry")
+                                raw_answer = repaired
+                        except Exception as retry_error:
+                            logger.warning(
+                                f"[SYNTHESIZER] Completion retry failed; keeping the "
+                                f"original answer: {retry_error}")
                 raw_answer = raw_answer.strip()
                 if self._is_garbled(raw_answer):
                     logger.error("[SYNTHESIZER] LLM returned garbled or empty output")
                     fallback = self._build_fallback_answer(query, context, sources)
                     return {"answer": fallback, "sources": sources, "structured": False, "confidence": "low"}
+                logger.info(f"[SYNTHESIZER] Raw answer ({len(raw_answer)} chars):\n{raw_answer}")
                 answer = self._post_process_answer(raw_answer)
                 answer = self._enforce_derived_figure(
                     answer, original_query or query, industry_pack)

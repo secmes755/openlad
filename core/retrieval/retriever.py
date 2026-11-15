@@ -10,7 +10,7 @@ from typing import Any
 from ..config import settings
 from ..db.tenant_db import get_tenant_metadata_db, get_tenant_vector_db
 from ..models.client import EmbeddingError, get_model_client
-from ..text_keywords import extract_keywords
+from ..text_keywords import extract_keywords, extract_search_keywords
 from .router import IntentType, QueryPlan
 from .truncation import MARKER, mark_truncated, truncate_to_fit
 
@@ -350,8 +350,8 @@ class HierarchicalRetriever:
         return expanded
 
     def _tokenize_query(self, query: str) -> list[str]:
-        """Extract query keywords using the base pack's token shapes."""
-        return extract_keywords(query)
+        """Extract bounded FTS terms using the base pack's search rules."""
+        return extract_search_keywords(query)
 
     def _retrieve_exact(self, query: str, plan: QueryPlan,
                          max_results: int, doc_id_filter: set[str] = None,

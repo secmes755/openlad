@@ -98,6 +98,9 @@ keyword_patterns:
   - '[A-Za-z][A-Za-z0-9_-]+'
   - '\d[\d,]*\.?\d*'
 short_doc_filter_pattern: '^[\u4e00-\u9fff]{2}$'
+search_ngram_rules:
+  - pattern: '[\u4e00-\u9fff]{4,}'
+    sizes: [3, 4]
 
 entity_patterns: []
 spec_query_terms:

@@ -78,3 +78,19 @@ def test_synthesizer_fits_evidence_to_the_actual_prompt_budget():
     synth.synthesize("question", plan, "evidence line\n" * 200, [])
     assert len(synth.model_client.prompt) + len(synth.model_client.system) <= 1000
     assert MARKER in synth.model_client.prompt
+
+
+def test_default_context_budget_matches_its_deployed_window_formula():
+    from core.config import settings
+
+    cfg = settings.CONTEXT_CONFIG
+    expected_safe = int(
+        (cfg["llm_max_tokens"] - cfg["synthesis_max_tokens"])
+        * cfg["token_to_char_ratio"]
+    ) - cfg["prompt_protocol_reserve_chars"]
+    assert cfg["synthesis_safe_chars"] == expected_safe
+    assert (
+        cfg["synthesis_context_budget"]
+        + cfg["synthesis_prompt_overhead_chars"]
+        <= expected_safe
+    )

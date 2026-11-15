@@ -182,7 +182,7 @@ CLASSIFICATION_CONFIDENCE_FLOOR = float(
 # Context Window Configuration
 # =============================================================================
 CONTEXT_CONFIG = {
-    "llm_max_tokens": 65536,  # Match actual llama-server --ctx-size deployment
+    "llm_max_tokens": int(os.getenv("OPENLAD_LLM_MAX_TOKENS", "32768")),  # Per-slot context window
     "standard_chars": 60000,
     "token_to_char_ratio": 0.7,
     "phase1_coarse_topk": 100,
@@ -197,16 +197,16 @@ CONTEXT_CONFIG = {
     # Chat protocol bytes are small but must not be spent on document content.
     "prompt_protocol_reserve_chars": 512,
     # Maximum prompt chars after reserving synthesis_max_tokens for the answer:
-    # int((65536 - 4096) * 0.7) - 512 = 42496.
-    "synthesis_safe_chars": 42496,
+    # int((32768 - 4096) * 0.7) - 512 = 19558.
+    "synthesis_safe_chars": 19558,
     # Normal prompt overhead (system instruction, pack rules, question, labels).
     # The synthesizer also measures the actual prompt and shrinks the context if
     # a pack exceeds this estimate; this is a retrieval budget, not a guarantee.
     "synthesis_prompt_overhead_chars": 10000,
-    # 32000 + 10000 <= 42496. Leaving headroom avoids the previous behaviour
+    # 9000 + 10000 <= 19558. Leaving headroom avoids the previous behaviour
     # where retrieval alone consumed the whole window and the model client had
     # to cut evidence after the prompt had already been assembled.
-    "synthesis_context_budget": 32000,
+    "synthesis_context_budget": 9000,
     # Map-Reduce trigger: context exceeding this goes through chunked extraction
     # DISABLED: Map-Reduce causes 3-4x latency increase with minimal quality gain.
     # Context is truncated instead, which preserves the most relevant leading content.
