@@ -87,3 +87,42 @@ def test_merger_loads_pack_section_boost_rules(monkeypatch):
     rules = merger._load_industry_boost_rules("category")
     assert rules["total"] == boost["total"]
     assert merger._match_boost_rule("metric", "Total Table", rules) == 2.5
+
+
+def test_synonym_group_is_reachable_through_any_member():
+    """A query phrased with a non-head member must reach the whole group."""
+    from core.plugins import get_plugin_registry
+    retriever = HierarchicalRetriever.__new__(HierarchicalRetriever)
+    retriever._tokenize_query = lambda q: ["归母净利润"]
+    plugin = SimpleNamespace(retrieval=SimpleNamespace(
+        get_spec_query_terms=lambda: {"净利润": ["归母净利润", "net profit"]},
+    ))
+    registry = get_plugin_registry()
+    original = registry.get_plugin
+    registry.get_plugin = lambda name: plugin
+    try:
+        terms = retriever._expand_query_terms(["归母净利润"], "归母净利润",
+                                              "财务报告")
+    finally:
+        registry.get_plugin = original
+    assert "net profit" in terms
+    assert "净利润" in terms
+
+
+def test_single_route_precision_beats_broad_consensus():
+    """A page top-ranked by one route must beat a page only middling on many."""
+    retriever = HierarchicalRetriever.__new__(HierarchicalRetriever)
+    retriever._prepare_fts_query = lambda q, c=None: (q, ["q", "exact", "broad1", "broad2"])
+    retriever._tokenize_query = lambda q: ["q"]
+    target = {"page_num": 99, "page_id": "p99", "score": 1.0}
+    def fake_search(query, **kwargs):
+        if query == "exact":
+            return [target]
+        if query in ("broad1", "broad2"):
+            filler = [{"page_num": n, "page_id": f"p{n}", "score": 1.0}
+                      for n in range(1, 6)]
+            return filler + [target]
+        return []
+    retriever._search_fts = fake_search
+    rows = retriever._search_fts_with_pack_expansion("q")
+    assert rows[0]["page_num"] == 99

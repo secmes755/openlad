@@ -361,11 +361,17 @@ class HierarchicalRetriever:
         expanded = list(base_terms)
         seen = {t.lower() for t in expanded}
         for term, synonyms in merged.items():
-            if term.lower() in query_lower:
-                for syn in synonyms:
-                    if syn and syn.lower() not in seen:
-                        expanded.append(syn)
-                        seen.add(syn.lower())
+            # A group is an equivalence class: whichever member the query uses
+            # ("净利润" or the longer "归母净利润", which contains the head as a
+            # substring), every member -- including the head -- names the same
+            # vocabulary the document may have used instead.
+            if (term.lower() in query_lower
+                    or any(syn and syn.lower() in query_lower for syn in synonyms)):
+                for member in [term] + list(synonyms):
+                    if member and member.lower() not in seen:
+                        expanded.append(member)
+                        seen.add(member.lower())
+                continue
         for term in ngram_terms:
             if term.lower() not in seen:
                 expanded.append(term)
@@ -420,7 +426,15 @@ class HierarchicalRetriever:
             for rank, row in enumerate(rows, 1):
                 key = row.get("page_id") or (row.get("doc_id"), row.get("page_num"))
                 entry = fused.setdefault(key, {"row": row, "score": 0.0, "raw": 0.0})
+                # RRF rewards agreement across routes, which lets a page that
+                # merely shares broad wording with several synonyms outrank a
+                # page that one exact term places near the top. Keep the
+                # consensus signal but add a smaller single-route precision
+                # term so "top of an exact route" is not worth less than
+                # "middling on two loose routes".
                 entry["score"] += weight / (60 + rank)
+                entry["precision"] = max(entry.get("precision", 0.0),
+                                         weight / (10 + rank))
                 entry["raw"] = max(entry["raw"], row.get("score", 0.0))
         if weak:
             logger.info(f"[RETRIEVER] pack terms matched no strict query; "
@@ -430,6 +444,9 @@ class HierarchicalRetriever:
                 entry = fused.setdefault(key, {"row": row, "score": 0.0, "raw": 0.0})
                 entry["score"] += 0.25 / (60 + rank * max(len(alternatives), 1))
                 entry["raw"] = max(entry["raw"], row.get("score", 0.0))
+        for entry in fused.values():
+            entry["score"] += entry.pop("precision", 0.0) * settings.CONTEXT_CONFIG.get(
+                "pack_term_precision_weight", 1.0)
         ranked = sorted(fused.values(), key=lambda x: (-x["score"], -x["raw"]))
         results = []
         for entry in ranked[:limit]:
