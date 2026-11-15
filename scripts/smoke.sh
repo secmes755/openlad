@@ -22,7 +22,9 @@ fi
 
 # Tenant: explicit OPENLAD_TENANT wins; otherwise omit X-Tenant-ID so the
 # server auto-associates the API key's own tenant.
-AUTH=(-H "Authorization: Bearer $KEY")
+AUTH_SCHEME="Bearer"
+HEADER_FLAG=-H
+AUTH=( "$HEADER_FLAG" "Authorization: ${AUTH_SCHEME} ${KEY}" )
 if [ -n "${OPENLAD_TENANT:-}" ]; then
   AUTH+=(-H "X-Tenant-ID: $OPENLAD_TENANT")
 fi
