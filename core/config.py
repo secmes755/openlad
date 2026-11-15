@@ -286,6 +286,9 @@ CONTEXT_CONFIG = {
     "merger_min_chars_per_doc": 5000,
     # Merger: minimum score threshold for results
     "merger_min_score_threshold": 0.15,
+    # Merger: relative floor for score scales that sit below the absolute one
+    # (fused/rank-derived scores are ~0.01-0.05 where raw FTS is 1-1000).
+    "merger_min_score_ratio": 0.35,
     # Merger: low-value page score penalty
     "merger_low_value_penalty": 3.0,
     # Merger: content length cap by score tier (top, high, medium, low, floor)

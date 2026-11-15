@@ -92,6 +92,8 @@ class RetrievalExecutor:
         self._doc_filter_cache: dict = {}
 
         strategy = plan.get("strategy", "single_retrieve")
+        if industry_hint in (None, "", "auto"):
+            industry_hint = plan.get("routed_category") or industry_hint
         steps = plan.get("steps", [])
         logger.info("[PHASE-2] ===== Retrieval Execution =====")
         logger.info(f"[PHASE-2] Strategy: {strategy}, Steps: {len(steps)}, Industry: {industry_hint or 'auto'}")
@@ -720,8 +722,9 @@ class RetrievalExecutor:
                 logger.info(f"[SINGLE-RETRIEVE] Structure index coarse recall: query '{query}' -> recalled {len(chapter_results)} pages, total chars {sum(len(r.content) for r in chapter_results)}")
                 # Chapter delivery supplies context but its budget can otherwise
                 # remove the exact page. Keep the best direct page hits in front.
-                direct_results = self._fallback_to_fts(query, doc_id_filter[0])
-                direct_tokens = self.retriever._tokenize_query(query.lower())
+                direct_results = self._fallback_to_fts(
+                    query, doc_id_filter[0], industry_hint)
+                _, direct_tokens = self.retriever._prepare_fts_query(query, industry_hint)
                 for direct in direct_results:
                     excerpt, _ = self._build_exact_match_excerpt(
                         direct.content, direct_tokens,
@@ -1101,11 +1104,13 @@ Output only JSON, no explanation."""
         logger.info(f"[CHAPTER-RETRIEVE] LLM selected chapters: {selected_chapters} -> {len(results)} pages")
         return results
 
-    def _fallback_to_fts(self, query: str, doc_id: str) -> list[SearchResult]:
+    def _fallback_to_fts(self, query: str, doc_id: str,
+                         routed_category: str = None) -> list[SearchResult]:
         """Fallback to FTS search"""
         from .retriever import HierarchicalRetriever
         retriever = HierarchicalRetriever(self.tenant_id)
-        fts_results = retriever._search_fts(query, limit=10, doc_id_filter={doc_id})
+        fts_results = retriever._pack_expansion_pool(
+            query, limit=10, doc_id_filter={doc_id}, routed_category=routed_category)
 
         results = []
         doc = self.metadata_db.get_document(doc_id)

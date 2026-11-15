@@ -102,7 +102,7 @@ class _FakeMetadataDB:
         return []
 
     def search_fts_chunks(self, query, limit=50, doc_id_filter=None, page_filter=None,
-                          force_bigram_only=False):
+                          force_bigram_only=False, strict=False):
         with self._conn() as c:
             try:
                 rows = c.execute(

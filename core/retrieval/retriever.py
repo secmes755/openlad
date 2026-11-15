@@ -145,8 +145,8 @@ class HierarchicalRetriever:
         return results
 
     def _search_fts(self, query: str, limit: int, doc_id_filter: set[str] | None = None,
-                    page_filter: set[int] | None = None) -> list[dict]:
-        """Execute chunk-level FTS via TenantMetadataDB with doc_id post-filtering.
+                    page_filter: set[int] | None = None, strict: bool = False) -> list[dict]:
+        """Execute chunk-level FTS with document/page filtering before ranking.
         Coarse recall + full delivery - chunks are only used to locate relevant pages,
         the final result returns complete page content.
 
@@ -169,8 +169,8 @@ class HierarchicalRetriever:
         # via FTS trigram tokenizer. Fallback to bigram only when FTS returns 0.
         chunk_results = self.metadata_db.search_fts_chunks(
             query, limit=limit * 10, page_filter=page_filter,
-            doc_id_filter=doc_id_filter)
-        if not chunk_results:
+            doc_id_filter=doc_id_filter, strict=strict)
+        if not chunk_results and not strict:
             logger.info(f"[RETRIEVER] query '{query}' FTS returned 0 results, falling back to bigram LIKE")
             chunk_results = self.metadata_db.search_fts_chunks(
                 query, limit=limit * 5, force_bigram_only=True,
@@ -282,7 +282,8 @@ class HierarchicalRetriever:
 
         return selected
 
-    def _expand_query_terms(self, keywords: list[str], query: str) -> list[str]:
+    def _expand_query_terms(self, keywords: list[str], query: str,
+                            routed_category: str = None) -> list[str]:
         """Merge industry-pack synonym expansions into retrieval keywords.
 
         Only terms declared by the active industry pack (retrieval/rules.yaml
@@ -304,13 +305,20 @@ class HierarchicalRetriever:
             registry = get_plugin_registry()
             merged = {}
             plugin = None
-            try:
-                plugin = registry.detect_plugin_for_text(query)
-            except Exception as e:
-                # A pack that cannot be consulted for this query loses its spec
-                # vocabulary silently; "no match" is the normal path, not this.
-                logger.warning(f"[RETRIEVER] industry detection failed for query: {e}")
-                plugin = None
+            if routed_category and routed_category != "auto":
+                try:
+                    plugin = (registry.get_plugin(routed_category) or
+                              registry.resolve_plugin_for_categories([routed_category]))
+                except Exception as e:
+                    logger.warning(f"[RETRIEVER] routed pack resolution failed: {e}")
+            if plugin is None:
+                try:
+                    plugin = registry.detect_plugin_for_text(query)
+                except Exception as e:
+                    # A pack that cannot be consulted for this query loses its spec
+                    # vocabulary silently; "no match" is the normal path, not this.
+                    logger.warning(f"[RETRIEVER] industry detection failed for query: {e}")
+                    plugin = None
             # The vocabulary lives on the pack's retrieval side: every other hook
             # in the codebase reads plugin.retrieval.<hook>. The composite plugin
             # the registry hands out does not expose it, so asking the composite
@@ -339,7 +347,18 @@ class HierarchicalRetriever:
         # appended is only appended -- the query's own keywords stay first, so the
         # exact matches FTS is relied on are never diluted or reordered.
         query_lower = query.lower()
-        expanded = list(keywords)
+        # Pack synonyms are inserted ahead of the bounded n-gram variants the
+        # keyword extractor already produced: a long CJK phrase expands into
+        # dozens of overlapping n-grams, so appending afterwards let the cap
+        # drop the translated synonyms that match the document's own wording.
+        # Order: query terms -> pack synonyms -> n-gram variants.
+        base_terms = list(keywords)
+        ngram_terms = []
+        if len(base_terms) > 3:
+            head = [t for t in base_terms[:3]]
+            ngram_terms = [t for t in base_terms[3:]]
+            base_terms = head
+        expanded = list(base_terms)
         seen = {t.lower() for t in expanded}
         for term, synonyms in merged.items():
             if term.lower() in query_lower:
@@ -347,8 +366,10 @@ class HierarchicalRetriever:
                     if syn and syn.lower() not in seen:
                         expanded.append(syn)
                         seen.add(syn.lower())
-        # Bound expansion: keep original keywords first, cap total length to
-        # avoid diluting FTS trigram matching with too many broad terms.
+        for term in ngram_terms:
+            if term.lower() not in seen:
+                expanded.append(term)
+                seen.add(term.lower())
         if len(expanded) > 24:
             expanded = expanded[:24]
         return expanded
@@ -356,6 +377,87 @@ class HierarchicalRetriever:
     def _tokenize_query(self, query: str) -> list[str]:
         """Extract bounded FTS terms using the base pack's search rules."""
         return extract_search_keywords(query)
+
+    def _prepare_fts_query(self, query: str,
+                           routed_category: str = None) -> tuple[str, list[str]]:
+        """Apply the active pack's vocabulary once for every retrieval path."""
+        query_tokens = self._tokenize_query(query.lower())
+        expanded = self._expand_query_terms(query_tokens, query, routed_category)
+        extra_terms = [t for t in expanded if t not in query_tokens]
+        fts_query = (query + " " + " ".join(extra_terms)).strip() if extra_terms else query
+        return fts_query, expanded
+
+    def _search_fts_with_pack_expansion(
+            self, query: str, limit: int = 10, doc_id_filter: set[str] = None,
+            routed_category: str = None) -> list[dict]:
+        """Fuse bounded per-synonym searches instead of diluting one OR query."""
+        _, expanded = self._prepare_fts_query(query, routed_category)
+        original_tokens = self._tokenize_query(query.lower())
+        alternatives = [t for t in expanded if t not in original_tokens]
+        if not alternatives:
+            return self._search_fts(query, limit=limit, doc_id_filter=doc_id_filter)
+
+        # Retrieve a deeper candidate pool per route before fusing. When the
+        # caller has already pinned the document, each extra row costs nothing
+        # in noise but a shallow pool can drop the one page that carries the
+        # answer (a number-bearing table row ranks below prose pages that
+        # repeat the term).
+        depth = max(limit, 30) if doc_id_filter else limit
+
+        fused = {}
+        token_weight = settings.CONTEXT_CONFIG.get("pack_term_fusion_weight", 0.5)
+        searches = [(term, True, token_weight) for term in alternatives]
+        searches.append((query, False, 1.0))
+        weak = None
+        for search_query, strict, weight in searches:
+            rows = self._search_fts(
+                search_query, limit=depth, doc_id_filter=doc_id_filter, strict=strict)
+            if not rows:
+                relaxed = self._search_fts(
+                    search_query, limit=depth, doc_id_filter=doc_id_filter)
+                weak = relaxed if weak is None else weak + relaxed
+                continue
+            for rank, row in enumerate(rows, 1):
+                key = row.get("page_id") or (row.get("doc_id"), row.get("page_num"))
+                entry = fused.setdefault(key, {"row": row, "score": 0.0, "raw": 0.0})
+                entry["score"] += weight / (60 + rank)
+                entry["raw"] = max(entry["raw"], row.get("score", 0.0))
+        if weak:
+            logger.info(f"[RETRIEVER] pack terms matched no strict query; "
+                        f"fusing {len(weak)} relaxed rows from {len(alternatives)} terms")
+            for rank, row in enumerate(weak, 1):
+                key = row.get("page_id") or (row.get("doc_id"), row.get("page_num"))
+                entry = fused.setdefault(key, {"row": row, "score": 0.0, "raw": 0.0})
+                entry["score"] += 0.25 / (60 + rank * max(len(alternatives), 1))
+                entry["raw"] = max(entry["raw"], row.get("score", 0.0))
+        ranked = sorted(fused.values(), key=lambda x: (-x["score"], -x["raw"]))
+        results = []
+        for entry in ranked[:limit]:
+            row = dict(entry["row"])
+            row["score"] = entry["score"]
+            results.append(row)
+        return results
+
+    def _pack_expansion_pool(
+            self, query: str, limit: int = 10, doc_id_filter: set[str] = None,
+            routed_category: str = None) -> list[dict]:
+        """Return the fused candidate pool before truncation to `limit`.
+
+        The merger applies pack section weights and then re-ranks; handing it
+        only the top `limit` rows lets a page that the pack marks as the
+        authoritative table be cut before those weights are ever applied.
+        """
+        _, expanded = self._prepare_fts_query(query, routed_category)
+        original_tokens = self._tokenize_query(query.lower())
+        alternatives = [t for t in expanded if t not in original_tokens]
+        if not alternatives:
+            return self._search_fts(query, limit=limit, doc_id_filter=doc_id_filter)
+        depth = max(limit, 30) if doc_id_filter else limit
+        pool_cap = max(depth * 3, 60)
+        rows = self._search_fts_with_pack_expansion(
+            query, limit=pool_cap, doc_id_filter=doc_id_filter,
+            routed_category=routed_category)
+        return rows
 
     def _retrieve_exact(self, query: str, plan: QueryPlan,
                          max_results: int, doc_id_filter: set[str] = None,
@@ -1147,16 +1249,11 @@ class SegmentMerger:
 
 
     def _load_industry_boost_rules(self, industry_hint: str | None) -> dict[str, Any]:
-        """Load industry package rules for the merge phase.
+        """Load pack-owned section penalties and intent boosts for merging.
 
-        Returns the same shape the merge phase reads (``low_value_sections`` at
-        the top level). The earlier version returned
-        ``plugin.retrieval.get_section_boost_rules()``, whose keys come from the
-        ``section_boost_rules`` block of ``rules.yaml`` — a *sibling* of
-        ``low_value_sections``, not a container of it. The merge phase then looked
-        for ``low_value_sections`` inside that dict, never found it, and silently
-        applied no penalty at all. ``get_low_value_sections()`` is the accessor
-        that actually returns that block, and it already existed.
+        ``low_value_sections`` and the entries in ``section_boost_rules`` are
+        siblings in the pack YAML and are therefore siblings in the returned
+        mapping consumed by ``merge`` and ``_match_boost_rule``.
         """
         if not industry_hint or industry_hint == "auto":
             return {}
@@ -1167,7 +1264,9 @@ class SegmentMerger:
             if not plugin:
                 plugin = registry.get_plugin_by_category(industry_hint)
             if plugin and hasattr(plugin.retrieval, 'get_low_value_sections'):
-                return {"low_value_sections": plugin.retrieval.get_low_value_sections()}
+                rules = {"low_value_sections": plugin.retrieval.get_low_value_sections()}
+                rules.update(plugin.retrieval.get_section_boost_rules() or {})
+                return rules
         except Exception as e:
             logger.debug(f"[MERGER] failed to load industry boost rules: {e}")
         return {}
@@ -1272,18 +1371,25 @@ class SegmentMerger:
             logger.warning(f"[MERGER] section expansion failed: doc={doc_id}, err={e}")
             return {}
 
-    def _smart_truncate(self, page_text: str, query: str, max_len: int) -> str:
+    def _smart_truncate(self, page_text: str, query: str, max_len: int,
+                        extra_keywords: list[str] | None = None) -> str:
         """Fit a page while preserving keyword-bearing structural blocks.
 
         PDF text is commonly separated by newlines rather than prose sentence
         boundaries. Blocks are selected by relevance but emitted in source order.
+        ``extra_keywords`` carries pack-declared equivalents (e.g. a translated
+        metric name) so a page whose wording differs from the query still keeps
+        the blocks that actually hold the answer.
         """
         if len(page_text) <= max_len:
             return page_text
         if max_len <= 0:
             return ""
 
-        keywords = extract_keywords(query)
+        keywords = list(extract_keywords(query))
+        for term in extra_keywords or []:
+            if term and term.casefold() not in {k.casefold() for k in keywords}:
+                keywords.append(term)
         blocks = [block.strip() for block in re.split(
             r'\n\s*\n+|\n+|(?<=[。！？.!?])\s+', page_text) if block.strip()]
         if not blocks:
@@ -1299,6 +1405,19 @@ class SegmentMerger:
         for index, hits in sorted(scored, key=lambda item: (-item[1], item[0])):
             if hits > 0:
                 selected.add(index)
+        # A table's data rows carry no words from the query — only numbers — so
+        # text scoring can never select them, and the answer is dropped while
+        # the header and footer survive. Keep numeric rows adjacent to a
+        # keyword-bearing block, which is the structure that makes them
+        # meaningful (the header says what the numbers are).
+        hit_indices = {index for index, hits in scored if hits > 0}
+        if hit_indices:
+            numeric = re.compile(r'\d[\d,.\s%]{3,}')
+            for index, block in enumerate(blocks):
+                if index in selected or not numeric.search(block):
+                    continue
+                if any(abs(index - hit) <= 2 for hit in hit_indices):
+                    selected.add(index)
 
         def render(indices) -> str:
             return "...[excerpt]...\n" + "\n".join(blocks[i] for i in sorted(indices))
@@ -1341,36 +1460,53 @@ class SegmentMerger:
 
         return '\n'.join(result_lines)
 
-    def _match_boost_rule(self, query: str, section_title: str, rules: dict[str, Any]) -> float:
-        """Match boost rules based on query and section title, return boost score"""
+    def _match_boost_rules(self, query: str, section_title: str,
+                            rules: dict[str, Any],
+                            content: str = None) -> dict[str, float]:
+        """Return the pack's own weights per matched rule (float, not rescaled).
+
+        Keeping the weights separate lets the caller place them on the scale of
+        the scores it actually holds: a pack states that a hit is worth N times
+        an ordinary hit, not that it adds N to whatever score a path produced.
+        """
         if not rules:
-            return 0.0
+            return {}
         query_lower = query.lower()
+        # A PDF page's own title is often the chapter it belongs to, while the
+        # table the pack names ("Main Accounting Data", "合并利润表") appears in
+        # the page body. Matching title and a bounded head of the body lets the
+        # pack describe the document it actually sees, without moving any
+        # vocabulary into core.
         section_lower = (section_title or "").lower()
-        total_boost = 0.0
+        body_lower = (content or "")[:2000].lower()
+        haystacks = (section_lower, body_lower)
+        matched: dict[str, float] = {}
         for rule_name, rule in rules.items():
             if not isinstance(rule, dict):
                 continue
-            # Check if query matches this rule's intent
             query_keywords = rule.get("query_keywords", [])
             if not any(kw.lower() in query_lower for kw in query_keywords):
                 continue
-            # Check if section matches boost_sections
+            total = 0.0
             for boost_item in rule.get("boost_sections", []):
-                keywords = boost_item.get("keywords", [])
-                boost = boost_item.get("boost", 0.0)
-                if any(kw.lower() in section_lower for kw in keywords):
-                    total_boost += boost
-            # Check if section matches penalize_sections
+                if any(kw.lower() in hay
+                       for hay in haystacks
+                       for kw in boost_item.get("keywords", [])):
+                    total += boost_item.get("boost", 0.0)
             for penalize_item in rule.get("penalize_sections", []):
-                keywords = penalize_item.get("keywords", [])
-                penalty = penalize_item.get("penalty", 0.0)
                 unless = penalize_item.get("unless_query_contains", [])
-                if any(kw.lower() in section_lower for kw in keywords):
-                    # If query contains 'unless' keywords, do not penalize
+                if any(kw.lower() in hay
+                       for hay in haystacks
+                       for kw in penalize_item.get("keywords", [])):
                     if not any(u.lower() in query_lower for u in unless):
-                        total_boost += penalty  # penalty is negative
-        return total_boost
+                        total += penalize_item.get("penalty", 0.0)
+            if total:
+                matched[rule_name] = total
+        return matched
+
+    def _match_boost_rule(self, query: str, section_title: str, rules: dict[str, Any]) -> float:
+        """Match boost rules based on query and section title, return boost score"""
+        return sum(self._match_boost_rules(query, section_title, rules).values())
 
     @staticmethod
     def _get_content_cap(score: float, cfg: dict) -> int:
@@ -1398,6 +1534,23 @@ class SegmentMerger:
 
         # Load industry boost rules
         industry_rules = self._load_industry_boost_rules(industry_hint)
+        # Pack-declared equivalents let in-page block selection recognise the
+        # document's own wording (a translated metric name, a synonym) instead
+        # of keeping only the page header and the last line.
+        synonym_terms: list[str] = []
+        if industry_hint and industry_hint != "auto":
+            try:
+                from ..plugins import get_plugin_registry
+                registry = get_plugin_registry()
+                plugin = (registry.get_plugin(industry_hint) or
+                          registry.get_plugin_by_category(industry_hint))
+                retrieval = getattr(plugin, "retrieval", None)
+                if retrieval is not None:
+                    for key, values in (retrieval.get_spec_query_terms() or {}).items():
+                        if key.casefold() in query.casefold():
+                            synonym_terms.extend(values)
+            except Exception as e:
+                logger.debug(f"[MERGER] pack synonym lookup failed: {e}")
 
         merged_parts = []
         sources = []
@@ -1429,20 +1582,39 @@ class SegmentMerger:
                     doc_results.append(expanded_r)
 
         for doc_id, doc_results in doc_groups.items():
-            # FIX: Apply penalty/boost FIRST, then filter, to avoid high-value pages
-            # being filtered early due to low original score
-            for r in doc_results:
-                # FIX: Apply industry package boost rules (generic, supports both Chinese and English)
-                if industry_rules:
-                    industry_boost = self._match_boost_rule(query, r.section_title, industry_rules)
-                    if industry_boost != 0.0:
-                        r.score += industry_boost
-                        logger.debug(f"[MERGER] industry boost: {r.section_title} +{industry_boost:.1f}")
+            # Pack weights are relative: rescale them onto whatever score scale
+            # this path produced (FTS ranks, fused ranks, structure scores)
+            # instead of adding absolute points that would dominate any of them.
+            boost_map: dict[int, dict[str, float]] = {}
+            if industry_rules:
+                for r in doc_results:
+                    matched = self._match_boost_rules(
+                        query, r.section_title, industry_rules, r.content)
+                    if matched:
+                        boost_map[id(r)] = matched
+            if boost_map:
+                base = max((r.score for r in doc_results), default=0.0)
+                if base > 0:
+                    for r in doc_results:
+                        matched = boost_map.get(id(r))
+                        if not matched:
+                            continue
+                        factor = max(0.0, 1.0 + sum(matched.values()))
+                        r.score = r.score * factor
+                        logger.debug(f"[MERGER] pack boost {list(matched)}: "
+                                     f"page={r.page_num} x{factor:.2f}")
 
             doc_results.sort(key=lambda x: x.score, reverse=True)
 
-            # Filter low-score results (after boost/penalty)
-            min_score_threshold = cfg.get("merger_min_score_threshold", 0.15)
+            # Filter low-score results (after boost/penalty). The floor scales
+            # with the best score on this path: a fused-rank path and a raw FTS
+            # path do not share a score scale, so an absolute floor would erase
+            # every page of the former.
+            best_score = doc_results[0].score if doc_results else 0.0
+            ratio = cfg.get("merger_min_score_ratio", 0.0)
+            relative_floor = best_score * ratio if ratio else 0.0
+            floor = cfg.get("merger_min_score_threshold", 0.15)
+            min_score_threshold = relative_floor if best_score < floor else max(floor, relative_floor)
             filtered_doc_results = [r for r in doc_results if r.score >= min_score_threshold]
             if not filtered_doc_results:
                 filtered_doc_results = doc_results[:5]
@@ -1565,7 +1737,8 @@ class SegmentMerger:
 
                 if len(content) > max_content_len:
                     # FIX: When truncating, prioritize preserving paragraphs containing query keywords
-                    content = self._smart_truncate(content, query, max_content_len)
+                    content = self._smart_truncate(content, query, max_content_len,
+                                                    extra_keywords=synonym_terms)
                 section = f"\n--- {result.section_title} (Page {result.page_num}) ---\n" if result.section_title else f"\n--- Page {result.page_num} ---\n"
                 total_len = len(section) + len(content)
                 if current_chars + total_len > max_context_chars or doc_chars_used + total_len > max_per_doc:
@@ -1601,7 +1774,8 @@ class SegmentMerger:
                     # Limit single-page content length (consistent with merge logic)
                     max_content_len = self._get_content_cap(result.score, cfg)
                     if len(content) > max_content_len:
-                        content = self._smart_truncate(content, query, max_content_len)
+                        content = self._smart_truncate(content, query, max_content_len,
+                                                    extra_keywords=synonym_terms)
                     source_content_parts.append(section_header + content)
 
             source_content = "\n".join(source_content_parts)
