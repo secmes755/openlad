@@ -360,9 +360,9 @@ class HierarchicalRetriever:
         seen = {t.lower() for t in expanded}
         for term, synonyms in merged.items():
             # A group is an equivalence class: whichever member the query uses
-            # ("净利润" or the longer "归母净利润", which contains the head as a
-            # substring), every member -- including the head -- names the same
-            # vocabulary the document may have used instead.
+            # -- including a longer member that contains the head as a
+            # substring -- every member names the same vocabulary the document
+            # may have used instead.
             if (term.lower() in query_lower
                     or any(syn and syn.lower() in query_lower for syn in synonyms)):
                 for member in [term] + list(synonyms):
