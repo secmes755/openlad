@@ -89,6 +89,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Prompt budgets follow the deployed per-slot window.** Retrieval and synthesis
+  reserve answer and protocol space before evidence is assembled; the public
+  35B profile defaults to 32768 tokens and the 9B profile documents its own
+  per-slot setting.
+
+- **Document-scoped FTS ranks before applying its limit.** Target pages are no
+  longer discarded by a tenant-wide cutoff, and pack-declared search n-grams
+  improve recall for long unsegmented queries.
+
+- **Answer cleanup preserves legitimate document vocabulary.** Only standalone
+  generation-artifact lines are removed; names such as "Release Notes" and
+  normal explanatory sentences remain intact.
+
+- **Public verification checks answer content.** The quick smoke validates exact
+  terms against a small public fixture, while Docker verification uses the
+  authenticated login key and checks the returned datasheet specification.
+
+- **Language-specific rules live in packs.** Core retains generic budget,
+  truncation, structure and scoring mechanisms; token shapes, headings, OCR
+  dictionaries and section vocabulary come from the generic or industry pack.
+
 - **Automatic query expansion is scoped to the detected pack.** Decomposed
   sub-queries no longer inherit vocabulary from every installed pack; an
   unmatched or invalid pack produces no expansion.
