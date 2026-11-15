@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Docker deployment verification for OpenLAD 0.4.0.
+# Docker deployment verification for OpenLAD 0.5.0.
 #
 # Verifies the single-container deployment against the real stack:
 #   - image build (--no-cache)
@@ -24,7 +24,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-IMAGE="${OPENLAD_VERIFY_IMAGE:-openlad:0.4.0-verify}"
+IMAGE="${OPENLAD_VERIFY_IMAGE:-openlad:0.5.0-verify}"
 NAME="openlad_verify"
 DATA_DIR="/tmp/openlad_docker_verify_data"
 TEST_DOC="${TEST_DOC:-$REPO_ROOT/fixtures/Rockchip-RK3588-Datasheet-V1.9.pdf}"

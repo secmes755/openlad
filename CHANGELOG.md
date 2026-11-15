@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a page-image action; missing sources and failed renders return not-found
   instead of a blank image.
 
-## [0.5.0] - 2026-11-12
+## [0.5.0] - 2026-11-15
 
 ### Fixed
 

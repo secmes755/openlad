@@ -85,6 +85,10 @@ huggingface-cli download Qwen/Qwen3-Embedding-0.6B-GGUF \
 | `--cache-ram`    | `2048`   | Host-side prompt cache cap, MiB — **pin this**, see below |
 | `-n`             | `-1`     | No limit on generated tokens                             |
 
+Set `OPENLAD_LLM_MAX_TOKENS` to the **per-slot** window (`--ctx-size` divided by
+`--parallel`): `131072` for the 9B profile above and `32768` for the 35B
+single-slot profile below. Do not use the server's total context size.
+
 **Embedding — Qwen3-Embedding-0.6B Q8_0:**
 
 | Flag             | Value  | Notes                                             |

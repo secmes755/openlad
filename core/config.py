@@ -183,7 +183,6 @@ CLASSIFICATION_CONFIDENCE_FLOOR = float(
 # =============================================================================
 CONTEXT_CONFIG = {
     "llm_max_tokens": int(os.getenv("OPENLAD_LLM_MAX_TOKENS", "32768")),  # Per-slot context window
-    "standard_chars": 60000,
     "token_to_char_ratio": 0.7,
     "phase1_coarse_topk": 100,
     "phase2_max_chars": 60000,

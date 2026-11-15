@@ -73,6 +73,7 @@ documents after aligning both values.
 | Variable                       | Default | Description                                |
 | ------------------------------ | ------- | ------------------------------------------ |
 | `OPENLAD_MAX_CHARS`            | *(unset — auto budget)* | Overrides the phase-2 retrieval context budget (chars). Lower it if queries hit "context size exceeded" |
+| `OPENLAD_LLM_MAX_TOKENS`       | `32768` | Per-slot LLM context window: `--ctx-size / --parallel`; must match the query server |
 | `OPENLAD_EMB_MAX_INPUT_TOKENS` | `2048`  | Must match the embedding server's `--batch-size` — see pairing rule above |
 | `OPENLAD_INGEST_MAX_WORKERS`   | `1`     | Parallel ingestion workers — set to match your LLM server's `--parallel` (safe default `1`; e.g. `--parallel 2` → `2`) |
 | `OPENLAD_CHART_VLM_MAX_WORKERS`| `1`     | Concurrent chart/VLM calls during ingestion — same pairing rule |

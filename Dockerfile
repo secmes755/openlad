@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # OpenLAD single-container image.
 #
-# Design (0.4.0):
+# Design (0.5.0):
 #   - The container runs ONLY the OpenLAD API. Model services (llama-server /
 #     vLLM / Ollama, or a cloud endpoint) stay OUTSIDE the container and are
 #     reached via OPENLAD_LLM_URL / OPENLAD_EMB_URL (OpenAI-compatible).
@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt && \
+COPY requirements.txt requirements.lock ./
+RUN pip install --upgrade pip && pip install --require-hashes -r requirements.lock && \
     find /usr/local/lib/python3.11/site-packages -type d -name "__pycache__" -prune -exec rm -rf {} \;
 
 # ---------- runtime: slim image with deps + app ----------
