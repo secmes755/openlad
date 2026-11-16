@@ -325,8 +325,14 @@ Filtering requirements:
 
 Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":"","time_range":{{"start":"YYYY-MM-DD","end":"YYYY-MM-DD","label":"time range description"}}}}"""
         try:
-            result = self.model_client.generate_json(prompt, temperature=0.0, max_tokens=2048)
-            short_ids = result.get("candidate_short_ids", [])
+            result, json_error = self.model_client.generate_json_strict(
+                prompt, temperature=0.0, max_tokens=2048)
+            if json_error:
+                # An unreadable reply and a reply that names no document are
+                # different situations; conflating them is what let a broken
+                # prompt look like "nothing matched".
+                logger.warning(f"[PHASE-1] Coarse filter reply unusable: {json_error}")
+            short_ids = self._extract_short_ids(result)
             time_range = result.get("time_range")
             if time_range and time_range.get("start"):
                 logger.info(f"[PHASE-1] Coarse filter time range: {time_range.get('label')} ({time_range['start']} ~ {time_range['end']})")
@@ -426,16 +432,45 @@ Output JSON: {{"analysis":"","candidate_short_ids":["shortID1",...],"reasoning":
             covered = any(doc["id"] in candidate_set for doc in matching_docs)
 
             if not covered:
-                # Add at least one document
+                # Add every title match, not just the first. Taking one document
+                # per entity means an entity that names several documents (a
+                # brief and a manual, say) is searched in whichever one the
+                # document table happens to list first; if that one lacks the
+                # answer, the question is answered "not mentioned" while the
+                # answer sat in a document the filter had already excluded.
                 for doc in matching_docs:
+                    if len(candidate_set) >= self.DOC_FILTER_CAP:
+                        break
                     if doc["id"] not in candidate_set:
                         candidate_set.add(doc["id"])
                         added.append((entity, doc["id"][:8]))
-                        break
 
         if added:
             logger.info(f"[PHASE-1] Entity coverage: added missing documents for entities {added}")
         return list(candidate_set)
+
+    # Keys a coarse-filter reply may use for the same field. The prompt declares
+    # one spelling, but a prompt that lost its trailing output contract -- or a
+    # model with a different convention -- returns an equivalent one. Accepting
+    # only the declared spelling turns a usable answer into an empty candidate
+    # list, which is indistinguishable from "nothing is relevant".
+    _SHORT_ID_KEYS = ("candidate_short_ids", "candidate_ids", "documents", "ids")
+
+    def _extract_short_ids(self, result: dict) -> list[str]:
+        """Return the candidate id list from a coarse-filter reply."""
+        if not isinstance(result, dict):
+            return []
+        for key in self._SHORT_ID_KEYS:
+            value = result.get(key)
+            if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                if key != self._SHORT_ID_KEYS[0]:
+                    logger.info(f"[PHASE-1] Coarse filter used key '{key}' "
+                                f"instead of '{self._SHORT_ID_KEYS[0]}'")
+                return value
+        if result:
+            logger.warning(f"[PHASE-1] Coarse filter reply has no usable id list "
+                           f"(keys: {sorted(result)})")
+        return []
 
     def _resolve_short_ids(self, short_ids: list[str]) -> list[str]:
         if not short_ids:
@@ -509,12 +544,26 @@ Output JSON:
                 docs.append(doc)
         if not docs:
             return "No detailed document info available"
+        # A catalog that overflows the prompt is truncated by the client, which
+        # drops the trailing output contract instead of the list. Bound the list
+        # here, where the overflow can be reported as a fact about the corpus.
+        budget = int(settings.PLANNER_CONFIG.get("catalog_char_budget", 12000))
         lines = []
+        used = 0
         for doc in docs:
             title = doc.get("title") or doc.get("filename") or "Unknown document"
             # doc_type is NULL for a document the classifier could not type.
             doc_type = doc.get("doc_type") or "Unknown type"
-            lines.append(f"- {doc['id']}: [{doc_type}] {title}")
+            line = f"- {doc['id']}: [{doc_type}] {title}"
+            if used + len(line) + 1 > budget:
+                omitted = len(docs) - len(lines)
+                logger.info(f"[PHASE-1] Document catalog bounded to {len(lines)} of "
+                            f"{len(docs)} entries ({budget} chars); {omitted} omitted")
+                lines.append(f"(catalog truncated: {len(lines)} of {len(docs)} documents "
+                             f"listed; the rest are still searchable if relevant)")
+                break
+            lines.append(line)
+            used += len(line) + 1
         return "\n".join(lines)
 
     @staticmethod
@@ -652,7 +701,8 @@ Rewritten query:"""
                         title = (doc.get("title") or doc.get("filename") or "").upper()
                         if entity_upper in title and doc["id"] not in doc_filter:
                             doc_filter.append(doc["id"])
-                            break
+                            if len(doc_filter) >= self.DOC_FILTER_CAP:
+                                break
             except Exception as e:
                 # Already inside the degraded path (the caller is told the plan
                 # failed), but the reason still belongs in the log.

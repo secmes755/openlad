@@ -2074,6 +2074,23 @@ Output in plain Markdown. Be factual and avoid guessing information not visible 
                     sub_len = header_len
                     for dr in data_rows:
                         dr_len = len(dr) + 1
+                        # A single row can exceed the budget on its own (a wide
+                        # table with one long cell). The `and sub` guard alone
+                        # would append it whole, and the embedding window would
+                        # then silently drop the tail of that chunk.
+                        if dr_len > max_chunk_size:
+                            if sub:
+                                chunk_text = (header_text + "\n" + "\n".join(sub)).strip()
+                                if chunk_text:
+                                    chunks.append(chunk_text)
+                                sub = []
+                                sub_len = header_len
+                            for pos in range(0, len(dr), max_chunk_size):
+                                piece = dr[pos:pos + max_chunk_size]
+                                if piece.strip():
+                                    chunks.append(
+                                        (header_text + "\n" + piece).strip())
+                            continue
                         if sub_len + dr_len > max_chunk_size and sub:
                             chunk_text = (header_text + "\n" + "\n".join(sub)).strip()
                             if chunk_text:

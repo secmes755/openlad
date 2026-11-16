@@ -62,11 +62,33 @@ def _empty(value) -> bool:
     return False
 
 
+# An anchor longer than this is a block of prose, not a row or column label.
+# Spreadsheets merge a whole sheet area to hold a legal notice or a banner, and
+# copying such an anchor into every cell multiplies the page text by the area
+# (observed 18x on a real declaration sheet), which then floods term frequency
+# and inflates chunks far past the embedding window.
+MERGE_ANCHOR_MAX_CHARS = 128
+# Above this filled character count the merge is treated as a banner region
+# rather than a label that legitimately applies to every subordinate cell.
+MERGE_FILL_MAX_CHARS = 4000
+
+
+def _should_fill(anchor, region_cells: int) -> bool:
+    """Decide whether a merge anchor may be replicated across its region."""
+    text = anchor if isinstance(anchor, str) else str(anchor)
+    if len(text) > MERGE_ANCHOR_MAX_CHARS:
+        return False
+    return len(text) * region_cells <= MERGE_FILL_MAX_CHARS
+
+
 def restore_merged_cells(frame, regions: list[MergedRegion]) -> int:
     """Fill empty subordinate cells from a non-empty merge anchor.
 
     Existing values are never overwritten, and no value is propagated outside
-    the declared rectangle. Returns the number of cells actually filled.
+    the declared rectangle. A merge whose anchor is long-form text, or whose
+    replication would exceed the fill budget, keeps the anchor only in its first
+    cell: the value is still attributed to the region, but not duplicated.
+    Returns the number of cells actually filled.
     """
     filled = 0
     try:
@@ -92,6 +114,10 @@ def restore_merged_cells(frame, regions: list[MergedRegion]) -> int:
             frame.iat[row_low, col_low] = source_anchor
         anchor = source_anchor if isinstance(source_anchor, bool) else frame_anchor
         if _empty(anchor):
+            continue
+        region_cells = ((min(row_high + 1, len(frame.index)) - row_low)
+                        * (min(col_high + 1, len(frame.columns)) - col_low))
+        if not _should_fill(anchor, region_cells):
             continue
         for row in range(row_low, min(row_high + 1, len(frame.index))):
             for col in range(col_low, min(col_high + 1, len(frame.columns))):

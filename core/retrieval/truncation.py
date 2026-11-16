@@ -34,15 +34,24 @@ def mark_truncated(text: str) -> str:
     return f"{text}\n{MARKER}"
 
 
-def truncate_to_fit(text: str, max_chars: int) -> str:
-    """Fit text and its truncation marker inside one hard character budget."""
+def truncate_to_fit(text: str, max_chars: int, keep_tail: bool = False) -> str:
+    """Fit text and its truncation marker inside one hard character budget.
+
+    ``keep_tail`` keeps the end of the text instead of the start. Use it for
+    prompts whose trailing section carries instructions rather than data: an
+    output-format contract is conventionally the last block, and dropping it
+    changes the request silently, which reads the same as a model failure.
+    """
     if len(text) <= max_chars:
         return text
     if max_chars <= 0:
         return ""
     if max_chars <= len(MARKER) + 1:
         return MARKER[:max_chars]
-    return f"{text[:max_chars - len(MARKER) - 1].rstrip()}\n{MARKER}"
+    budget = max_chars - len(MARKER) - 1
+    if keep_tail:
+        return f"{MARKER}\n{text[-budget:].lstrip()}"
+    return f"{text[:budget].rstrip()}\n{MARKER}"
 
 
 def is_truncated(text: str) -> bool:
