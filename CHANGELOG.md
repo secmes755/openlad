@@ -85,6 +85,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a page-image action; missing sources and failed renders return not-found
   instead of a blank image.
 
+## [0.5.1] - 2026-11-16
+
+### Fixed
+
+- **A prompt that exceeds its window keeps its trailing contract.** Truncation
+  cut from the end, which is where an output-format instruction sits, so the
+  request silently changed shape and the caller read the resulting reply as a
+  negative result. Callers that carry a contract at the end can now preserve it.
+
+- **A coarse-filter reply is readable through equivalent key spellings, and an
+  unusable reply is reported.** Only the declared key was accepted, so an
+  equivalent one produced an empty candidate list with no warning. An empty
+  list, an unreadable reply and a reply naming no document are now distinguished
+  in the log.
+
+- **Entity coverage adds every matching document, not one per entity.** When an
+  entity named several documents, only the first in table order was searched; if
+  that one lacked the answer, the question was answered "not mentioned" while
+  the answer sat in an excluded document.
+
+- **The document catalog is bounded before it reaches the prompt** and states
+  how many entries were omitted, so an oversized corpus degrades the catalog
+  rather than the request.
+
+- **Long merge anchors are attributed, not replicated.** A merged region holding
+  prose (a notice, a banner) was copied into every cell, multiplying page text
+  and saturating term frequency. An anchor over the length limit, or a
+  replication over the fill budget, now stays in its first cell only. Short
+  labels still fill their region.
+
+- **A table row longer than the chunk budget is split.** The table path only
+  split at row boundaries, so a single oversized row was emitted whole and
+  everything past the embedding window was silently unsearchable.
+
+### Changed
+
+- **Tests run where the default encoding is not UTF-8.** File reads specify
+  UTF-8, external-command checks skip when the tool is absent, and the optional
+  PDF renderer is probed in a child process because a broken native library
+  terminates the interpreter instead of raising.
+
 ## [0.5.0] - 2026-11-15
 
 ### Fixed

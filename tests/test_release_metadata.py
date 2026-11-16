@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_container_release_and_window_metadata():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     service = compose["services"]["openlad"]
-    assert service["image"] == "openlad:0.5.0"
+    assert service["image"] == "openlad:0.5.1"
     assert service["environment"]["OPENLAD_LLM_MAX_TOKENS"] == "${OPENLAD_LLM_MAX_TOKENS:-32768}"
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "requirements.lock" in dockerfile

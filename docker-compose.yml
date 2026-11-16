@@ -23,7 +23,7 @@ services:
   openlad:
     build:
       context: .
-    image: openlad:0.5.0
+    image: openlad:0.5.1
     container_name: openlad
     network_mode: host
     environment:
