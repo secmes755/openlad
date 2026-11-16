@@ -1,7 +1,15 @@
 """Public smoke scripts must authenticate and validate answer content."""
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
+
+# The scripts are bash; on hosts without it the syntax check cannot run. The
+# content assertions above still apply there.
+requires_bash = pytest.mark.skipif(
+    shutil.which("bash") is None, reason="bash is not available on this host")
 
 
 def test_public_smoke_script_has_valid_syntax_and_uses_supplied_key():
@@ -10,7 +18,8 @@ def test_public_smoke_script_has_valid_syntax_and_uses_supplied_key():
     assert "${KEY}" in text
     assert "Authorization: ${AUTH_SCHEME} ${KEY}" in text
     assert "Authorization: ***" not in text
-    subprocess.run(["bash", "-n", str(script)], check=True)
+    if shutil.which("bash"):
+        subprocess.run(["bash", "-n", str(script)], check=True)
 
 
 def test_default_smoke_is_small_and_has_answer_contracts():
@@ -23,7 +32,7 @@ def test_default_smoke_is_small_and_has_answer_contracts():
         assert document["queries"]
         for query in document["queries"]:
             assert query["contains"]
-    assert "fixtures/smoke/manifest.json" in (root / "scripts" / "smoke.sh").read_text()
+    assert "fixtures/smoke/manifest.json" in (root / "scripts" / "smoke.sh").read_text(encoding="utf-8")
 
 
 def test_docker_verify_uses_login_key_and_checks_answer_content():
@@ -32,4 +41,5 @@ def test_docker_verify_uses_login_key_and_checks_answer_content():
     assert "Bearer ***" not in text
     assert "Authorization: Bearer $KEY" in text
     assert "expected specification" in text
-    subprocess.run(["bash", "-n", str(script)], check=True)
+    if shutil.which("bash"):
+        subprocess.run(["bash", "-n", str(script)], check=True)

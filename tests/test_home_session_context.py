@@ -7,10 +7,10 @@ WEB = ROOT / 'frontend/web/dist'
 
 
 def test_welcome_automatic_query_entries_are_removed():
-    index = (WEB / 'index.html').read_text()
-    app = (WEB / 'js/app.js').read_text()
-    i18n = (WEB / 'js/i18n.js').read_text()
-    css = (WEB / 'css/style.css').read_text()
+    index = (WEB / 'index.html').read_text(encoding="utf-8")
+    app = (WEB / 'js/app.js').read_text(encoding="utf-8")
+    i18n = (WEB / 'js/i18n.js').read_text(encoding="utf-8")
+    css = (WEB / 'css/style.css').read_text(encoding="utf-8")
     assert 'example-queries' not in index
     assert 'example-chip' not in index
     assert 'welcome.example' not in i18n
@@ -22,7 +22,7 @@ def test_welcome_automatic_query_entries_are_removed():
 def test_session_functions_parse_and_ignore_stale_loads():
     app_path = WEB / 'js/app.js'
     subprocess.run(['node', '--check', str(app_path)], check=True, capture_output=True)
-    source = app_path.read_text()
+    source = app_path.read_text(encoding="utf-8")
     functions = source[source.index('function createNewSession()'):
                          source.index('async function deleteSession')]
     send_message = source[source.index('async function sendMessage()'):

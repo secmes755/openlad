@@ -10,14 +10,35 @@ document in a loop returned the same page over and over and produced a whole
 document of identical images.
 """
 import hashlib
+import subprocess
+import sys
 
 import pytest
 
 from core.ingestion import parser as parser_mod
 from core.ingestion.parser import DocumentParser
 
+
+def _import_works(module: str) -> bool:
+    """Import in a child process: a broken native library can kill the
+    interpreter instead of raising, and importorskip cannot survive that."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", f"import {module}"],
+            capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+if not _import_works("fitz"):
+    pytest.skip("PyMuPDF builds the fixture PDF but cannot be imported here",
+                allow_module_level=True)
+if not _import_works("pypdfium2"):
+    pytest.skip("the fallback renderer under test is unavailable",
+                allow_module_level=True)
+
 fitz = pytest.importorskip("fitz", reason="PyMuPDF builds the fixture PDF")
-pytest.importorskip("pypdfium2", reason="the fallback renderer under test")
 
 
 @pytest.fixture

@@ -59,7 +59,7 @@ def test_llm_max_tokens_is_the_per_slot_context_not_the_total():
 
 @pytest.mark.parametrize("path", CONSUMERS)
 def test_consumers_do_not_hardcode_a_budget_fallback(path):
-    src = open(path).read()
+    src = open(path, encoding="utf-8").read()
     offenders = re.findall(r'\.get\(\s*"synthesis_context_budget"\s*,\s*\d+', src)
     assert not offenders, (
         f"{path} still carries a numeric fallback for synthesis_context_budget: "
@@ -69,7 +69,7 @@ def test_consumers_do_not_hardcode_a_budget_fallback(path):
 
 @pytest.mark.parametrize("path", CONSUMERS)
 def test_consumers_read_the_key_from_config(path):
-    src = open(path).read()
+    src = open(path, encoding="utf-8").read()
     assert 'cfg["synthesis_context_budget"]' in src, (
         f"{path} should index the config key directly"
     )

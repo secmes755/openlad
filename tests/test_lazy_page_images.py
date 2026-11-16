@@ -86,7 +86,7 @@ def test_merger_marks_non_pdf_sources_as_text_only(monkeypatch):
 
 
 def test_frontend_hides_only_explicitly_unsupported_page_images():
-    source = Path('frontend/web/dist/js/app.js').read_text()
+    source = Path('frontend/web/dist/js/app.js').read_text(encoding="utf-8")
     assert 's.doc_id && pages.length && s.has_page_image !== false' in source
     assert '<span class="source-link"' in source
 
@@ -106,7 +106,7 @@ def test_fresh_blank_pdf_page_is_not_rejected_as_a_placeholder(monkeypatch, tmp_
 
 
 def test_inline_citations_do_not_link_non_pdf_sources_to_images():
-    source = Path('frontend/web/dist/js/app.js').read_text()
+    source = Path('frontend/web/dist/js/app.js').read_text(encoding="utf-8")
     start = source.index('function findDocIdForPage')
     end = source.index('// Normalize source pages', start)
     functions = source[start:end]
@@ -130,7 +130,7 @@ console.log(JSON.stringify({
 
 
 def test_pdfium_serialization_is_at_the_shared_rendering_layer():
-    parser = Path('core/ingestion/parser.py').read_text()
-    route = Path('core/api/main.py').read_text()
+    parser = Path('core/ingestion/parser.py').read_text(encoding="utf-8")
+    route = Path('core/api/main.py').read_text(encoding="utf-8")
     assert 'with _PDFIUM_LOCK:' in parser
     assert 'async with _PAGE_IMAGE_REPAIR_SLOTS:' in route

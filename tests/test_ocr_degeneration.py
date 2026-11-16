@@ -27,7 +27,7 @@ def _degenerate_list(n: int = 8) -> str:
 
 
 def test_real_fixture_trims_to_visible_content():
-    raw = FIXTURE.read_text()
+    raw = FIXTURE.read_text(encoding="utf-8")
     cleaned = _clean_ocr_transcription(raw)
     # Real slide content survives.
     assert "RK1820实测表现" in cleaned

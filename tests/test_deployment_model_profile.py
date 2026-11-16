@@ -14,14 +14,14 @@ def test_query_alias_is_consistent_across_entrypoints():
         'README.md', 'README_zh-CN.md',
     ]
     for name in files:
-        text = (ROOT / name).read_text()
+        text = (ROOT / name).read_text(encoding="utf-8")
         assert QUERY_ALIAS in text, name
         assert 'qwen3.5-9b' not in text, name
 
 
 def test_deployment_guides_describe_both_staged_profiles():
     for name in ('docs/deployment.md', 'docs/zh-CN/deployment.md'):
-        text = (ROOT / name).read_text()
+        text = (ROOT / name).read_text(encoding="utf-8")
         assert 'Qwen3.6-35B-A3B' in text
         assert 'Qwen3.5-9B' in text
         assert '--ctx-size' in text and '32768' in text
@@ -30,7 +30,7 @@ def test_deployment_guides_describe_both_staged_profiles():
 
 
 def test_compose_file_remains_valid_yaml():
-    compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
+    compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text(encoding="utf-8"))
     environment = compose['services']['openlad']['environment']
     assert QUERY_ALIAS in environment['OPENLAD_LLM_MODEL']
     assert environment['OPENLAD_QUERY_CONCURRENCY_MODE'].endswith('serial}')
