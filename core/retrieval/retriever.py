@@ -358,6 +358,12 @@ class HierarchicalRetriever:
         base_terms = list(keywords)
         expanded = list(base_terms)
         seen = {t.lower() for t in expanded}
+        # Pack synonyms are collected before the cap is applied, so they cannot
+        # be crowded out by the caller's own term set. A query that is already
+        # long used to consume the whole budget and drop every synonym, which
+        # silently disabled the pack vocabulary for exactly the questions that
+        # needed it.
+        pack_terms: list[str] = []
         for term, synonyms in merged.items():
             # A group is an equivalence class: whichever member the query uses
             # -- including a longer member that contains the head as a
@@ -367,16 +373,18 @@ class HierarchicalRetriever:
                     or any(syn and syn.lower() in query_lower for syn in synonyms)):
                 for member in [term] + list(synonyms):
                     if member and member.lower() not in seen:
-                        expanded.append(member)
+                        pack_terms.append(member)
                         seen.add(member.lower())
-                continue
+        budget = max(24, len(base_terms) + len(pack_terms))
+        for term in pack_terms:
+            expanded.append(term)
         for term in ngram_terms:
+            if len(expanded) >= budget:
+                break
             if term.lower() not in seen:
                 expanded.append(term)
                 seen.add(term.lower())
-        if len(expanded) > 24:
-            expanded = expanded[:24]
-        return expanded
+        return expanded[:budget] if budget else expanded
 
     def _tokenize_query(self, query: str) -> list[str]:
         """Extract bounded FTS terms using the base pack's search rules."""

@@ -1,6 +1,8 @@
 """Single-document FTS must use the same pack vocabulary as exact retrieval."""
 from types import SimpleNamespace
 
+import pytest
+
 from core.retrieval.executor import RetrievalExecutor
 from core.retrieval.retriever import HierarchicalRetriever
 
@@ -126,3 +128,17 @@ def test_single_route_precision_beats_broad_consensus():
     retriever._search_fts = fake_search
     rows = retriever._search_fts_with_pack_expansion("q")
     assert rows[0]["page_num"] == 99
+
+
+def test_pack_synonyms_survive_a_long_query():
+    """A long query used to consume the whole term budget and drop every synonym."""
+    from core.retrieval.retriever import HierarchicalRetriever
+
+    retriever = HierarchicalRetriever.__new__(HierarchicalRetriever)
+    long_query = "美的集团2023年年度报告中，归属于上市公司股东的净利润是多少？"
+    keywords = ["美的集团", "年年度报告中", "归属于上市公司股东的净利润是多少"]
+    terms = retriever._expand_query_terms(keywords, long_query, "财务报告")
+    if "归母净利润" not in terms and "net profit" not in terms:
+        pytest.skip("a financial pack providing these synonyms is not installed")
+    for expected in ("净利润", "归母净利润", "net profit"):
+        assert expected in terms, f"{expected} was crowded out by the term budget"

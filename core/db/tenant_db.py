@@ -749,7 +749,12 @@ class TenantMetadataDB:
 
         # 2. Supplementary recall: search 2-character Chinese words with LIKE
         # FIX: Sort by number of matched keywords (more matches rank higher), not simply by page_num
-        if bigram_tokens and not strict:
+        # `strict` suppresses broad OR supplements, not this path. Chinese terms of
+        # three or more characters are decomposed into bigrams above, and the
+        # trigram index cannot match two characters, so this LIKE path is the only
+        # way such a term is found at all. Excluding it under strict made every
+        # Chinese query return nothing.
+        if bigram_tokens:
             like_limit = max(limit * 2, 40)
             try:
                 with self.get_connection() as conn:

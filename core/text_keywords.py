@@ -41,6 +41,26 @@ def extract_search_keywords(text: str, max_terms: int = 64) -> list[str]:
     return keywords + derived
 
 
+def needs_search_ngrams(keywords: list[str]) -> bool:
+    """True when the base keywords alone cannot be searched by an FTS index.
+
+    Chinese is written without spaces, so a question such as
+    "在美的集团的公司中文名称是什么" yields one 19-character "word". No index
+    matches that; the substring n-grams are what make it findable, which is why
+    the mechanism exists. When the extractor already produced short, searchable
+    terms, the same substring explosion only competes for the term budget, so it
+    is not generated.
+    """
+    if not keywords:
+        return False
+    for term in keywords:
+        if len(term) <= 4:
+            return False
+        if not all('\u4e00' <= ch <= '\u9fff' for ch in term):
+            return False
+    return True
+
+
 def split_search_keywords(text: str, max_terms: int = 64) -> tuple[list[str], list[str]]:
     """Return ``(base keywords, derived n-grams)`` separately.
 
@@ -48,11 +68,16 @@ def split_search_keywords(text: str, max_terms: int = 64) -> tuple[list[str], li
     wrote from the n-grams generated to widen recall. Deriving that boundary
     from list position would be a guess; the two groups are different in kind,
     so they are returned as different values.
+
+    n-grams are produced only when the base keywords are unsearchable on their
+    own; see :func:`needs_search_ngrams`.
     """
     keywords = extract_keywords(text)
     derived: list[str] = []
     if not text or max_terms <= 0:
         return [], []
+    if not needs_search_ngrams(keywords):
+        return keywords, []
     from .plugins import get_generic_search_ngram_rules
     seen = {keyword.casefold() for keyword in keywords}
     for rule in get_generic_search_ngram_rules():
